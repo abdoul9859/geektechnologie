@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block title %}Achats quotidiens - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<style>
+  .kpibox { border-radius: 0.75rem; padding: 1rem; color: #fff; }
+  .kpibox-total { background: linear-gradient(135deg, #00b09b, #96c93d); }
+  .kpibox-cat { background: linear-gradient(135deg, #36d1dc, #5b86e5); }
+  .form-inline .form-control, .form-inline .form-select { min-width: 160px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h3 mb-0"><i class="bi bi-basket2-fill me-2"></i>Achats quotidiens</h1>
+    <button class="btn btn-primary" onclick="openCreateModal()"><i class="bi bi-plus-lg me-2"></i>Nouvel achat</button>
+  </div>
+
+  <!-- KPIs -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="kpibox kpibox-total">
+        <div class="d-flex justify-content-between align-items-center">
+          <div>
+            <div class="small opacity-75">Total période</div>
+            <div class="h4 mb-0" id="kpiTotal">-</div>
+          </div>
+          <i class="bi bi-cash-stack" style="font-size: 2rem;"></i>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-8">
+      <div class="kpibox kpibox-cat">
+        <div class="small opacity-75 mb-2">Par catégorie</div>
+        <div id="kpiByCategory" class="d-flex flex-wrap gap-2"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filtres -->
+  <div class="card mb-4">
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-2">
+          <label class="form-label">Du</label>
+          <input type="date" id="filterFrom" class="form-control">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Au</label>
+          <input type="date" id="filterTo" class="form-control">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Catégorie</label>
+          <select id="filterCategory" class="form-select">
+            <option value="">Toutes</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Méthode</label>
+          <select id="filterMethod" class="form-select">
+            <option value="">Toutes</option>
+            <option value="espece">Espèce</option>
+            <option value="mobile">Mobile money</option>
+            <option value="virement">Virement</option>
+            <option value="cheque">Chèque</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Recherche</label>
+          <div class="input-group">
+            <input type="text" id="filterSearch" class="form-control" placeholder="Texte...">
+            <button class="btn btn-outline-secondary" onclick="resetFilters()"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="card">
+    <div class="card-header">
+      <h5 class="card-title mb-0"><i class="bi bi-list-ul me-2"></i>Liste des achats</h5>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Date</th>
+              <th>Catégorie</th>
+              <th>Description</th>
+              <th>Montant</th>
+              <th>Mode</th>
+              <th>Référence</th>
+              <th class="text-end">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="dpTableBody">
+            <tr>
+              <td colspan="7" class="text-center py-4">
+                <div class="spinner-border" role="status"><span class="visually-hidden">Chargement...</span></div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal create/update -->
+<div class="modal fade" id="dpModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="dpModalTitle">Nouvel achat</h5>
+        <button class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form id="dpForm">
+        <div class="modal-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label">Date *</label>
+              <input type="date" id="dpDate" class="form-control" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label d-flex align-items-center justify-content-between">
+                <span>Catégorie *</span>
+                <span class="d-flex gap-2">
+                  <button class="btn btn-sm btn-outline-success" type="button" title="Ajouter catégorie" onclick="quickAddCategory()"><i class="bi bi-plus"></i></button>
+                  <button class="btn btn-sm btn-outline-danger" type="button" title="Supprimer catégorie" onclick="quickDeleteCategory()"><i class="bi bi-trash"></i></button>
+                </span>
+              </label>
+              <select id="dpCategory" class="form-select" required>
+                <option value="">Choisir...</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Montant *</label>
+              <input type="number" id="dpAmount" class="form-control" min="0" step="1" inputmode="numeric" required>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Méthode *</label>
+              <select id="dpMethod" class="form-select" required>
+                <option value="espece">Espèce</option>
+                <option value="mobile">Mobile money</option>
+                <option value="virement">Virement</option>
+                <option value="cheque">Chèque</option>
+              </select>
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Référence</label>
+              <input type="text" id="dpReference" class="form-control">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Description</label>
+              <textarea id="dpDescription" class="form-control" rows="2"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" data-bs-dismiss="modal" type="button">Annuler</button>
+          <button class="btn btn-primary" type="submit"><span id="dpSaveText">Enregistrer</span></button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/daily_purchases.js?v={{ ASSET_VERSION }}"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', function(){
+    initializeDailyPurchases();
+  });
+</script>
+{% endblock %}

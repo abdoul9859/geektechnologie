@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block title %}Mouvements de Stock - Geek Technologie{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3 mb-0">
+                <i class="bi bi-arrow-left-right me-2"></i>Mouvements de Stock
+            </h1>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#movementModal" onclick="openMovementModal()">
+                <i class="bi bi-plus-circle me-2"></i>Nouveau Mouvement
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Statistiques -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Mouvements</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="totalMovements">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-arrow-left-right fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-left-success shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Entrées Aujourd'hui</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="todayEntries">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-arrow-down-circle fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-left-danger shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">Sorties Aujourd'hui</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="todayExits">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-arrow-up-circle fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-left-info shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Valeur Stock</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="stockValue">0 XOF</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-currency-exchange fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filtres -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="typeFilter" class="form-label">Type de mouvement</label>
+            <select class="form-select" id="typeFilter">
+                <option value="">Tous les types</option>
+                <option value="ENTRY">Entrée</option>
+                <option value="SALE">Vente</option>
+                <option value="RETURN">Retour</option>
+                <option value="ADJUSTMENT">Ajustement</option>
+                <option value="TRANSFER">Transfert</option>
+            </select>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="productFilter" class="form-label">Produit</label>
+            <input type="text" class="form-control" id="productFilter" placeholder="Rechercher un produit...">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="dateFromFilter" class="form-label">Date de début</label>
+            <input type="date" class="form-control" id="dateFromFilter">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="dateToFilter" class="form-label">Date de fin</label>
+            <input type="date" class="form-control" id="dateToFilter">
+        </div>
+    </div>
+</div>
+
+<!-- Liste des mouvements -->
+<div class="card shadow">
+    <div class="card-header">
+        <h6 class="m-0 font-weight-bold text-primary">
+            <i class="bi bi-list me-2"></i>Liste des Mouvements
+        </h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Produit</th>
+                        <th>Variante/IMEI</th>
+                        <th>Quantité</th>
+                        <th>Référence</th>
+                        <th>Utilisateur</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="movementsTableBody">
+                    <tr>
+                        <td colspan="8" class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Chargement...</span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        <div id="pagination-container"></div>
+    </div>
+</div>
+
+<!-- Modal Mouvement -->
+<div class="modal fade" id="movementModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-plus-circle me-2"></i>Nouveau Mouvement de Stock
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="movementForm">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="movementType" class="form-label">Type de mouvement *</label>
+                                <select class="form-select" id="movementType" required>
+                                    <option value="">Sélectionner un type</option>
+                                    <option value="ENTRY">Entrée</option>
+                                    <option value="SALE">Vente</option>
+                                    <option value="RETURN">Retour</option>
+                                    <option value="ADJUSTMENT">Ajustement</option>
+                                    <option value="TRANSFER">Transfert</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="movementQuantity" class="form-label">Quantité *</label>
+                                <input type="number" class="form-control" id="movementQuantity" required min="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="variantSearch" class="form-label">Rechercher une variante *</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="variantSearch" placeholder="Rechercher par IMEI, nom de produit..." required>
+                            <button type="button" class="btn btn-outline-secondary" onclick="searchVariants()">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                        <input type="hidden" id="selectedVariantId">
+                        <div id="variantSearchResults" class="mt-2"></div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="movementReference" class="form-label">Référence document</label>
+                                <input type="text" class="form-control" id="movementReference" placeholder="Numéro facture, bon de commande...">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="movementDate" class="form-label">Date</label>
+                                <input type="datetime-local" class="form-control" id="movementDate">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="movementNotes" class="form-label">Notes</label>
+                        <textarea class="form-control" id="movementNotes" rows="3" placeholder="Notes sur ce mouvement..."></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" onclick="saveMovement()">
+                    <i class="bi bi-check-circle me-2"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/stock_movements.js?v={{ ASSET_VERSION() }}"></script>
+{% endblock %}

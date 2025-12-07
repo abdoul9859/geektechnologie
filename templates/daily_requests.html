@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+
+{% block title %}Demandes Quotidiennes des Clients - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2><i class="bi bi-chat-dots me-2"></i>Demandes Quotidiennes des Clients</h2>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addRequestModal">
+                <i class="bi bi-plus-circle me-1"></i>Nouvelle Demande
+            </button>
+        </div>
+
+        <!-- Filtres -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-3">
+                        <label for="searchInput" class="form-label">Recherche</label>
+                        <input type="text" class="form-control" id="searchInput" placeholder="Client, produit, notes...">
+                    </div>
+                    <div class="col-md-2">
+                        <label for="statusFilter" class="form-label">Statut</label>
+                        <select class="form-select" id="statusFilter">
+                            <option value="">Tous</option>
+                            <option value="pending">En attente</option>
+                            <option value="fulfilled">Satisfaite</option>
+                            <option value="cancelled">Annulée</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="startDate" class="form-label">Date début</label>
+                        <input type="date" class="form-control" id="startDate">
+                    </div>
+                    <div class="col-md-2">
+                        <label for="endDate" class="form-label">Date fin</label>
+                        <input type="date" class="form-control" id="endDate">
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button class="btn btn-outline-primary me-2" id="applyFilters">
+                            <i class="bi bi-funnel me-1"></i>Filtrer
+                        </button>
+                        <button class="btn btn-outline-secondary" id="clearFilters">
+                            <i class="bi bi-x-circle me-1"></i>Effacer
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques -->
+        <div class="row mb-4" id="statsContainer">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-primary" id="totalRequests">0</h5>
+                        <p class="card-text">Total Demandes</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-warning" id="pendingRequests">0</h5>
+                        <p class="card-text">En Attente</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-success" id="fulfilledRequests">0</h5>
+                        <p class="card-text">Satisfaites</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-info" id="fulfillmentRate">0%</h5>
+                        <p class="card-text">Taux de Satisfaction</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tableau des demandes -->
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="requestsTable">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Client</th>
+                                <th>Téléphone</th>
+                                <th>Produit Demandé</th>
+                                <th>Statut</th>
+                                <th>Notes</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="requestsTableBody">
+                            <!-- Les données seront chargées via JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Pagination -->
+                <nav aria-label="Pagination des demandes">
+                    <ul class="pagination justify-content-center" id="pagination">
+                        <!-- La pagination sera générée via JavaScript -->
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal d'ajout/modification de demande -->
+<div class="modal fade" id="addRequestModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">Nouvelle Demande</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="requestForm">
+                    <input type="hidden" id="requestId">
+                    
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="clientSearch" class="form-label">Rechercher Client</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="clientSearch" placeholder="Nom du client...">
+                                <button class="btn btn-outline-secondary" type="button" id="searchClientBtn">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                            </div>
+                            <div class="dropdown-menu w-100" id="clientDropdown" style="display: none;">
+                                <!-- Les résultats de recherche seront affichés ici -->
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="clientName" class="form-label">Nom du Client *</label>
+                            <input type="text" class="form-control" id="clientName" required>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="clientPhone" class="form-label">Téléphone</label>
+                            <input type="text" class="form-control" id="clientPhone">
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="requestDate" class="form-label">Date de Demande *</label>
+                            <input type="date" class="form-control" id="requestDate" required>
+                        </div>
+                        
+                        <div class="col-12">
+                            <label for="productDescription" class="form-label">Produit Demandé *</label>
+                            <textarea class="form-control" id="productDescription" rows="3" required 
+                                placeholder="Décrivez le produit demandé par le client..."></textarea>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="status" class="form-label">Statut</label>
+                            <select class="form-select" id="status">
+                                <option value="pending">En attente</option>
+                                <option value="fulfilled">Satisfaite</option>
+                                <option value="cancelled">Annulée</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-12">
+                            <label for="notes" class="form-label">Notes</label>
+                            <textarea class="form-control" id="notes" rows="2" 
+                                placeholder="Notes supplémentaires..."></textarea>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" id="saveRequestBtn">
+                    <i class="bi bi-check-circle me-1"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de confirmation de suppression -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirmer la suppression</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Êtes-vous sûr de vouloir supprimer cette demande ?</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">
+                    <i class="bi bi-trash me-1"></i>Supprimer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/daily_requests.js?v={{ ASSET_VERSION }}"></script>
+{% endblock %}

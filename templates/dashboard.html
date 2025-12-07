@@ -1,0 +1,791 @@
+{% extends "base.html" %}
+
+{% block title %}Tableau de bord - Geek Technologie{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h1 class="h3 mb-4">
+            <i class="bi bi-speedometer2 me-2"></i>Tableau de bord
+        </h1>
+    </div>
+</div>
+
+<!-- Statistiques principales -->
+<div class="row mb-4">
+    <!-- Produits en stock -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <a href="/products" class="text-decoration-none">
+            <div class="card border-left-primary shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Produits en stock</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="total-products">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-box-seam fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Factures en attente -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <a href="/invoices" class="text-decoration-none">
+            <div class="card border-left-info shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Factures en attente</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="pending-invoices">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-receipt fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Taux conversion -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <a href="/quotations" class="text-decoration-none">
+            <div class="card border-left-dark shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-dark text-uppercase mb-1">Taux conversion</div>
+                            <div class="h6 mb-0 font-weight-bold text-gray-800" id="quotes-conv"><div class="spinner-border spinner-border-sm" role="status"></div></div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-file-earmark-text fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Stock critique -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <a href="/products" class="text-decoration-none">
+            <div class="card border-left-danger shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">Stock critique</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="critical-stock"><div class="spinner-border spinner-border-sm" role="status"></div></div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-exclamation-octagon fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Clients actifs -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <a href="/clients" class="text-decoration-none">
+            <div class="card border-left-info shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Clients actifs (90j)</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="active-customers"><div class="spinner-border spinner-border-sm" role="status"></div></div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-people fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Rupture de stock -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <a href="/products" class="text-decoration-none">
+            <div class="card border-left-primary shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Rupture de stock</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="out-of-stock"><div class="spinner-border spinner-border-sm" role="status"></div></div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-box-seam-fill fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- ADMIN ONLY: Chiffre d'affaires mensuel -->
+    <div class="col-xl-3 col-md-6 mb-4 admin-only" style="display: none;">
+        <a href="/reports" class="text-decoration-none">
+            <div class="card border-left-success shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Chiffre d'affaires mensuel</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="monthly-revenue">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-currency-dollar fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- ADMIN ONLY: Montant impayé -->
+    <div class="col-xl-3 col-md-6 mb-4 admin-only" style="display: none;">
+        <a href="/debts" class="text-decoration-none">
+            <div class="card border-left-warning shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Montant impayé</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="unpaid-amount">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-exclamation-triangle fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- ADMIN ONLY: Panier moyen -->
+    <div class="col-xl-3 col-md-6 mb-4 admin-only" style="display: none;">
+        <a href="/reports" class="text-decoration-none">
+            <div class="card border-left-secondary shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">Panier moyen</div>
+                            <div class="h5 mb-0 font-weight-bold text-gray-800" id="avg-ticket"><div class="spinner-border spinner-border-sm" role="status"></div></div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-bag fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- ADMIN ONLY: CA brut mensuel -->
+    <div class="col-xl-3 col-md-6 mb-4 admin-only" style="display: none;">
+        <a href="/reports" class="text-decoration-none">
+            <div class="card border-left-success shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-success text-uppercase mb-1">CA brut mensuel</div>
+                            <div class="h6 mb-0 font-weight-bold text-gray-800" id="monthly-revenue-gross"><div class="spinner-border spinner-border-sm" role="status"></div></div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-cash-stack fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- ADMIN ONLY: Paiements fournisseurs -->
+    <div class="col-xl-3 col-md-6 mb-4 admin-only" style="display: none;">
+        <a href="/supplier-invoices" class="text-decoration-none">
+            <div class="card border-left-warning shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">Paiements fournisseurs</div>
+                            <div class="h6 mb-0 font-weight-bold text-gray-800" id="monthly-supplier-payments"><div class="spinner-border spinner-border-sm" role="status"></div></div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-truck fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- ADMIN ONLY: Achats quotidiens -->
+    <div class="col-xl-3 col-md-6 mb-4 admin-only" style="display: none;">
+        <a href="/daily-purchases" class="text-decoration-none">
+            <div class="card border-left-danger shadow h-100 py-2 stat-card-hover">
+                <div class="card-body">
+                    <div class="row no-gutters align-items-center">
+                        <div class="col mr-2">
+                            <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">Achats quotidiens</div>
+                            <div class="h6 mb-0 font-weight-bold text-gray-800" id="monthly-daily-purchases"><div class="spinner-border spinner-border-sm" role="status"></div></div>
+                        </div>
+                        <div class="col-auto"><i class="bi bi-cart fa-2x text-gray-300"></i></div>
+                    </div>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
+<!-- Actions rapides -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="bi bi-lightning-fill me-2"></i>Actions rapides
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3 mb-3">
+                        <a href="/products" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-plus-circle me-2"></i>Nouveau produit
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="/clients" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-person-plus me-2"></i>Nouveau client
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="/quotations" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-file-earmark-text me-2"></i>Nouveau devis
+                        </a>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <a href="/scan" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-qr-code-scan me-2"></i>Scanner code-barres
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mouvements de stock récents -->
+<div class="row">
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="bi bi-arrow-left-right me-2"></i>Mouvements récents
+                </h6>
+            </div>
+            <div class="card-body">
+                <div id="recent-movements">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Chargement...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="bi bi-receipt me-2"></i>Factures récentes
+                </h6>
+            </div>
+            <div class="card-body">
+                <div id="recent-invoices">
+                    <div class="text-center">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Chargement...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Graphiques des tendances -->
+<div class="row mb-4">
+    <div class="col-lg-8 mb-4 admin-only" style="display: none;">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-graph-up me-2"></i>Évolution du chiffre d'affaires (7 derniers jours)</h6>
+            </div>
+            <div class="card-body">
+                <canvas id="salesTrendChart" height="80"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4 mb-4">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-pie-chart-fill me-2"></i>Ventes par catégorie</h6>
+            </div>
+            <div class="card-body">
+                <canvas id="categoryChart" height="150"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Répartition & Top produits -->
+<div class="row">
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-pie-chart me-2"></i>Répartition des paiements</h6>
+            </div>
+            <div class="card-body">
+                <div id="payment-methods-chart" class="small text-muted">Chargement...</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6 mb-4">
+        <div class="card shadow">
+            <div class="card-header py-3">
+                <h6 class="m-0 font-weight-bold text-primary"><i class="bi bi-trophy me-2"></i>Top produits (CA)</h6>
+            </div>
+            <div class="card-body">
+                <div id="top-products" class="small text-muted">Chargement...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.border-left-primary {
+    border-left: 0.25rem solid #4e73df !important;
+}
+.border-left-success {
+    border-left: 0.25rem solid #1cc88a !important;
+}
+.border-left-info {
+    border-left: 0.25rem solid #36b9cc !important;
+}
+.border-left-warning {
+    border-left: 0.25rem solid #f6c23e !important;
+}
+.border-left-secondary {
+    border-left: 0.25rem solid #858796 !important;
+}
+.border-left-dark {
+    border-left: 0.25rem solid #5a5c69 !important;
+}
+.border-left-danger {
+    border-left: 0.25rem solid #e74a3b !important;
+}
+.text-gray-300 {
+    color: #dddfeb !important;
+}
+.text-gray-800 {
+    color: #5a5c69 !important;
+}
+
+/* Effet hover pour les cartes statistiques cliquables */
+.stat-card-hover {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    cursor: pointer;
+}
+
+.stat-card-hover:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 0.5rem 1.5rem rgba(0, 0, 0, 0.15) !important;
+}
+
+/* Préserver les couleurs du texte dans les liens */
+a.text-decoration-none,
+a.text-decoration-none:hover,
+a.text-decoration-none:focus,
+a.text-decoration-none:active,
+a.text-decoration-none:visited {
+    color: inherit !important;
+    text-decoration: none !important;
+}
+
+a.text-decoration-none * {
+    color: inherit;
+}
+</style>
+{% endblock %}
+
+{% block extra_scripts %}
+<!-- Chart.js pour les graphiques -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+let salesTrendChart = null;
+let categoryChart = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadDashboardData();
+});
+
+async function loadDashboardData() {
+    try {
+        // 1) Charger toutes les stats du dashboard en une seule requête optimisée
+        const dashboardResponse = await apiRequest('/api/dashboard/stats');
+        const stats = dashboardResponse.data || {};
+
+        // Stats de base - mise à jour immédiate
+        document.getElementById('total-products').textContent = stats.total_stock || 0;
+        document.getElementById('monthly-revenue').textContent = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(stats.monthly_revenue || 0);
+        document.getElementById('pending-invoices').textContent = stats.pending_invoices || 0;
+        document.getElementById('unpaid-amount').textContent = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(stats.unpaid_amount || 0);
+
+        // KPIs avancés
+        document.getElementById('avg-ticket').textContent = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(stats.avg_ticket || 0);
+        document.getElementById('quotes-conv').textContent = `${(stats.conversion_rate || 0).toFixed(1)}%`;
+        document.getElementById('critical-stock').textContent = stats.critical_stock || 0;
+        document.getElementById('active-customers').textContent = stats.active_customers || 0;
+
+        // Statistiques financières détaillées
+        document.getElementById('monthly-revenue-gross').textContent = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(stats.monthly_revenue_gross || 0);
+        document.getElementById('monthly-supplier-payments').textContent = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(stats.monthly_supplier_payments || 0);
+        document.getElementById('monthly-daily-purchases').textContent = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(stats.monthly_daily_purchases || 0);
+        document.getElementById('out-of-stock').textContent = stats.out_of_stock || 0;
+
+        // Répartition des paiements
+        const methodsContainer = document.getElementById('payment-methods-chart');
+        const paymentMethods = stats.payment_methods || [];
+        const totalPaymentAmount = paymentMethods.reduce((s, x) => s + (x.amount||0), 0);
+        if (paymentMethods.length > 0) {
+            methodsContainer.innerHTML = `<ul class="list-unstyled mb-0">${paymentMethods.map(x => 
+                `<li><strong>${x.method}:</strong> ${new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF' }).format(x.amount)} ${totalPaymentAmount ? `<small class="text-muted">(${Math.round((x.amount/totalPaymentAmount)*100)}%)</small>` : ''}</li>`
+            ).join('')}</ul>`;
+        } else {
+            methodsContainer.innerHTML = '<span class="text-muted">Aucune donnée</span>';
+        }
+
+        // Top produits
+        const topProducts = stats.top_products || [];
+        const topContainer = document.getElementById('top-products');
+        if (topProducts.length > 0) {
+            topContainer.innerHTML = '<ol class="mb-0">' + topProducts.map(p => 
+                `<li><strong>${escapeHtml(p.name)}</strong><br><small class="text-success">${new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF' }).format(p.revenue)}</small></li>`
+            ).join('') + '</ol>';
+        } else {
+            topContainer.innerHTML = '<span class="text-muted">Aucune donnée</span>';
+        }
+
+        // 2) Charger les listes récentes en parallèle avec les nouveaux endpoints optimisés
+        await Promise.all([
+            loadRecentMovements(),
+            loadRecentInvoices()
+        ]);
+
+        // 3) Charger et afficher les graphiques
+        await Promise.all([
+            loadSalesTrendChart(),
+            loadCategoryChart()
+        ]);
+
+        // Afficher info cache si disponible
+        if (stats.cached_at) {
+            console.log('📊 Dashboard stats loaded from cache at:', stats.cached_at);
+        }
+
+    } catch (error) {
+        console.error('Erreur lors du chargement des données:', error);
+        showAlert('Erreur lors du chargement des données du tableau de bord', 'warning');
+        
+        // Afficher des données par défaut en cas d'erreur
+        document.getElementById('total-products').textContent = '0';
+        document.getElementById('monthly-revenue').textContent = '0 F CFA';
+        document.getElementById('pending-invoices').textContent = '0';
+        document.getElementById('unpaid-amount').textContent = '0 F CFA';
+        document.getElementById('avg-ticket').textContent = '0 F CFA';
+        document.getElementById('quotes-conv').textContent = '0.0%';
+        document.getElementById('critical-stock').textContent = '0';
+        document.getElementById('active-customers').textContent = '0';
+    }
+}
+
+async function loadRecentMovements() {
+    try {
+        // Utiliser l'endpoint optimisé du dashboard
+        const response = await apiRequest('/api/dashboard/recent-movements?limit=5');
+        const movements = response.data || [];
+        
+        const container = document.getElementById('recent-movements');
+        
+        if (movements.length === 0) {
+            container.innerHTML = '<p class="text-muted text-center">Aucun mouvement récent</p>';
+            return;
+        }
+        
+        let html = '<div class="list-group list-group-flush">';
+        movements.forEach(movement => {
+            const icon = movement.movement_type === 'IN' ? 'bi-arrow-down-circle text-success' : 'bi-arrow-up-circle text-danger';
+            const type = movement.movement_type === 'IN' ? 'Entrée' : 'Sortie';
+            
+            html += `
+                <div class="list-group-item">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <i class="bi ${icon} me-2"></i>
+                            <strong>${type}</strong> - ${movement.quantity} unités
+                            <br>
+                            <small class="text-muted">${escapeHtml(movement.notes || 'Aucune note')}</small>
+                        </div>
+                        <small class="text-muted">
+                            ${movement.created_at ? new Date(movement.created_at).toLocaleDateString('fr-FR') : ''}
+                        </small>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        
+        container.innerHTML = html;
+        
+    } catch (error) {
+        console.error('Erreur chargement mouvements récents:', error);
+        document.getElementById('recent-movements').innerHTML = 
+            '<p class="text-danger text-center">Erreur lors du chargement</p>';
+    }
+}
+
+async function loadRecentInvoices() {
+    try {
+        // Utiliser l'endpoint optimisé du dashboard
+        const response = await apiRequest('/api/dashboard/recent-invoices?limit=5');
+        const invoices = response.data || [];
+
+        const container = document.getElementById('recent-invoices');
+
+        if (invoices.length === 0) {
+            container.innerHTML = '<p class="text-muted text-center">Aucune facture récente</p>';
+            return;
+        }
+
+        let html = '<div class="list-group list-group-flush">';
+        invoices.forEach(invoice => {
+            const translatedStatus = translateStatus(invoice.status);
+            const statusClass = getStatusBadgeClass(invoice.status);
+
+            html += `
+                <div class="list-group-item">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>${escapeHtml(invoice.invoice_number || '')}</strong>
+                            <span class="badge bg-${statusClass} ms-2">${escapeHtml(translatedStatus)}</span>
+                            <br>
+                            <small class="text-muted">
+                                ${new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'XOF' })
+                                .format(invoice.total || 0)}
+                            </small>
+                        </div>
+                        <small class="text-muted">
+                            ${invoice.date ? new Date(invoice.date).toLocaleDateString('fr-FR') : ''}
+                        </small>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+
+        container.innerHTML = html;
+
+    } catch (error) {
+        console.error('Erreur chargement factures récentes:', error);
+        document.getElementById('recent-invoices').innerHTML =
+            '<p class="text-danger text-center">Erreur lors du chargement</p>';
+    }
+}
+
+async function loadSalesTrendChart() {
+    try {
+        // Charger les ventes des 7 derniers jours
+        const response = await apiRequest('/api/dashboard/sales-trend?days=7');
+        const data = response.data || [];
+
+        const ctx = document.getElementById('salesTrendChart');
+        if (!ctx) return;
+
+        // Détruire le graphique précédent s'il existe
+        if (salesTrendChart) {
+            salesTrendChart.destroy();
+        }
+
+        const labels = data.map(d => {
+            const date = new Date(d.date);
+            return date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+        });
+        const revenues = data.map(d => d.revenue || 0);
+
+        salesTrendChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Chiffre d\'affaires',
+                    data: revenues,
+                    borderColor: '#4e73df',
+                    backgroundColor: 'rgba(78, 115, 223, 0.1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.3,
+                    pointBackgroundColor: '#4e73df',
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2,
+                    pointRadius: 5,
+                    pointHoverRadius: 7
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                animation: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return 'CA: ' + new Intl.NumberFormat('fr-FR', {
+                                    style: 'currency',
+                                    currency: 'XOF',
+                                    minimumFractionDigits: 0,
+                                    maximumFractionDigits: 0
+                                }).format(context.parsed.y);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return new Intl.NumberFormat('fr-FR', {
+                                    notation: 'compact',
+                                    compactDisplay: 'short',
+                                    maximumFractionDigits: 0
+                                }).format(value) + ' F';
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Erreur chargement graphique tendances:', error);
+        const ctx = document.getElementById('salesTrendChart');
+        if (ctx) {
+            ctx.parentElement.innerHTML = '<p class="text-danger text-center py-3">Erreur lors du chargement</p>';
+        }
+    }
+}
+
+async function loadCategoryChart() {
+    try {
+        // Charger les ventes par catégorie
+        const response = await apiRequest('/api/dashboard/sales-by-category');
+        const data = response.data || [];
+
+        const ctx = document.getElementById('categoryChart');
+        if (!ctx) return;
+
+        // Détruire le graphique précédent s'il existe
+        if (categoryChart) {
+            categoryChart.destroy();
+        }
+
+        if (data.length === 0) {
+            ctx.parentElement.innerHTML = '<p class="text-muted text-center py-3">Aucune donnée disponible</p>';
+            return;
+        }
+
+        const labels = data.map(d => d.category || 'Non catégorisé');
+        const revenues = data.map(d => d.revenue || 0);
+
+        // Couleurs pour le graphique en camembert
+        const colors = [
+            '#4e73df', '#1cc88a', '#36b9cc', '#f6c23e', '#e74a3b',
+            '#858796', '#5a5c69', '#1f2d3d', '#6610f2', '#e83e8c'
+        ];
+
+        categoryChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: revenues,
+                    backgroundColor: colors.slice(0, data.length),
+                    borderWidth: 2,
+                    borderColor: '#fff'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                animation: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            padding: 10,
+                            font: {
+                                size: 11
+                            },
+                            boxWidth: 12
+                        }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const value = context.parsed || 0;
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                                const formatted = new Intl.NumberFormat('fr-FR', {
+                                    style: 'currency',
+                                    currency: 'XOF',
+                                    minimumFractionDigits: 0,
+                                    maximumFractionDigits: 0
+                                }).format(value);
+                                return `${label}: ${formatted} (${percentage}%)`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Erreur chargement graphique catégories:', error);
+        const ctx = document.getElementById('categoryChart');
+        if (ctx) {
+            ctx.parentElement.innerHTML = '<p class="text-danger text-center py-3">Erreur lors du chargement</p>';
+        }
+    }
+}
+
+// Afficher les éléments admin-only si l'utilisateur est admin
+let adminElementsShown = false;
+function showAdminElements() {
+    try {
+        if (adminElementsShown) return; // Éviter les appels multiples
+        
+        if (window.authManager && window.authManager.isAdmin()) {
+            document.querySelectorAll('.admin-only').forEach(el => {
+                if (el.style.display === 'none') {
+                    el.style.display = 'block';
+                }
+            });
+            adminElementsShown = true;
+        }
+    } catch (e) {
+        console.error('Erreur lors de la vérification du rôle:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Vérifier immédiatement
+    showAdminElements();
+    
+    // Revérifier après un court délai pour s'assurer que authManager.verifyAuth() est terminé
+    setTimeout(showAdminElements, 100);
+    setTimeout(showAdminElements, 500);
+});
+</script>
+{% endblock %}

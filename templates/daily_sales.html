@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+
+{% block title %}Ventes Quotidiennes - {{ super() }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h2><i class="bi bi-cart-check me-2"></i>Ventes Quotidiennes</h2>
+                <p class="text-muted mb-0" id="selectedDateDisplay">Aujourd'hui</p>
+            </div>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addSaleModal">
+                <i class="bi bi-plus-circle me-1"></i>Nouvelle Vente
+            </button>
+        </div>
+
+        <!-- Navigation par jour -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label for="searchInput" class="form-label">Recherche</label>
+                        <input type="text" class="form-control" id="searchInput" placeholder="Client, produit, notes...">
+                    </div>
+                    <div class="col-md-2">
+                        <label for="paymentMethodFilter" class="form-label">Paiement</label>
+                        <select class="form-select" id="paymentMethodFilter">
+                            <option value="">Tous</option>
+                            <option value="espece">Espèces</option>
+                            <option value="mobile">Mobile Money</option>
+                            <option value="virement">Virement</option>
+                            <option value="cheque">Chèque</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Jour</label>
+                        <div class="d-flex gap-2 align-items-center">
+                            <button class="btn btn-outline-secondary" id="prevDayBtn" title="Jour précédent">
+                                <i class="bi bi-chevron-left"></i>
+                            </button>
+                            <input type="date" class="form-control" id="selectedDate">
+                            <button class="btn btn-outline-secondary" id="nextDayBtn" title="Jour suivant">
+                                <i class="bi bi-chevron-right"></i>
+                            </button>
+                            <button class="btn btn-primary" id="todayBtn" title="Aujourd'hui">
+                                <i class="bi bi-calendar-day"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-3 d-flex align-items-end">
+                        <button class="btn btn-outline-primary me-2" id="applyFilters">
+                            <i class="bi bi-funnel me-1"></i>Filtrer
+                        </button>
+                        <button class="btn btn-outline-secondary" id="clearFilters">
+                            <i class="bi bi-x-circle me-1"></i>Effacer
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques -->
+        <div class="row mb-4" id="statsContainer">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-primary" id="totalSales">0</h5>
+                        <p class="card-text">Total Ventes</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-success" id="totalAmount">0 F CFA</h5>
+                        <p class="card-text">Montant Total</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-info" id="averageSale">0 F CFA</h5>
+                        <p class="card-text">Vente Moyenne</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h5 class="card-title text-warning" id="directSales">0</h5>
+                        <p class="card-text">Ventes Directes</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tableau des ventes -->
+        <div class="card">
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover" id="salesTable">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Client</th>
+                                <th>Produit</th>
+                                <th>Quantité</th>
+                                <th>Prix Unitaire</th>
+                                <th>Total</th>
+                                <th>Paiement</th>
+                                <th>Statut</th>
+                                <th>Facture</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="salesTableBody">
+                            <!-- Les données seront chargées via JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Pagination -->
+                <nav aria-label="Pagination des ventes">
+                    <ul class="pagination justify-content-center" id="pagination">
+                        <!-- La pagination sera générée via JavaScript -->
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal d'ajout/modification de vente -->
+<div class="modal fade" id="addSaleModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">Nouvelle Vente</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="saleForm">
+                    <input type="hidden" id="saleId">
+                    
+                    <div class="row g-3">
+                        <div class="col-md-12">
+                            <label for="clientSearch" class="form-label">Rechercher Client</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="clientSearch" placeholder="Nom du client...">
+                                <button class="btn btn-outline-secondary" type="button" id="searchClientBtn">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                                <button class="btn btn-outline-success" type="button" id="addNewClientBtn" title="Ajouter un nouveau client">
+                                    <i class="bi bi-person-plus"></i>
+                                </button>
+                            </div>
+                            <div class="dropdown-menu w-100" id="clientDropdown" style="display: none;">
+                                <!-- Les résultats de recherche seront affichés ici -->
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-12">
+                            <label for="productSearch" class="form-label">Rechercher Produit</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="productSearch" placeholder="Nom du produit...">
+                                <button class="btn btn-outline-secondary" type="button" id="searchProductBtn">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                                <button class="btn btn-outline-primary" type="button" id="addProductBtn" title="Ajouter ce produit">
+                                    <i class="bi bi-plus-circle"></i>
+                                </button>
+                            </div>
+                            <div class="dropdown-menu w-100" id="productDropdown" style="display: none;">
+                                <!-- Les résultats de recherche seront affichés ici -->
+                            </div>
+                        </div>
+                        
+                        <!-- Champ de sélection de variante -->
+                        <div class="col-md-12" id="variantSelectionField" style="display: none;">
+                            <label for="variantSelect" class="form-label">Sélectionner la Variante</label>
+                            <select class="form-select" id="variantSelect">
+                                <option value="">Chargement des variantes...</option>
+                            </select>
+                            <div class="form-text">
+                                <i class="bi bi-info-circle me-1"></i>Ce produit a plusieurs variantes. Veuillez sélectionner celle que vous souhaitez vendre.
+                            </div>
+                        </div>
+                        
+                        <!-- Liste des produits sélectionnés -->
+                        <div class="col-12">
+                            <label class="form-label">Produits Sélectionnés</label>
+                            <div class="table-responsive">
+                                <table class="table table-sm" id="selectedProductsTable">
+                                    <thead>
+                                        <tr>
+                                            <th>Produit</th>
+                                            <th>Quantité</th>
+                                            <th>Prix Unitaire</th>
+                                            <th>Total</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="selectedProductsBody">
+                                        <!-- Les produits sélectionnés seront affichés ici -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="noProductsMessage" class="text-muted text-center py-3" style="display: none;">
+                                <i class="bi bi-inbox me-2"></i>Aucun produit sélectionné
+                            </div>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="totalAmount" class="form-label">Total Général</label>
+                            <input type="number" class="form-control" id="totalAmount" step="0.01" min="0" readonly>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="saleDate" class="form-label">Date de Vente *</label>
+                            <input type="date" class="form-control" id="saleDate" required>
+                        </div>
+                        
+                        <div class="col-md-6">
+                            <label for="paymentMethod" class="form-label">Méthode de Paiement *</label>
+                            <select class="form-select" id="paymentMethod" required>
+                                <option value="espece">Espèces</option>
+                                <option value="mobile">Mobile Money</option>
+                                <option value="virement">Virement</option>
+                                <option value="cheque">Chèque</option>
+                            </select>
+                        </div>
+                        
+                        <div class="col-12">
+                            <label for="notes" class="form-label">Notes</label>
+                            <textarea class="form-control" id="notes" rows="2" 
+                                placeholder="Notes supplémentaires..."></textarea>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" id="saveSaleBtn">
+                    <i class="bi bi-check-circle me-1"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal d'ajout rapide de client -->
+<div class="modal fade" id="addClientModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Ajouter un Nouveau Client</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="quickClientForm">
+                    <div class="mb-3">
+                        <label for="quickClientName" class="form-label">Nom Complet *</label>
+                        <input type="text" class="form-control" id="quickClientName" required placeholder="Nom et prénom du client">
+                    </div>
+                    <div class="mb-3">
+                        <label for="quickClientPhone" class="form-label">Numéro de Téléphone</label>
+                        <input type="tel" class="form-control" id="quickClientPhone" placeholder="Ex: +225 07 12 34 56 78">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-success" id="saveQuickClientBtn">
+                    <i class="bi bi-check-circle me-1"></i>Ajouter le Client
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de confirmation de suppression -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Confirmer la suppression</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Êtes-vous sûr de vouloir supprimer cette vente ?</p>
+                <p class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Le stock sera automatiquement remis à jour.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-danger" id="confirmDeleteBtn">
+                    <i class="bi bi-trash me-1"></i>Supprimer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/daily_sales.js?v={{ ASSET_VERSION }}"></script>
+{% endblock %}

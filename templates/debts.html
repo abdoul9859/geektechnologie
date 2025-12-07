@@ -1,0 +1,497 @@
+{% extends "base.html" %}
+
+{% block title %}Gestion des Dettes - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<style>
+    .debt-card {
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    }
+    .debt-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1) !important;
+    }
+    .main-content {
+        padding: 20px;
+    }
+    .debt-client {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .debt-supplier {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+    }
+    .debt-paid {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+    .debt-remaining {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    }
+</style>
+{% endblock %}
+    {% block content %}
+    <div class="container-fluid">
+        <!-- En-tête -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center flex-wrap">
+                    <div>
+                        <h1 class="h3 mb-1">
+                            <i class="bi bi-credit-card me-2 text-primary"></i>
+                            Gestion des Dettes
+                        </h1>
+                        <p class="text-muted mb-0">
+                            Suivez vos créances clients et dettes fournisseurs
+                        </p>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button 
+                            class="btn btn-success btn-lg shadow-sm" 
+                            onclick="createDebt()"
+                        >
+                            <i class="bi bi-plus-circle me-2"></i>
+                            Nouvelle Dette
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques des dettes -->
+        <div class="row mb-4">
+            <div class="col-md-3 mb-3">
+                <div class="card text-white debt-client">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalClientDebts">0 XOF</h4>
+                                <p class="mb-0">Créances Clients</p>
+                            </div>
+                            <i class="bi bi-people display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-white debt-supplier">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalSupplierDebts">0 XOF</h4>
+                                <p class="mb-0">Dettes Fournisseurs</p>
+                            </div>
+                            <i class="bi bi-truck display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-white debt-paid">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalPaidDebts">0 XOF</h4>
+                                <p class="mb-0">Total Payé</p>
+                            </div>
+                            <i class="bi bi-check-circle display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-white debt-remaining">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalRemainingDebts">0 XOF</h4>
+                                <p class="mb-0">Solde Restant</p>
+                            </div>
+                            <i class="bi bi-exclamation-triangle display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtres -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-3">
+                                <label for="searchInput" class="form-label">Recherche</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">
+                                        <i class="bi bi-search"></i>
+                                    </span>
+                                    <input type="text" class="form-control" id="searchInput" 
+                                           placeholder="Rechercher une dette...">
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="typeFilter" class="form-label">Type</label>
+                                <select class="form-select" id="typeFilter">
+                                    <option value="">Tous les types</option>
+                                    <option value="client">Créance client</option>
+                                    <option value="supplier">Dette fournisseur</option>
+                                    <option value="invoice">Facture</option>
+                                    <option value="other">Autre</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="statusFilter" class="form-label">Statut</label>
+                                <select class="form-select" id="statusFilter">
+                                    <option value="">Tous les statuts</option>
+                                    <option value="pending">En attente</option>
+                                    <option value="partial">Partiellement payé</option>
+                                    <option value="paid">Payé</option>
+                                    <option value="overdue">En retard</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="dateFromFilter" class="form-label">Date début</label>
+                                <input type="date" class="form-control" id="dateFromFilter">
+                            </div>
+                            <div class="col-md-2">
+                                <label for="dateToFilter" class="form-label">Date fin</label>
+                                <input type="date" class="form-control" id="dateToFilter">
+                            </div>
+                            <div class="col-md-1 d-flex align-items-end">
+                                <button class="btn btn-outline-secondary w-100" onclick="clearFilters()">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des dettes -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="bi bi-list me-2"></i>
+                            Liste des Dettes
+                        </h5>
+                        <span class="badge bg-primary" id="resultsCount">0 dette</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Référence</th>
+                                        <th>Type</th>
+                                        <th>Client/Fournisseur</th>
+                                        <th>Date</th>
+                                        <th>Échéance</th>
+                                        <th>Montant</th>
+                                        <th>Payé</th>
+                                        <th>Restant</th>
+                                        <th>Statut</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="debtsTableBody">
+                                    <tr>
+                                        <td colspan="10" class="text-center py-4">
+                                            <div class="spinner-border text-primary" role="status">
+                                                <span class="visually-hidden">Chargement...</span>
+                                            </div>
+                                            <p class="text-muted mt-2 mb-0">Chargement des dettes...</p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <nav aria-label="Navigation des dettes">
+                    <ul class="pagination justify-content-center" id="pagination">
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de création/édition -->
+    <div class="modal fade" id="debtModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="debtModalTitle">
+                        <i class="bi bi-plus-circle me-2"></i>
+                        Nouvelle Dette
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="debtForm">
+                        <input type="hidden" id="debtId">
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">
+                                    <i class="bi bi-tag me-1"></i>
+                                    Type de dette
+                                </label>
+                                <select class="form-select" id="debtType">
+                                    <option value="client">Créance client</option>
+                                    <option value="supplier">Dette fournisseur</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="reference" class="form-label">
+                                    <i class="bi bi-hash me-1"></i>
+                                    Référence <span class="text-danger">*</span>
+                                </label>
+                                <input type="text" class="form-control" id="reference" required
+                                       placeholder="Numéro de facture, référence, etc.">
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="entitySelect" class="form-label">
+                                    <i class="bi bi-person me-1"></i>
+                                    <span id="entityLabel">Client/Fournisseur</span> <span class="text-danger">*</span>
+                                </label>
+                                <div class="d-flex gap-2">
+                                    <div class="position-relative flex-grow-1">
+                                        <input 
+                                            type="text" 
+                                            class="form-control" 
+                                            id="entitySelect" 
+                                            placeholder="Rechercher un client..."
+                                            autocomplete="off"
+                                            required
+                                        >
+                                        <ul class="dropdown-menu w-100 shadow" id="entityDropdown" style="max-height: 200px; overflow-y: auto; display: none;"></ul>
+                                    </div>
+                                    <button type="button" class="btn btn-outline-primary" id="newClientBtn" onclick="toggleNewClient()" title="Nouveau client">
+                                        <i class="bi bi-person-plus"></i>
+                                    </button>
+                                </div>
+                                <div id="newClientSection" class="mt-2" style="display:none;">
+                                    <div class="card border-0 bg-light">
+                                        <div class="card-body pt-3 pb-2">
+                                            <div class="row g-2">
+                                                <div class="col-12">
+                                                    <label class="form-label mb-1">Nom du client <span class="text-danger">*</span></label>
+                                                    <input type="text" class="form-control" id="newClientName" placeholder="Nom du client">
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1">Téléphone</label>
+                                                    <input type="text" class="form-control" id="newClientPhone" placeholder="Ex: 770000000">
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <label class="form-label mb-1">Email</label>
+                                                    <input type="email" class="form-control" id="newClientEmail" placeholder="email@exemple.com">
+                                                </div>
+                                            </div>
+                                            <div class="mt-2 d-flex gap-2">
+                                                <button type="button" class="btn btn-sm btn-success" onclick="quickAddClient()">
+                                                    <i class="bi bi-check2-circle me-1"></i>Enregistrer le client
+                                                </button>
+                                                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="toggleNewClient(false)">Annuler</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="amount" class="form-label">
+                                    <i class="bi bi-currency-exchange me-1"></i>
+                                    Montant (XOF) <span class="text-danger">*</span>
+                                </label>
+                                <input type="number" class="form-control" id="amount" min="0" step="1" required>
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="debtDate" class="form-label">
+                                    <i class="bi bi-calendar me-1"></i>
+                                    Date de création <span class="text-danger">*</span>
+                                </label>
+                                <input type="date" class="form-control" id="debtDate" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="dueDate" class="form-label">
+                                    <i class="bi bi-calendar-event me-1"></i>
+                                    Date d'échéance
+                                </label>
+                                <input type="date" class="form-control" id="dueDate">
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <!-- Champs simplifiés: pas de statut ni montant payé au moment de la création -->
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">
+                                <i class="bi bi-chat-text me-1"></i>
+                                Description
+                            </label>
+                            <textarea class="form-control" id="description" rows="3" 
+                                      placeholder="Description de la dette"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="notes" class="form-label">
+                                <i class="bi bi-sticky me-1"></i>
+                                Notes
+                            </label>
+                            <textarea class="form-control" id="notes" rows="2" 
+                                      placeholder="Notes additionnelles"></textarea>
+                        </div>
+
+                        <div id="initialPaymentSection" class="border-top pt-3" style="display:none;">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label mb-0"><i class="bi bi-cash-coin me-1"></i>Paiement initial (optionnel)</label>
+                                <small class="text-muted">Disponible pour une créance client</small>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Montant</label>
+                                    <input type="number" class="form-control" id="initPaymentAmount" min="0" step="1" placeholder="0">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Date</label>
+                                    <input type="date" class="form-control" id="initPaymentDate">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Méthode</label>
+                                    <select class="form-select" id="initPaymentMethod">
+                                        <option value="">Sélectionner...</option>
+                                        <option value="especes">Espèces</option>
+                                        <option value="cheque">Chèque</option>
+                                        <option value="virement">Virement</option>
+                                        <option value="carte">Carte bancaire</option>
+                                        <option value="mobile">Mobile Money</option>
+                                    </select>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Référence</label>
+                                    <input type="text" class="form-control" id="initPaymentReference" placeholder="Référence de paiement (optionnel)">
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="saveDebt()">
+                        <i class="bi bi-check-circle me-1"></i>
+                        Enregistrer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de paiement -->
+    <div class="modal fade" id="paymentModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-credit-card me-2"></i>
+                        Enregistrer un Paiement
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="paymentForm">
+                        <input type="hidden" id="paymentDebtId">
+                        
+                        <div class="mb-3">
+                            <label class="form-label">Dette</label>
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <div id="paymentDebtInfo"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="paymentAmount" class="form-label">
+                                Montant du paiement (XOF) <span class="text-danger">*</span>
+                            </label>
+                            <input type="number" class="form-control" id="paymentAmount" min="0" step="1" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="paymentDate" class="form-label">
+                                Date du paiement <span class="text-danger">*</span>
+                            </label>
+                            <input type="date" class="form-control" id="paymentDate" required>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="paymentMethod" class="form-label">
+                                Méthode de paiement
+                            </label>
+                            <select class="form-select" id="paymentMethod">
+                                <option value="especes">Espèces</option>
+                                <option value="cheque">Chèque</option>
+                                <option value="virement">Virement</option>
+                                <option value="carte">Carte bancaire</option>
+                                <option value="mobile">Mobile Money</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="paymentNotes" class="form-label">
+                                Notes du paiement
+                            </label>
+                            <textarea class="form-control" id="paymentNotes" rows="2"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-success" onclick="savePayment()">
+                        <i class="bi bi-check-circle me-1"></i>
+                        Enregistrer le Paiement
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de confirmation de suppression -->
+    <div class="modal fade" id="deleteModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Confirmer la suppression</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Êtes-vous sûr de vouloir supprimer cette dette ?</p>
+                    <p class="text-muted">Cette action est irréversible.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+    <script src="{{ url_for('static', path='js/debts.js') }}?v={{ ASSET_VERSION() }}"></script>
+{% endblock %}

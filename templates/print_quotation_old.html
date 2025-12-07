@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="fr" style="margin:0;padding:0;width:100%;height:100%;">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Devis {{ quotation.quotation_number }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        :root { --primary-color:#FBCF00; --primary-dark:#E0B900; --secondary-color:#000000; --accent-color:#FBCF00; --success:#16a34a; --warning:#f59e0b; --danger:#ef4444; --text-primary:#000000; --text-secondary:#666666; --border-color:#e5e5e5; --bg-light:#f8f9fa; }
+        *{box-sizing:border-box;margin:0;padding:0}
+        html,body{margin:0!important;padding:0!important;width:100%!important;min-height:100vh!important;background-color:#f5f5f5}
+        body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;font-size:11pt;color:var(--text-primary);display:flex;flex-direction:column;align-items:center;min-height:100vh}
+        .page-controls{position:fixed;top:20px;left:0;right:0;display:flex;justify-content:center;gap:10px;z-index:1000}
+        .btn-print{background-color:var(--primary-color);color:#000000;border:none;font-weight:700}
+        .btn-return{background-color:var(--secondary-color);color:#fff;border:none}
+        .page-container{display:flex;justify-content:center;align-items:center;padding:80px 0 0;min-height:100vh;width:100%;box-sizing:border-box}
+        @media print{html,body{width:210mm;height:297mm;margin:0!important;padding:0!important;overflow:hidden}.page-container{padding:0!important;margin:0!important;width:210mm;height:297mm}#quotation-container{margin:0!important;padding:0!important;border:none!important;box-shadow:none!important;width:210mm!important;height:297mm!important;transform:none!important}.no-print{display:none!important}.header,.header::before,.logo-section,.invoice-info,.footer,.footer::before,.products-header{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}@page{size:A4;margin:0}}
+        .container-a4{width:210mm!important;max-width:210mm!important;height:297mm!important;margin:0!important;padding:0!important;background:#fff!important;box-shadow:0 5px 15px rgba(0,0,0,.08);overflow:hidden;display:flex;flex-direction:column;position:relative}
+        .header{background:linear-gradient(135deg,#000000 0%,#1a1a1a 100%);padding:0;border-bottom:4px solid var(--primary-color);display:flex;justify-content:space-between;align-items:stretch;width:100%;position:relative;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact}
+        .header::before{content:'';position:absolute;top:0;right:0;width:300px;height:100%;background:linear-gradient(135deg,transparent 0%,rgba(251,207,0,0.1) 100%);pointer-events:none}
+        .logo-section{display:flex;align-items:center;justify-content:center;padding:24px 32px;background:rgba(251,207,0,0.05);border-right:3px solid var(--primary-color);position:relative;z-index:1;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact}
+        .logo{max-width:120px;max-height:90px;object-fit:contain;filter:drop-shadow(0 2px 8px rgba(251,207,0,0.3))}
+        .company-info{display:none}
+        .invoice-info{text-align:right;padding:24px 32px;display:flex;flex-direction:column;justify-content:center;position:relative;z-index:1;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact}
+        .invoice-title{font-size:28px;font-weight:800;color:var(--primary-color);margin:0 0 8px 0;text-transform:uppercase;letter-spacing:2px;text-shadow:2px 2px 4px rgba(0,0,0,0.5)}
+        .invoice-number{font-size:16px;font-weight:700;color:#ffffff;margin:0 0 6px 0;background:rgba(251,207,0,0.15);padding:4px 12px;border-radius:4px;display:inline-block}
+        .invoice-date{font-size:11px;color:rgba(255,255,255,0.7);margin:0;font-weight:500}
+        .billing{display:flex;padding:20px 30px;gap:24px;background:#fff;margin:0}
+        .billing>div{background:#ffffff;padding:18px 20px;border-radius:8px;border:2px solid #f0f0f0;box-shadow:0 2px 8px rgba(0,0,0,0.04);position:relative}
+        .billing>div::before{content:'';position:absolute;top:0;left:0;width:4px;height:100%;background:var(--primary-color);border-radius:8px 0 0 8px}
+        .section-title{font-size:10px;font-weight:800;text-transform:uppercase;color:#000000;margin-bottom:10px;letter-spacing:1px;border-bottom:3px solid var(--primary-color);padding-bottom:6px;display:inline-block}
+        .client-details p{margin:5px 0;font-size:10px;color:var(--text-primary);line-height:1.6}
+        .client-details p strong{font-weight:700;color:#000000}
+        .info-box{background:linear-gradient(135deg,#fffbf0 0%,#fff9e6 100%);padding:16px 18px;border-radius:8px;border:2px solid var(--primary-color);box-shadow:0 2px 8px rgba(251,207,0,0.15)}
+        .products{flex:1;display:flex;flex-direction:column;width:calc(100% - 60px);margin:20px 30px 0;background:#fff;border-radius:8px;overflow:hidden;border:2px solid #f0f0f0;box-shadow:0 2px 12px rgba(0,0,0,0.06)}
+        .products-header{display:grid;grid-template-columns:1fr 80px 120px 120px;background:linear-gradient(135deg,#000000 0%,#1a1a1a 100%);padding:12px 16px;font-size:10px;font-weight:700;color:#ffffff;text-transform:uppercase;letter-spacing:0.8px;border-bottom:3px solid var(--primary-color);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        .product-row{display:grid;grid-template-columns:1fr 80px 120px 120px;padding:12px 16px;border-bottom:1px solid #f0f0f0;transition:background 0.2s}
+        .product-row:nth-child(odd){background:#fafafa}
+        .product-row:hover{background:#fffbf0}
+        .product-name{font-weight:600;font-size:11px;color:var(--text-primary);padding-right:12px}
+        .product-qty,.product-price,.product-total{text-align:right;font-size:11px;font-variant-numeric:tabular-nums;font-weight:600;color:#000000}
+        .product-desc{color:#777;font-size:8px;margin-top:2px;text-align:justify}
+        .totals{margin:16px 30px 0;display:flex;justify-content:flex-end}
+        .totals-card{min-width:340px;max-width:380px;background:linear-gradient(135deg,#ffffff 0%,#fafafa 100%);border:2px solid var(--primary-color);border-radius:10px;box-shadow:0 4px 16px rgba(251,207,0,0.2);padding:16px 18px;position:relative;overflow:hidden}
+        .totals-card::before{content:'';position:absolute;top:0;right:0;width:100px;height:100%;background:linear-gradient(135deg,transparent 0%,rgba(251,207,0,0.05) 100%);pointer-events:none}
+        .totals-header{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#000000;margin-bottom:10px;font-weight:800;border-bottom:2px solid var(--primary-color);padding-bottom:6px}
+        .totals-row{display:flex;align-items:center;justify-content:space-between;padding:7px 0;position:relative;z-index:1}
+        .totals-row+.totals-row{border-top:1px dashed #e0e0e0}
+        .totals-label{color:#333333;font-size:10px;font-weight:600}
+        .totals-value{color:#000000;font-weight:700;font-variant-numeric:tabular-nums;font-size:11px}
+        .totals-row.grand{border-top:3px solid var(--primary-color);margin-top:6px;padding-top:10px;background:linear-gradient(90deg,rgba(251,207,0,0.1) 0%,transparent 100%);margin-left:-18px;margin-right:-18px;padding-left:18px;padding-right:18px}
+        .totals-row.grand .totals-label{color:#000000;font-weight:800;font-size:11px;text-transform:uppercase}
+        .totals-row.grand .totals-value{color:#000000;font-size:14px;font-weight:800}
+        .footer{padding:16px 32px 14px;border-top:4px solid var(--primary-color);font-size:9px;width:100%;margin-top:auto;background:linear-gradient(135deg,#000000 0%,#1a1a1a 100%);-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact;position:relative}
+        .footer::before{content:'';position:absolute;bottom:0;left:0;width:100%;height:2px;background:var(--primary-color)}
+        .footer-content{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+        .footer-section{display:flex;flex-direction:column;gap:6px}
+        .footer-section h4{font-size:10px;font-weight:700;color:var(--primary-color);margin:0 0 4px 0;text-transform:uppercase;letter-spacing:0.8px;display:flex;align-items:center;gap:6px}
+        .footer-section h4::before{content:'';width:3px;height:12px;background:var(--primary-color);display:inline-block}
+        .footer-section p{margin:3px 0;color:rgba(255,255,255,0.85);font-size:9px;font-weight:400;padding-left:9px;display:flex;align-items:center;gap:6px}
+        .footer-section p::before{content:'';width:4px;height:4px;background:var(--primary-color);border-radius:50%;flex-shrink:0}
+        .footer-icon{width:12px;height:12px;fill:var(--primary-color);flex-shrink:0;margin-right:4px}
+        .footer-text{margin-top:10px;padding-top:10px;border-top:1px solid rgba(251,207,0,0.2);color:rgba(255,255,255,0.6);font-size:8px;text-align:center}
+    </style>
+</head>
+<body>
+    <div class="page-controls no-print">
+        <button id="printBtn" class="btn btn-print">Imprimer</button>
+        <button id="returnBtn" class="btn btn-return">Retour</button>
+    </div>
+    <div class="page-container">
+        <div id="quotation-container" class="container-a4">
+            <div class="header">
+                <div class="logo-section">
+                    {% set _logo = settings.logo or settings.logo_path %}
+                    {% if _logo %}<img src="{{ _logo }}" alt="Logo" class="logo">{% endif %}
+                </div>
+                <div class="invoice-info">
+                    <h2 class="invoice-title">DEVIS</h2>
+                    <p class="invoice-number">#{{ quotation.quotation_number }}</p>
+                     <p class="invoice-date">Date: {{ quotation.date | format_date }}</p>
+                </div>
+            </div>
+
+            <div class="billing">
+                <div style="flex:1">
+                    <div class="section-title">Devis à</div>
+                    <div class="client-details">
+                        {% if quotation.client %}
+                        <p><strong>{{ quotation.client.name }}</strong></p>
+                        {% if quotation.client.address %}<p>{{ quotation.client.address }}</p>{% endif %}
+                        {% if quotation.client.phone %}<p>{{ quotation.client.phone }}</p>{% endif %}
+                        {% if quotation.client.email %}<p>{{ quotation.client.email }}</p>{% endif %}
+                        {% else %}
+                        <p><strong>Client</strong></p>
+                        {% endif %}
+                    </div>
+                </div>
+                <div style="flex:1">
+                    <div class="section-title">Informations</div>
+                    <div class="info-box">
+                        <div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Validité</div>
+                        <div style="font-size:16px;font-weight:600;color:var(--primary-color);">{{ quotation.expiry_date | format_date }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="products">
+                <div class="products-header">
+                    <div>Description</div>
+                    <div class="text-end">Qté</div>
+                    <div class="text-end">PU</div>
+                    <div class="text-end">Montant</div>
+                </div>
+                {% for item in quotation.items %}
+                <div class="product-row">
+                    <div class="product-name">
+                        <div><strong>{{ item.product_name }}</strong></div>
+                        
+                    </div>
+                    <div class="product-qty">{{ item.quantity }}</div>
+                    <div class="product-price">{{ (item.price or 0) | format_cfa }}</div>
+                    <div class="product-total">{{ (item.total or 0) | format_cfa }}</div>
+                </div>
+                {% endfor %}
+
+                <div class="totals">
+                    <div class="totals-card">
+                        <div class="totals-header">Résumé financier</div>
+                        <div class="totals-row"><div class="totals-label">Sous-total</div><div class="totals-value">{{ (quotation.subtotal or 0) | format_cfa }}</div></div>
+                        {% if (quotation.tax_rate or 0) > 0 %}
+                        <div class="totals-row"><div class="totals-label">TVA ({{ (quotation.tax_rate or 0) | int }}%)</div><div class="totals-value">{{ (quotation.tax_amount or 0) | format_cfa }}</div></div>
+                        {% endif %}
+                        <div class="totals-row grand"><div class="totals-label">Total</div><div class="totals-value">{{ (quotation.total or 0) | format_cfa }}</div></div>
+                    </div>
+                </div>
+            </div>
+
+            {% if signature_data_url %}
+            <div style="margin: 14px 24px 0; display:flex; justify-content:flex-end;">
+                <div style="min-width:320px; max-width:360px; text-align:center;">
+                    <div style="font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:.6px; margin-bottom:8px;">Signature</div>
+                    <img src="{{ signature_data_url }}" alt="Signature" style="max-width: 220px; max-height: 90px; display:block; margin: 0 auto 6px;" />
+                    <div style="border-top:1px solid #d1d5db; width: 240px; margin: 6px auto 0; height: 0;"></div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="footer">
+                <div class="footer-content">
+                    <div class="footer-section">
+                        <h4>
+                            <svg class="footer-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                            </svg>
+                            Adresse
+                        </h4>
+                        <p>{{ settings.address or '' }}{% if settings.city %}, {{ settings.city }}{% endif %}</p>
+                    </div>
+                    <div class="footer-section">
+                        <h4>
+                            <svg class="footer-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M20.01 15.38c-1.23 0-2.42-.2-3.53-.56-.35-.12-.74-.03-1.01.24l-1.57 1.97c-2.83-1.35-5.48-3.9-6.89-6.83l1.95-1.66c.27-.28.35-.67.24-1.02-.37-1.11-.56-2.3-.56-3.53 0-.54-.45-.99-.99-.99H4.19C3.65 3 3 3.24 3 3.99 3 13.28 10.73 21 20.01 21c.71 0 .99-.63.99-1.18v-3.45c0-.54-.45-.99-.99-.99z"/>
+                            </svg>
+                            Contact
+                        </h4>
+                        {% if settings.phone %}<p>{{ settings.phone }}</p>{% endif %}
+                        {% if settings.phone2 %}<p>{{ settings.phone2 }}</p>{% endif %}
+                        {% if settings.email %}<p>
+                            <svg class="footer-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width:10px;height:10px;margin:0;">
+                                <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                            </svg>
+                            {{ settings.email }}
+                        </p>{% endif %}
+                    </div>
+                    <div class="footer-section">
+                        <h4>
+                            <svg class="footer-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/>
+                            </svg>
+                            Liens
+                        </h4>
+                        {% if settings.instagram %}<p>
+                            <svg class="footer-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width:10px;height:10px;margin:0;">
+                                <path d="M7.8 2h8.4C19.4 2 22 4.6 22 7.8v8.4a5.8 5.8 0 0 1-5.8 5.8H7.8C4.6 22 2 19.4 2 16.2V7.8A5.8 5.8 0 0 1 7.8 2m-.2 2A3.6 3.6 0 0 0 4 7.6v8.8C4 18.39 5.61 20 7.6 20h8.8a3.6 3.6 0 0 0 3.6-3.6V7.6C20 5.61 18.39 4 16.4 4H7.6m9.65 1.5a1.25 1.25 0 0 1 1.25 1.25A1.25 1.25 0 0 1 17.25 8 1.25 1.25 0 0 1 16 6.75a1.25 1.25 0 0 1 1.25-1.25M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3z"/>
+                            </svg>
+                            @{{ settings.instagram }}
+                        </p>{% endif %}
+                        {% if settings.website %}<p>
+                            <svg class="footer-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width:10px;height:10px;margin:0;">
+                                <path d="M16.36 14c.08-.66.14-1.32.14-2 0-.68-.06-1.34-.14-2h3.38c.16.64.26 1.31.26 2s-.1 1.36-.26 2m-5.15 5.56c.6-1.11 1.06-2.31 1.38-3.56h2.95a8.03 8.03 0 0 1-4.33 3.56M14.34 14H9.66c-.1-.66-.16-1.32-.16-2 0-.68.06-1.35.16-2h4.68c.09.65.16 1.32.16 2 0 .68-.07 1.34-.16 2M12 19.96c-.83-1.2-1.5-2.53-1.91-3.96h3.82c-.41 1.43-1.08 2.76-1.91 3.96M8 8H5.08A7.923 7.923 0 0 1 9.4 4.44C8.8 5.55 8.35 6.75 8 8m-2.92 8H8c.35 1.25.8 2.45 1.4 3.56A8.008 8.008 0 0 1 5.08 16m-.82-2C4.1 13.36 4 12.69 4 12s.1-1.36.26-2h3.38c-.08.66-.14 1.32-.14 2 0 .68.06 1.34.14 2M12 4.03c.83 1.2 1.5 2.54 1.91 3.97h-3.82c.41-1.43 1.08-2.77 1.91-3.97M18.92 8h-2.95a15.65 15.65 0 0 0-1.38-3.56c1.84.63 3.37 1.9 4.33 3.56M12 2C6.47 2 2 6.5 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2z"/>
+                            </svg>
+                            {{ settings.website }}
+                        </p>{% endif %}
+                    </div>
+                </div>
+                {% if settings.footer_text %}
+                <div class="footer-text">{{ settings.footer_text }}</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.onload = function(){
+            document.getElementById('printBtn')?.addEventListener('click', function(){ window.print(); });
+            document.getElementById('returnBtn')?.addEventListener('click', function(){ window.location.href = '/quotations'; });
+            const isInPopup = !!window.opener && window.name === 'quotation_print_popup';
+            if (isInPopup) { setTimeout(() => window.print(), 400); }
+        };
+        window.onafterprint = function(){ if (!!window.opener && window.name === 'quotation_print_popup') { try{ window.close(); }catch(e){} } };
+    </script>
+</body>
+</html>
+
+

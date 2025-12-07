@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+
+{% block title %}Gestion des Clients - Nitec{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3 mb-0">
+                <i class="bi bi-people-fill me-2"></i>Gestion des Clients
+            </h1>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#clientModal" onclick="openClientModal()">
+                <i class="bi bi-person-plus me-2"></i>Nouveau Client
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Recherche -->
+<div class="row mb-3">
+    <div class="col-md-8">
+        <div class="search-input">
+            <i class="bi bi-search search-icon"></i>
+            <input type="text" class="form-control" id="searchInput" placeholder="Rechercher par nom, email ou téléphone...">
+        </div>
+    </div>
+    <div class="col-md-4">
+        <button class="btn btn-outline-secondary w-100" onclick="resetSearch()">
+            <i class="bi bi-arrow-clockwise me-2"></i>Réinitialiser
+        </button>
+    </div>
+</div>
+
+<!-- Filtres -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <label for="cityFilter" class="form-label">Ville</label>
+        <input type="text" id="cityFilter" class="form-control" placeholder="ex: Dakar">
+    </div>
+    <div class="col-md-3">
+        <label for="countryFilter" class="form-label">Pays</label>
+        <input type="text" id="countryFilter" class="form-control" placeholder="ex: Sénégal">
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Contact</label>
+        <div class="d-flex gap-3 align-items-center pt-1">
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="hasEmailFilter">
+                <label class="form-check-label" for="hasEmailFilter">Email</label>
+            </div>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="hasPhoneFilter">
+                <label class="form-check-label" for="hasPhoneFilter">Téléphone</label>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <label class="form-label">Créé entre</label>
+        <div class="d-flex gap-2">
+            <input type="date" id="createdFrom" class="form-control">
+            <input type="date" id="createdTo" class="form-control">
+        </div>
+    </div>
+</div>
+
+<!-- Liste des clients -->
+<div class="card shadow">
+    <div class="card-header">
+        <h6 class="m-0 font-weight-bold text-primary">
+            <i class="bi bi-list me-2"></i>Liste des Clients
+        </h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Nom</th>
+                        <th>Contact</th>
+                        <th>Email</th>
+                        <th>Téléphone</th>
+                        <th>Ville</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="clientsTableBody">
+                    <tr>
+                        <td colspan="6" class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Chargement...</span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        <div id="pagination-container"></div>
+    </div>
+</div>
+
+<!-- Modal Client -->
+<div class="modal fade" id="clientModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="clientModalTitle">
+                    <i class="bi bi-person-plus me-2"></i>Nouveau Client
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="clientForm">
+                    <input type="hidden" id="clientId">
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="clientName" class="form-label">Nom *</label>
+                                <input type="text" class="form-control" id="clientName" required>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="clientContact" class="form-label">Personne de contact</label>
+                                <input type="text" class="form-control" id="clientContact">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="clientEmail" class="form-label">Email</label>
+                                <input type="email" class="form-control" id="clientEmail">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="clientPhone" class="form-label">Téléphone</label>
+                                <input type="tel" class="form-control" id="clientPhone">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="clientAddress" class="form-label">Adresse</label>
+                        <textarea class="form-control" id="clientAddress" rows="2"></textarea>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="clientCity" class="form-label">Ville</label>
+                                <input type="text" class="form-control" id="clientCity">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="clientPostalCode" class="form-label">Code postal</label>
+                                <input type="text" class="form-control" id="clientPostalCode">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="clientCountry" class="form-label">Pays</label>
+                                <input type="text" class="form-control" id="clientCountry" value="Sénégal">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="clientTaxNumber" class="form-label">Numéro fiscal</label>
+                                <input type="text" class="form-control" id="clientTaxNumber">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="clientNotes" class="form-label">Notes</label>
+                        <textarea class="form-control" id="clientNotes" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" onclick="saveClient()">
+                    <i class="bi bi-check-circle me-2"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/clients.js?v={{ ASSET_VERSION() }}"></script>
+{% endblock %}

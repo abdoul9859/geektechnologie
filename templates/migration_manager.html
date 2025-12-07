@@ -1,0 +1,374 @@
+{% extends "base.html" %}
+
+{% block title %}Gestionnaire de Migration - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<style>
+    .migration-card {
+        transition: all 0.3s ease;
+        border-left: 4px solid transparent;
+    }
+    .migration-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .migration-card.pending {
+        border-left-color: #ffc107;
+    }
+    .migration-card.running {
+        border-left-color: #0d6efd;
+    }
+    .migration-card.completed {
+        border-left-color: #198754;
+    }
+    .migration-card.failed {
+        border-left-color: #dc3545;
+    }
+    .progress-container {
+        position: relative;
+        margin: 10px 0;
+    }
+    .log-container {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        max-height: 300px;
+        overflow-y: auto;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        padding: 10px;
+    }
+    .log-entry {
+        margin-bottom: 5px;
+        padding: 2px 0;
+    }
+    .log-info { color: #0d6efd; }
+    .log-success { color: #198754; }
+    .log-warning { color: #ffc107; }
+    .log-error { color: #dc3545; }
+    .data-preview {
+        max-height: 200px;
+        overflow-y: auto;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 10px;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+    }
+</style>
+{% endblock %}
+    {% block content %}
+    <div class="container-fluid">
+        <!-- En-tête -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h1 class="h3 mb-1">
+                            <i class="bi bi-arrow-repeat me-2 text-primary"></i>
+                            Gestionnaire de Migration
+                        </h1>
+                        <p class="text-muted mb-0">
+                            Importation et migration de données depuis d'autres systèmes
+                        </p>
+                    </div>
+                    <div>
+                        <button class="btn btn-primary" onclick="showImportModal()">
+                            <i class="bi bi-upload me-2"></i>
+                            Nouvelle Migration
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="refreshMigrations()">
+                            <i class="bi bi-arrow-clockwise me-2"></i>
+                            Actualiser
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Total Migrations</h6>
+                                <h3 class="mb-0" id="totalMigrations">0</h3>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="bi bi-list-ul display-6"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Réussies</h6>
+                                <h3 class="mb-0" id="completedMigrations">0</h3>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="bi bi-check-circle display-6"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-warning text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">En Cours</h6>
+                                <h3 class="mb-0" id="runningMigrations">0</h3>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="bi bi-hourglass-split display-6"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-danger text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Échouées</h6>
+                                <h3 class="mb-0" id="failedMigrations">0</h3>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="bi bi-x-circle display-6"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtres -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="row align-items-end">
+                            <div class="col-md-3">
+                                <label class="form-label">Type de Migration</label>
+                                <select class="form-select" id="typeFilter">
+                                    <option value="">Tous les types</option>
+                                    <option value="products">Produits</option>
+                                    <option value="clients">Clients</option>
+                                    <option value="suppliers">Fournisseurs</option>
+                                    <option value="invoices">Factures</option>
+                                    <option value="stock">Stock</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Statut</label>
+                                <select class="form-select" id="statusFilter">
+                                    <option value="">Tous les statuts</option>
+                                    <option value="pending">En attente</option>
+                                    <option value="running">En cours</option>
+                                    <option value="completed">Terminée</option>
+                                    <option value="failed">Échouée</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Période</label>
+                                <div class="input-group">
+                                    <input type="date" class="form-control" id="startDate">
+                                    <span class="input-group-text">à</span>
+                                    <input type="date" class="form-control" id="endDate">
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-outline-secondary w-100" onclick="clearFilters()">
+                                    <i class="bi bi-x-lg me-2"></i>
+                                    Effacer
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des migrations -->
+        <div class="row">
+            <div class="col-12">
+                <div id="migrationsContainer">
+                    <!-- Les migrations seront chargées ici -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Nouvelle Migration -->
+    <div class="modal fade" id="importModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-upload me-2"></i>
+                        Nouvelle Migration
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="importForm">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Type de Migration *</label>
+                                    <select class="form-select" id="migrationType" required>
+                                        <option value="">Sélectionner un type</option>
+                                        <option value="products">Produits</option>
+                                        <option value="clients">Clients</option>
+                                        <option value="suppliers">Fournisseurs</option>
+                                        <option value="invoices">Factures</option>
+                                        <option value="stock">Mouvements de Stock</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Format de Fichier *</label>
+                                    <select class="form-select" id="fileFormat" required>
+                                        <option value="">Sélectionner un format</option>
+                                        <option value="csv">CSV</option>
+                                        <option value="excel">Excel (.xlsx)</option>
+                                        <option value="json">JSON</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Nom de la Migration *</label>
+                            <input type="text" class="form-control" id="migrationName" required 
+                                   placeholder="Ex: Import produits depuis ancien système">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control" id="migrationDescription" rows="2"
+                                      placeholder="Description optionnelle de la migration"></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Fichier de Données *</label>
+                            <input type="file" class="form-control" id="dataFile" required
+                                   accept=".csv,.xlsx,.json">
+                            <div class="form-text">
+                                Formats acceptés : CSV, Excel (.xlsx), JSON. Taille max : 10MB
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="validateOnly">
+                                <label class="form-check-label" for="validateOnly">
+                                    Validation seulement (ne pas importer les données)
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="skipDuplicates" checked>
+                                <label class="form-check-label" for="skipDuplicates">
+                                    Ignorer les doublons
+                                </label>
+                            </div>
+                        </div>
+                    </form>
+
+                    <!-- Aperçu des données -->
+                    <div id="dataPreview" class="mt-3" style="display: none;">
+                        <h6>Aperçu des Données</h6>
+                        <div class="data-preview" id="previewContent">
+                            <!-- Aperçu sera affiché ici -->
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        Annuler
+                    </button>
+                    <button type="button" class="btn btn-outline-primary" onclick="previewData()" id="previewBtn">
+                        <i class="bi bi-eye me-2"></i>
+                        Aperçu
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="startMigration()" id="startBtn">
+                        <i class="bi bi-play me-2"></i>
+                        Démarrer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Détails Migration -->
+    <div class="modal fade" id="migrationDetailsModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Détails de la Migration
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="migrationDetailsContent">
+                        <!-- Contenu des détails -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        Fermer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Logs -->
+    <div class="modal fade" id="logsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-terminal me-2"></i>
+                        Logs de Migration
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="log-container" id="migrationLogs">
+                        <!-- Logs seront affichés ici -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-primary" onclick="downloadLogs()">
+                        <i class="bi bi-download me-2"></i>
+                        Télécharger
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        Fermer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+    <script src="{{ url_for('static', path='js/migration_manager.js') }}?v={{ range(1000, 9999) | random }}"></script>
+{% endblock %}

@@ -1,0 +1,39 @@
+# Docker Compose configuration for PowerClass
+# Note: 'version' is obsolete in recent Docker Compose versions
+
+services:
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nitek_app
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
+      HOST: 0.0.0.0
+      PORT: "8000"
+      RELOAD: "false"
+      INIT_DB_ON_STARTUP: "false"
+      SEED_DEFAULT_DATA: "true"
+      ENABLE_MIGRATIONS_WORKER: "false"
+      GOOGLE_SHEETS_CREDENTIALS_PATH: /app/credentials/symbolic-folio-470422-v3-71562b79a03f.json
+      GOOGLE_SHEETS_SPREADSHEET_ID: 1VHMujdZw-iPs28pz1rC9Ol72T9l9YTW6Wr9j5ujEsXQ
+      GOOGLE_SHEETS_WORKSHEET_NAME: Les produits
+      GOOGLE_SHEETS_AUTO_SYNC: "true"
+      # Debt reminder / Twilio will be injected from .env via env_file above
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - ./static/uploads:/app/static/uploads
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials:ro
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

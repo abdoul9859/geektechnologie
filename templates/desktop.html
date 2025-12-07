@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {% set gs = global_settings or {} %}
+  {% set comp = gs.company if gs.company is defined else {} %}
+  {% set name_val = gs.name or gs.company_name or (comp.companyName if comp is defined else None) or (comp.name if comp is defined else None) or 'Geek Technologie' %}
+  <title>Desktop • {{ name_val }}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+  <link href="/static/css/desktop.css?v={{ ASSET_VERSION() }}" rel="stylesheet">
+  <style>
+    /* Ensure user indicator + logout stay visible at top-right above the launchpad */
+.top-right-actions {
+      position: fixed;
+      top: 16px;
+      right: 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px; /* add a bit more spacing */
+      z-index: 0; /* behind windows; stays visible when no window */
+      pointer-events: none; /* avoid blocking interactions with windows */
+    }
+    .top-right-actions button { pointer-events: auto; }
+    .top-right-actions .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.35);
+      color: #fff;
+      font-size: 14px;
+      line-height: 1;
+      backdrop-filter: blur(6px);
+      margin-right: 6px; /* push away from logout */
+    }
+    .top-right-actions .user-role-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.14);
+      font-size: 12px;
+    }
+    .top-right-actions .arrangement-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(224,170,62,0.15);
+      color: var(--mustard-300);
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid rgba(224,170,62,0.3);
+      margin-right: 6px;
+    }
+    .top-right-actions .arrangement-indicator.manual {
+      background: rgba(255,87,87,0.15);
+      color: #ff5757;
+      border-color: rgba(255,87,87,0.3);
+    }
+    .top-right-actions .logout-btn, .lp-actions .btn-logout, .top-right-actions .refresh-btn {
+      border: none;
+      border-radius: 10px;
+      padding: 8px 12px;
+      background: rgba(255, 87, 87, 0.15);
+      color: #fff;
+      cursor: pointer;
+    }
+    .top-right-actions .refresh-btn {
+      background: rgba(13, 110, 253, 0.25); /* Bootstrap primary tint */
+    }
+    .top-right-actions .logout-btn {
+      position: relative; /* ensure it doesn't overlap */
+      margin-left: 8px;
+    }
+  </style>
+  <script>
+    // Vérifie l'authentification avant d'afficher le desktop
+    (function(){
+      async function checkAuth(){
+        try {
+          const resp = await fetch('/api/auth/verify', { credentials: 'include' });
+          if (!resp.ok) {
+            const next = encodeURIComponent('/');
+            window.location.href = `/login?next=${next}`;
+          }
+        } catch(e){
+          const next = encodeURIComponent('/');
+          window.location.href = `/login?next=${next}`;
+        }
+      }
+      document.addEventListener('DOMContentLoaded', checkAuth);
+    })();
+  </script>
+</head>
+<body class="gt-desktop-body">
+  <!-- Desktop background -->
+  {% set gs = global_settings or {} %}
+  {% set comp = gs.company if gs.company is defined else {} %}
+  {% set bg_val = gs.desktop_bg or gs.desktop_background or gs.background_image or (comp.desktop_bg if comp is defined else None) %}
+  <div id="desktop" class="desktop{% if bg_val %} custom-bg{% endif %}" {% if bg_val %}style="--desktop-bg-url: url('{{ bg_val }}')"{% endif %}>
+    <!-- Top-right user indicator + logout -->
+    <div class="top-right-actions">
+      <div id="arrangementIndicator" class="arrangement-indicator" title="Mode d'arrangement automatique">
+        <i class="bi bi-grid-3x3-gap"></i>
+        <span>Auto</span>
+      </div>
+      <div id="userIndicator" class="user-chip" title="Utilisateur connecté">
+        <i class="bi bi-person-circle me-2"></i>
+        <span class="user-name">Utilisateur</span>
+        <span class="user-role-badge">user</span>
+      </div>
+      <button id="refreshBtn" class="refresh-btn" onclick="location.reload();" title="Actualiser la fenêtre">
+        <i class="bi bi-arrow-clockwise"></i>
+      </button>
+      <button id="logoutBtn" class="logout-btn" onclick="logout()" title="Se déconnecter">
+        <i class="bi bi-box-arrow-right"></i>
+      </button>
+    </div>
+    <!-- Windows container -->
+    <div id="windows" class="windows"></div>
+
+    <!-- Launchpad overlay -->
+    <div id="launchpad" class="launchpad hidden">
+      <div class="company-banner">
+        {% set gs = global_settings or {} %}
+        {% set comp = gs.company if gs.company is defined else {} %}
+        {% set name_val = gs.name or gs.company_name or (comp.companyName if comp is defined else None) or (comp.name if comp is defined else None) %}
+        {% set addr_val = gs.address or (comp.companyAddress if comp is defined else None) or (comp.address if comp is defined else None) %}
+        {% set email_val = gs.email or (comp.companyEmail if comp is defined else None) or (comp.email if comp is defined else None) %}
+        {% set phone_val = gs.phone or (comp.companyPhone if comp is defined else None) or (comp.phone if comp is defined else None) %}
+        {% set web_val = gs.website or (comp.companyWebsite if comp is defined else None) or (comp.website if comp is defined else None) %}
+        {% set logo_val = gs.logo or gs.logo_path or (comp.logo if comp is defined else None) %}
+        <div class="company-inner">
+          {% if logo_val %}
+          <div class="company-logo"><img src="{{ logo_val }}" alt="Logo" /></div>
+          {% endif %}
+          <div class="company-text">
+            <div class="company-name">{{ name_val or 'Votre Entreprise' }}</div>
+            <div class="company-sep" aria-hidden="true"></div>
+            <ul class="info-list">
+              {% if addr_val %}
+              <li class="info-item"><i class="bi bi-geo-alt-fill"></i><span>{{ addr_val }}</span></li>
+              {% endif %}
+              {% if phone_val %}
+              <li class="info-item"><i class="bi bi-telephone-fill"></i><span>{{ phone_val }}</span></li>
+              {% endif %}
+              {% if email_val %}
+              <li class="info-item"><i class="bi bi-envelope-fill"></i><span>{{ email_val }}</span></li>
+              {% endif %}
+              {% if web_val %}
+              <li class="info-item"><i class="bi bi-globe2"></i><span>{{ web_val }}</span></li>
+              {% endif %}
+            </ul>
+          </div>
+        </div>
+      </div>
+      <div class="lp-top">
+        <div class="search-wrap">
+          <i class="bi bi-search"></i>
+          <input id="lpSearch" type="text" placeholder="Rechercher une application…" />
+        </div>
+        <div class="lp-actions">
+          <button class="btn-logout" onclick="logout()" title="Se déconnecter">
+            <i class="bi bi-box-arrow-right me-2"></i>
+            <span>Déconnexion</span>
+          </button>
+        </div>
+      </div>
+      <div id="lpGrid" class="lp-grid">
+        <!-- Icons rendered by JS from APPS registry -->
+      </div>
+    </div>
+
+    <!-- Dock -->
+    <div id="dock" class="dock">
+      <button id="showLaunchpad" class="dock-item" title="Launchpad"><i class="bi bi-grid-3x3-gap-fill"></i></button>
+      <div id="dockApps" class="dock-apps"></div>
+      <div class="dock-right">
+        <button id="autoArrange" class="dock-item" title="Arrangement automatique"><i class="bi bi-grid-3x3-gap"></i></button>
+      </div>
+    </div>
+    <div id="hotzone" class="hotzone" aria-hidden="true"></div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="/static/js/auth.js?v={{ ASSET_VERSION() }}"></script>
+  <script src="/static/js/desktop.js?v={{ ASSET_VERSION() }}"></script>
+  <script>
+    // Hydrate company banner if backend didn't resolve settings
+    (function(){
+      async function tryHydrateCompany(){
+        const nameEl = document.querySelector('.company-name');
+        const subEl = document.querySelector('.company-sub');
+        const logoEl = document.querySelector('.company-logo img');
+        if (!nameEl) return;
+        const hasServerName = (nameEl.textContent||'').trim() && (nameEl.textContent||'').trim() !== 'Votre Entreprise';
+        if (hasServerName) return; // already hydrated from backend
+        try {
+          // First try consolidated appSettings
+          let company = null;
+          try {
+            const r1 = await fetch('/api/user-settings/appSettings', { credentials: 'include' });
+            if (r1.ok) {
+              const d1 = await r1.json();
+              company = (d1 && d1.company) ? d1.company : null;
+            }
+          } catch(e) {}
+          if (!company) {
+            // Fallback: INVOICE_COMPANY
+            const r2 = await fetch('/api/user-settings', { credentials: 'include' });
+            if (r2.ok) {
+              const d2 = await r2.json();
+              // Try common shapes: {items:[{setting_key, setting_value}]}
+              const items = Array.isArray(d2?.items) ? d2.items : (Array.isArray(d2) ? d2 : []);
+              const inv = items.find(x => (x.setting_key||'') === 'INVOICE_COMPANY');
+              if (inv && inv.setting_value) {
+                try { company = JSON.parse(inv.setting_value); } catch(e) {}
+              }
+            }
+          }
+          if (!company) return;
+          const name = company.companyName || company.name || '';
+          const address = company.companyAddress || company.address || '';
+          const email = company.companyEmail || company.email || '';
+          const phone = company.companyPhone || company.phone || '';
+          const website = company.companyWebsite || company.website || '';
+          const parts = [address, phone, email, website].filter(Boolean);
+          if (name) nameEl.textContent = name;
+          if (subEl && parts.length) subEl.textContent = parts.join(' • ');
+          const logo = company.logo || company.logo_path;
+          if (logo && logoEl) logoEl.src = logo;
+        } catch(e) {
+          // ignore
+        }
+      }
+      document.addEventListener('DOMContentLoaded', tryHydrateCompany);
+    })();
+    // Hydrate desktop background from settings if not provided by backend
+    (function(){
+      async function hydrateBackground(){
+        try {
+          const desk = document.getElementById('desktop');
+          if (!desk) return;
+          const already = desk.classList.contains('custom-bg');
+          if (already) return; // backend already set
+          // Try consolidated appSettings first
+          let bg = null;
+          try {
+            const r = await fetch('/api/user-settings/appSettings', { credentials: 'include' });
+            if (r.ok) {
+              const resp = await r.json();
+              const root = resp && (resp.data ?? resp); // unwrap {data: ...}
+              const app = root && (root.theme || root.desktop || root.ui || root) || {};
+              const theme = app.theme || app; // normalize
+              bg = theme.desktopBackground || theme.background || app.desktop_bg || null;
+              const company = root.company || {};
+              if (!bg && (company.desktop_bg || company.background)) {
+                bg = company.desktop_bg || company.background;
+              }
+            }
+          } catch(e) {}
+          if (!bg) {
+            // Fallback: general user-settings entries
+            const r2 = await fetch('/api/user-settings', { credentials: 'include' });
+            if (r2.ok) {
+              const resp2 = await r2.json();
+              const dataMap = resp2 && resp2.data ? resp2.data : {};
+              // Prefer canonical appSettings.theme.desktopBackground if present
+              if (dataMap.appSettings) {
+                try {
+                  const app = dataMap.appSettings;
+                  const theme = (app.theme || app.desktop || app.ui || {});
+                  bg = theme.desktopBackground || theme.background || app.desktop_bg || bg;
+                } catch(e) {}
+              }
+              // Legacy key fallback
+              if (!bg && dataMap.DESKTOP_BACKGROUND) {
+                bg = dataMap.DESKTOP_BACKGROUND;
+              }
+            }
+          }
+          if (bg) {
+            desk.style.setProperty('--desktop-bg-url', `url('${bg}')`);
+            desk.classList.add('custom-bg');
+          }
+        } catch(e) { /* ignore */ }
+      }
+      document.addEventListener('DOMContentLoaded', hydrateBackground);
+    })();
+  </script>
+</body>
+</html>

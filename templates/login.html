@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% set gs = global_settings or {} %}
+    {% set comp = gs.company if gs.company is defined else {} %}
+    {% set name_val = gs.name or gs.company_name or (comp.companyName if comp is defined else None) or (comp.name if comp is defined else None) or 'Geek Technologie' %}
+    <title>Connexion - {{ name_val }}</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    
+    <style>
+        body {
+            background: #111827;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-card {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            max-width: 500px;
+            width: 100%;
+        }
+        .login-header { background: #1f2937; color: white; padding: 2rem; text-align: center; }
+        .login-body {
+            padding: 2rem;
+        }
+        .btn-login { background:#1f2937; border:none; border-radius:25px; padding:12px 30px; font-weight:600; text-transform:uppercase; letter-spacing:1px; }
+        .form-control {
+            border-radius: 25px;
+            padding: 12px 20px;
+            border: 2px solid #e9ecef;
+            transition: all 0.3s ease;
+        }
+        .form-control:focus { border-color:#1f2937; box-shadow: 0 0 0 0.2rem rgba(31,41,55,0.25); }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-header">
+            {% set _logo = gs.logo or gs.logo_path or (comp.logo if comp is defined else None) %}
+            {% if _logo %}
+                <img src="{{ _logo }}" alt="Logo" style="max-width: 100%; height: auto; max-height: 120px; object-fit: contain;"/>
+            {% else %}
+                <i class="bi bi-gear-fill fs-1 mb-2"></i>
+                <h2 class="mb-0">{{ name_val }}</h2>
+            {% endif %}
+            <p class="mb-0 opacity-75 mt-2">Gestion de Stock</p>
+        </div>
+        
+        <div class="login-body">
+            <form id="loginForm">
+                <div class="mb-3">
+                    <div class="input-group">
+                        <span class="input-group-text bg-transparent border-end-0">
+                            <i class="bi bi-person-fill text-muted"></i>
+                        </span>
+                        <input type="text" class="form-control border-start-0" id="username" 
+                               placeholder="Nom d'utilisateur" required>
+                    </div>
+                </div>
+                
+                <div class="mb-4">
+                    <div class="input-group">
+                        <span class="input-group-text bg-transparent border-end-0">
+                            <i class="bi bi-lock-fill text-muted"></i>
+                        </span>
+                        <input type="password" class="form-control border-start-0" id="password" 
+                               placeholder="Mot de passe" required>
+                    </div>
+                </div>
+                
+                <div class="d-grid">
+                    <button type="submit" class="btn btn-primary btn-login">
+                        <i class="bi bi-box-arrow-in-right me-2"></i>Se connecter
+                    </button>
+                </div>
+            </form>
+            
+            
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Axios -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    
+    <script>
+        // S'assurer que les cookies HttpOnly éventuels sont bien envoyés/reçus
+        if (window.axios) {
+            axios.defaults.withCredentials = true;
+        }
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+            
+            // Désactiver le bouton pendant la requête
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Connexion...';
+            
+            try {
+                const response = await axios.post('/api/auth/login', {
+                    username: username,
+                    password: password
+                });
+                
+                // Initialiser l'AuthManager (token en mémoire uniquement)
+                if (window.authManager && typeof window.authManager.setTokenAndUser === 'function') {
+                    window.authManager.setTokenAndUser(response.data.access_token, response.data.user);
+                }
+
+                // Rediriger vers le tableau de bord
+                window.location.replace('/');
+                
+            } catch (error) {
+                let errorMessage = 'Erreur de connexion';
+                
+                if (error.response && error.response.data && error.response.data.detail) {
+                    errorMessage = error.response.data.detail;
+                }
+                
+                // Afficher l'erreur
+                showAlert(errorMessage, 'danger');
+                
+                // Réactiver le bouton
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-box-arrow-in-right me-2"></i>Se connecter';
+            }
+        });
+        
+        function showAlert(message, type = 'info') {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            // Insérer l'alerte avant le formulaire
+            const form = document.getElementById('loginForm');
+            form.parentNode.insertBefore(alertDiv, form);
+            
+            // Supprimer automatiquement après 5 secondes
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.remove();
+                }
+            }, 5000);
+        }
+        
+    </script>
+</body>
+</html>

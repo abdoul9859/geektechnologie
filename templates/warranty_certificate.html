@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Garantie GeekTechnologie</title>
+    <style>
+        @page {
+            margin: 15mm;
+            size: A4;
+        }
+        
+        body {
+            font-family: 'Arial', sans-serif;
+            font-size: 11pt;
+            line-height: 1.4;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+        /* Filigrane simple (texte) pour ce template autonome */
+        .w-watermark {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 80pt;
+            font-weight: 800;
+            color: #1f2937;
+            opacity: 0.05;
+            letter-spacing: 4px;
+            transform: rotate(-18deg);
+            z-index: 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            pointer-events: none;
+            user-select: none;
+        }
+        .page-content { position: relative; z-index: 1; }
+
+        .warranty-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo {
+            max-width: 200px;
+            height: auto;
+            margin-bottom: 10px;
+        }
+
+        .company-name {
+            font-size: 24pt;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .warranty-title {
+            font-size: 18pt;
+            font-weight: bold;
+            margin: 20px 0;
+            text-align: center;
+            color: #34495e;
+        }
+
+        .warranty-info {
+            background-color: #f8f9fa;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .warranty-duration {
+            font-size: 16pt;
+            font-weight: bold;
+            color: #e74c3c;
+            text-align: center;
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #fff3cd;
+            border: 2px solid #ffeaa7;
+            border-radius: 5px;
+        }
+
+        .section {
+            margin: 20px 0;
+        }
+
+        .section-title {
+            font-size: 12pt;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 5px;
+        }
+
+        .procedure-step {
+            margin: 15px 0;
+            padding-left: 20px;
+        }
+
+        .procedure-step strong {
+            color: #2980b9;
+        }
+
+        .exclusions {
+            background-color: #fff5f5;
+            border-left: 4px solid #e74c3c;
+            padding: 15px;
+            margin: 20px 0;
+        }
+
+        .company-info {
+            margin-top: 30px;
+            text-align: center;
+            background-color: #2c3e50;
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+        }
+
+        .company-info h3 {
+            margin: 0 0 10px 0;
+            font-size: 14pt;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .contact-info {
+            font-size: 10pt;
+            line-height: 1.6;
+        }
+
+        .invoice-ref {
+            text-align: right;
+            font-size: 10pt;
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        ul {
+            padding-left: 20px;
+        }
+
+        li {
+            margin: 8px 0;
+        }
+
+        .highlight {
+            background-color: #fff3cd;
+            padding: 2px 5px;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="w-watermark">GEEK TECHNOLOGIE</div>
+    <div class="page-content">
+    <div class="invoice-ref">
+        <strong>Facture N°:</strong> {{ invoice.invoice_number }}<br>
+        <strong>Date:</strong> {{ invoice.date.strftime('%d/%m/%Y') }}<br>
+        <strong>Client:</strong> {{ invoice.client.name }}
+    </div>
+
+    <div class="warranty-header">
+        <!-- Logo placeholder - vous pouvez ajouter votre logo ici -->
+        <div class="company-name">GEEK<br><span style="color: #3498db;">TEC</span></div>
+    </div>
+
+    <div class="warranty-title">Garantie GeekTechnologie</div>
+
+    <div class="warranty-info">
+        <div class="warranty-duration">
+            Durée de la Garantie: {{ warranty_duration }} mois
+        </div>
+        
+        <p><strong>La garantie GeekTechnologie couvre votre appareil pendant une période de {{ warranty_duration }} mois à compter de la date d'achat.</strong></p>
+        <p>Pendant cette période, nous nous engageons à réparer ou à remplacer votre appareil en cas de dysfonctionnement.</p>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Étendue de la Garantie</div>
+        
+        <div class="procedure-step">
+            <strong>Conformité :</strong> Votre appareil doit être conforme à la description que nous avons fournie lors de l'achat.<br>
+            S'il ne fonctionne pas correctement ou s'il ne correspond pas à nos spécifications, nous le réparerons sans frais supplémentaires.<br>
+            <strong>Vices Cachés :</strong> Si votre ordinateur portable présente des défauts cachés qui affectent son bon fonctionnement, nous prendrons en charge les réparations nécessaires.
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Procédure de Réclamation</div>
+        
+        <div class="procedure-step">
+            <strong>En cas de problème avec votre appareil, veuillez suivre ces étapes :</strong><br><br>
+            <strong>Contactez notre Service Client :</strong> Appelez notre service client au numéro indiqué sur votre facture d'achat.<br>
+            Nous vous guiderons dans la procédure de réclamation.<br><br>
+            <strong>Préparez les Documents :</strong> Préparez votre facture d'achat et toute autre preuve d'achat.<br><br>
+            <strong>Réparation ou Remplacement :</strong> Si votre appareil est défectueux, nous le réparerons ou le remplacerons conformément à nos conditions de garantie.
+        </div>
+    </div>
+
+    <div class="exclusions">
+        <div class="section-title">Exclusions de Garantie</div>
+        <p>La garantie ne couvre pas les dommages causés par une utilisation inappropriée, une négligence, une chute, une exposition à l'eau, ou toute autre action qui ne relève pas d'un défaut de fabrication.</p>
+    </div>
+
+    <div style="margin: 30px 0; text-align: center; font-style: italic;">
+        <p>Chez GeekTechnologie, nous sommes fiers de la qualité de nos produits et nous nous engageons à vous offrir une expérience sans souci avec votre ordinateur portable.</p>
+        
+        <p><strong>J'espère que cette garantie répond à vos besoins. Si vous avez d'autres questions, n'hésitez pas à nous contacter.</strong> 🖥️</p>
+    </div>
+
+    <div class="company-info">
+        <h3>GEEKTECHNOLOGIE</h3>
+        <div class="contact-info">
+            128, Avenue du Président Lamine Gueye, Dakar<br>
+            Centre Commercial Touba Sandaga, 3E ÉTAGE<br>
+            <strong>TEL:</strong> +221773106106 • +221777264401 • +2213382312322<br>
+            <strong>MAIL:</strong> GEEKTECHNOLOGIEDAKAR@GMAIL.COM
+        </div>
+    </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Synchronisation Google Sheets - Geek Technologie</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css?v={{ ASSET_VERSION }}">
+</head>
+<body>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h2><i class="fas fa-table me-2"></i>Synchronisation Google Sheets</h2>
+                    <a href="/settings" class="btn btn-secondary">
+                        <i class="fas fa-arrow-left me-1"></i>Retour aux Paramètres
+                    </a>
+                </div>
+
+                <!-- Alert pour les messages -->
+                <div id="alert-container"></div>
+
+                <!-- Carte d'information -->
+                <div class="card mb-4">
+                    <div class="card-header bg-info text-white">
+                        <h5 class="mb-0"><i class="fas fa-info-circle me-2"></i>À propos</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-2">
+                            Cette fonctionnalité permet d'importer automatiquement les produits depuis un Google Spreadsheet.
+                        </p>
+                        <h6>Configuration requise:</h6>
+                        <ol class="mb-0">
+                            <li>Un fichier de credentials Google (Service Account JSON)</li>
+                            <li>L'ID du Google Spreadsheet contenant vos produits</li>
+                            <li>Le nom de la feuille (par défaut: "Tableau1")</li>
+                        </ol>
+                        <hr>
+                        <p class="mb-1"><strong>Colonnes attendues dans votre Google Sheet:</strong></p>
+                        <ul class="list-unstyled mb-0">
+                            <li><code>Nom du produit</code> - Nom du produit</li>
+                            <li><code>Categorie</code> - Catégorie du produit</li>
+                            <li><code>Etat</code> - État (neuf, occasion, venant)</li>
+                            <li><code>Marque</code> - Marque du produit</li>
+                            <li><code>Modele</code> - Modèle du produit</li>
+                            <li><code>Prix d'achat (FCFA)</code> - Prix d'achat</li>
+                            <li><code>Prix en gros (FCFA)</code> - Prix de vente en gros</li>
+                            <li><code>Prix unitaire (FCFA)</code> - Prix de vente unitaire</li>
+                            <li><code>Code-barres produit</code> - Code-barres</li>
+                            <li><code>Quantite en stock</code> - Quantité disponible</li>
+                            <li><code>Description</code> - Description détaillée</li>
+                            <li><code>Notes</code> - Notes additionnelles</li>
+                            <li><code>Lieu ou Image du produit</code> - Chemin vers l'image</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Statut de configuration -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h5 class="mb-0"><i class="fas fa-cog me-2"></i>Statut de Configuration</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <p class="mb-2">
+                                    <strong>Credentials Google:</strong>
+                                    <span id="credentials-status" class="badge bg-secondary">Chargement...</span>
+                                </p>
+                            </div>
+                            <div class="col-md-6">
+                                <p class="mb-2">
+                                    <strong>Spreadsheet ID:</strong>
+                                    <span id="spreadsheet-id-status" class="badge bg-secondary">Chargement...</span>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Formulaire de synchronisation -->
+                <div class="card mb-4">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="fas fa-sync me-2"></i>Synchroniser les Produits</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="sync-form">
+                            <div class="mb-3">
+                                <label for="spreadsheet-id" class="form-label">
+                                    ID du Google Spreadsheet <span class="text-danger">*</span>
+                                </label>
+                                <input type="text"
+                                       class="form-control"
+                                       id="spreadsheet-id"
+                                       name="spreadsheet_id"
+                                       placeholder="1a2b3c4d5e6f7g8h9i0j..."
+                                       required>
+                                <div class="form-text">
+                                    L'ID se trouve dans l'URL du Google Sheet:
+                                    https://docs.google.com/spreadsheets/d/<strong>ID</strong>/edit
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="worksheet-name" class="form-label">
+                                    Nom de la feuille
+                                </label>
+                                <input type="text"
+                                       class="form-control"
+                                       id="worksheet-name"
+                                       name="worksheet_name"
+                                       value="Tableau1">
+                                <div class="form-text">
+                                    Le nom de l'onglet dans votre Google Sheet (par défaut: "Tableau1")
+                                </div>
+                            </div>
+
+                            <div class="mb-3 form-check">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       id="update-existing"
+                                       name="update_existing">
+                                <label class="form-check-label" for="update-existing">
+                                    Mettre à jour les produits existants
+                                </label>
+                                <div class="form-text">
+                                    Si coché, les produits existants (identifiés par leur code-barres) seront mis à jour
+                                </div>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-info" id="test-connection-btn">
+                                    <i class="fas fa-link me-1"></i>Tester la Connexion
+                                </button>
+                                <button type="button" class="btn btn-outline-primary" id="preview-btn">
+                                    <i class="fas fa-eye me-1"></i>Prévisualiser
+                                </button>
+                                <button type="submit" class="btn btn-primary" id="sync-btn">
+                                    <i class="fas fa-sync me-1"></i>Synchroniser
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header bg-light">
+                        <h5 class="mb-0"><i class="fas fa-eye me-2"></i>Prévisualisation de la Feuille & Sélection IMEI</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="imei-columns" class="form-label">Colonnes IMEI (sélection multiple)</label>
+                            <select id="imei-columns" class="form-select" multiple></select>
+                            <div class="form-text">Sélectionnez une ou plusieurs colonnes IMEI. Les colonnes contenant "IMEI" seront proposées automatiquement.</div>
+                        </div>
+                        <div class="table-responsive" id="preview-table-container" style="display: none;">
+                            <table class="table table-sm table-bordered" id="preview-table">
+                                <thead></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Synchronisation Automatique -->
+                <div class="card mb-4">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0"><i class="fas fa-robot me-2"></i>Synchronisation Automatique</h5>
+                    </div>
+                    <div class="card-body">
+                        <p class="mb-3">
+                            La synchronisation automatique vérifie les changements dans Google Sheets et met à jour l'application automatiquement.
+                        </p>
+                        
+                        <!-- Statut de la synchronisation automatique -->
+                        <div class="alert alert-info" id="auto-sync-status-alert">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>Statut:</strong> 
+                                    <span id="auto-sync-status-text">Chargement...</span>
+                                </div>
+                                <span id="auto-sync-status-badge" class="badge bg-secondary">-</span>
+                            </div>
+                            <div id="auto-sync-details" style="display: none;" class="mt-2">
+                                <small>
+                                    <div><strong>Intervalle:</strong> <span id="sync-interval">-</span> minutes</div>
+                                    <div><strong>Dernière sync:</strong> <span id="last-sync-time">-</span></div>
+                                    <div><strong>Prochaine sync:</strong> <span id="next-sync-time">-</span></div>
+                                    <div id="last-sync-stats" class="mt-2" style="display: none;">
+                                        <strong>Derniers résultats:</strong>
+                                        <span id="last-stats-text"></span>
+                                    </div>
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- Boutons de contrôle -->
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-success" id="start-auto-sync-btn">
+                                <i class="fas fa-play me-1"></i>Démarrer
+                            </button>
+                            <button type="button" class="btn btn-danger" id="stop-auto-sync-btn" disabled>
+                                <i class="fas fa-stop me-1"></i>Arrêter
+                            </button>
+                            <button type="button" class="btn btn-primary" id="trigger-sync-btn" disabled>
+                                <i class="fas fa-sync me-1"></i>Synchroniser Maintenant
+                            </button>
+                            <button type="button" class="btn btn-secondary" id="refresh-status-btn">
+                                <i class="fas fa-refresh me-1"></i>Actualiser le Statut
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Résultats de synchronisation -->
+                <div class="card mb-4" id="sync-results-card" style="display: none;">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="fas fa-check-circle me-2"></i>Résultats de la Synchronisation</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row text-center">
+                            <div class="col-md-3">
+                                <h3 class="text-primary" id="stats-total">0</h3>
+                                <p class="text-muted">Total</p>
+                            </div>
+                            <div class="col-md-3">
+                                <h3 class="text-success" id="stats-created">0</h3>
+                                <p class="text-muted">Créés</p>
+                            </div>
+                            <div class="col-md-3">
+                                <h3 class="text-info" id="stats-updated">0</h3>
+                                <p class="text-muted">Mis à jour</p>
+                            </div>
+                            <div class="col-md-3">
+                                <h3 class="text-danger" id="stats-errors">0</h3>
+                                <p class="text-muted">Erreurs</p>
+                            </div>
+                        </div>
+                        <div id="error-details-container" style="display: none;">
+                            <hr>
+                            <h6>Détails des erreurs:</h6>
+                            <div id="error-details-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/utils.js?v={{ ASSET_VERSION }}"></script>
+    <script>
+        // Fonction pour afficher une alerte
+        function showAlert(message, type = 'info') {
+            const alertContainer = document.getElementById('alert-container');
+            const alertHtml = `
+                <div class="alert alert-${type} alert-dismissible fade show" role="alert">
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            `;
+            alertContainer.innerHTML = alertHtml;
+
+            // Auto-dismiss après 5 secondes
+            setTimeout(() => {
+                const alert = alertContainer.querySelector('.alert');
+                if (alert) {
+                    const bsAlert = new bootstrap.Alert(alert);
+                    bsAlert.close();
+                }
+            }, 5000);
+        }
+
+        // Charger le statut de configuration au chargement de la page
+        async function loadConfigStatus() {
+            try {
+                const response = await fetch('/api/google-sheets/settings', {
+                    credentials: 'include'
+                });
+
+        // Prévisualiser la feuille et proposer les colonnes IMEI
+        document.getElementById('preview-btn').addEventListener('click', async function() {
+            const spreadsheetId = document.getElementById('spreadsheet-id').value.trim();
+            const worksheetName = document.getElementById('worksheet-name').value.trim();
+
+            if (!spreadsheetId) {
+                showAlert('Veuillez saisir un ID de Spreadsheet', 'warning');
+                return;
+            }
+
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Chargement...';
+
+            try {
+                const response = await fetch('/api/google-sheets/preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        spreadsheet_id: spreadsheetId,
+                        worksheet_name: worksheetName,
+                        limit: 15
+                    })
+                });
+
+                const data = await response.json();
+                if (!data.success) {
+                    showAlert(`Erreur de prévisualisation: ${data.error || 'Inconnue'}`, 'danger');
+                    return;
+                }
+
+                // Remplir le select des colonnes IMEI
+                const select = document.getElementById('imei-columns');
+                select.innerHTML = '';
+                (data.headers || []).forEach(h => {
+                    const opt = document.createElement('option');
+                    opt.value = h;
+                    opt.textContent = h;
+                    if ((data.suggested_imei_headers || []).includes(h)) {
+                        opt.selected = true;
+                    }
+                    select.appendChild(opt);
+                });
+
+                // Rendu du tableau de prévisualisation
+                const thead = document.querySelector('#preview-table thead');
+                const tbody = document.querySelector('#preview-table tbody');
+                thead.innerHTML = '';
+                tbody.innerHTML = '';
+
+                if ((data.headers || []).length) {
+                    const hr = document.createElement('tr');
+                    (data.headers || []).forEach(h => {
+                        const th = document.createElement('th');
+                        th.textContent = h;
+                        hr.appendChild(th);
+                    });
+                    thead.appendChild(hr);
+                }
+                (data.rows || []).forEach(row => {
+                    const tr = document.createElement('tr');
+                    (data.headers || []).forEach((_, idx) => {
+                        const td = document.createElement('td');
+                        td.textContent = (row[idx] !== undefined && row[idx] !== null) ? row[idx] : '';
+                        tr.appendChild(td);
+                    });
+                    tbody.appendChild(tr);
+                });
+
+                document.getElementById('preview-table-container').style.display = 'block';
+                showAlert('Prévisualisation chargée et colonnes IMEI proposées.', 'info');
+            } catch (error) {
+                console.error('Erreur:', error);
+                showAlert('Erreur lors de la prévisualisation', 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-eye me-1"></i>Prévisualiser';
+            }
+        });
+
+                if (response.ok) {
+                    const data = await response.json();
+
+                    // Mise à jour du statut des credentials
+                    const credentialsStatus = document.getElementById('credentials-status');
+                    if (data.credentials_configured) {
+                        credentialsStatus.textContent = 'Configuré';
+                        credentialsStatus.className = 'badge bg-success';
+                    } else {
+                        credentialsStatus.textContent = 'Non configuré';
+                        credentialsStatus.className = 'badge bg-danger';
+                    }
+
+                    // Mise à jour du Spreadsheet ID
+                    const spreadsheetIdStatus = document.getElementById('spreadsheet-id-status');
+                    if (data.spreadsheet_id) {
+                        spreadsheetIdStatus.textContent = data.spreadsheet_id;
+                        spreadsheetIdStatus.className = 'badge bg-success';
+                        document.getElementById('spreadsheet-id').value = data.spreadsheet_id;
+                    } else {
+                        spreadsheetIdStatus.textContent = 'Non défini';
+                        spreadsheetIdStatus.className = 'badge bg-warning';
+                    }
+
+                    // Mise à jour du nom de la feuille
+                    if (data.worksheet_name) {
+                        document.getElementById('worksheet-name').value = data.worksheet_name;
+                    }
+                } else {
+                    showAlert('Erreur lors du chargement de la configuration', 'danger');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                showAlert('Erreur de connexion au serveur', 'danger');
+            }
+        }
+
+        // Tester la connexion
+        document.getElementById('test-connection-btn').addEventListener('click', async function() {
+            const spreadsheetId = document.getElementById('spreadsheet-id').value.trim();
+
+            if (!spreadsheetId) {
+                showAlert('Veuillez saisir un ID de Spreadsheet', 'warning');
+                return;
+            }
+
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Test en cours...';
+
+            try {
+                const response = await fetch('/api/google-sheets/test-connection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ spreadsheet_id: spreadsheetId })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showAlert(`Connexion réussie! Spreadsheet: "${data.spreadsheet_title}" - Feuilles disponibles: ${data.worksheets.join(', ')}`, 'success');
+                } else {
+                    showAlert(`Erreur de connexion: ${data.error}`, 'danger');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                showAlert('Erreur lors du test de connexion', 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-link me-1"></i>Tester la Connexion';
+            }
+        });
+
+        // Formulaire de synchronisation
+        document.getElementById('sync-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const spreadsheetId = document.getElementById('spreadsheet-id').value.trim();
+            const worksheetName = document.getElementById('worksheet-name').value.trim();
+            const updateExisting = document.getElementById('update-existing').checked;
+
+            if (!spreadsheetId) {
+                showAlert('Veuillez saisir un ID de Spreadsheet', 'warning');
+                return;
+            }
+
+            const syncBtn = document.getElementById('sync-btn');
+            syncBtn.disabled = true;
+            syncBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Synchronisation en cours...';
+
+            // Masquer les anciens résultats
+            document.getElementById('sync-results-card').style.display = 'none';
+
+            try {
+                const response = await fetch('/api/google-sheets/sync', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({
+                        spreadsheet_id: spreadsheetId,
+                        worksheet_name: worksheetName,
+                        update_existing: updateExisting,
+                        imei_columns: Array.from(document.getElementById('imei-columns').selectedOptions).map(o => o.value)
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showAlert(data.message, 'success');
+
+                    // Afficher les résultats
+                    document.getElementById('stats-total').textContent = data.stats.total;
+                    document.getElementById('stats-created').textContent = data.stats.created;
+                    document.getElementById('stats-updated').textContent = data.stats.updated;
+                    document.getElementById('stats-errors').textContent = data.stats.errors;
+
+                    // Afficher les erreurs si présentes
+                    if (data.stats.error_details && data.stats.error_details.length > 0) {
+                        const errorDetailsList = document.getElementById('error-details-list');
+                        errorDetailsList.innerHTML = data.stats.error_details.map(err =>
+                            `<div class="alert alert-danger py-1 px-2 mb-1"><small>${err}</small></div>`
+                        ).join('');
+                        document.getElementById('error-details-container').style.display = 'block';
+                    }
+
+                    document.getElementById('sync-results-card').style.display = 'block';
+                } else {
+                    showAlert(`Erreur: ${data.detail || data.message}`, 'danger');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                showAlert('Erreur lors de la synchronisation', 'danger');
+            } finally {
+                syncBtn.disabled = false;
+                syncBtn.innerHTML = '<i class="fas fa-sync me-1"></i>Synchroniser';
+            }
+        });
+
+        // Charger le statut de la synchronisation automatique
+        async function loadAutoSyncStatus() {
+            try {
+                const response = await fetch('/api/google-sheets/auto-sync/status', {
+                    credentials: 'include'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const status = data.status;
+
+                    // Mise à jour du statut
+                    const statusText = document.getElementById('auto-sync-status-text');
+                    const statusBadge = document.getElementById('auto-sync-status-badge');
+                    const startBtn = document.getElementById('start-auto-sync-btn');
+                    const stopBtn = document.getElementById('stop-auto-sync-btn');
+                    const triggerBtn = document.getElementById('trigger-sync-btn');
+
+                    if (status.is_running) {
+                        statusText.textContent = 'Actif';
+                        statusBadge.textContent = 'EN COURS';
+                        statusBadge.className = 'badge bg-success';
+                        startBtn.disabled = true;
+                        stopBtn.disabled = false;
+                        triggerBtn.disabled = false;
+
+                        // Afficher les détails
+                        document.getElementById('auto-sync-details').style.display = 'block';
+                        document.getElementById('sync-interval').textContent = status.sync_interval_minutes;
+                        
+                        if (status.last_sync_time) {
+                            const lastSync = new Date(status.last_sync_time);
+                            document.getElementById('last-sync-time').textContent = lastSync.toLocaleString('fr-FR');
+                        }
+                        
+                        if (status.next_sync_time) {
+                            const nextSync = new Date(status.next_sync_time);
+                            document.getElementById('next-sync-time').textContent = nextSync.toLocaleString('fr-FR');
+                        }
+
+                        if (status.last_sync_stats) {
+                            const stats = status.last_sync_stats;
+                            document.getElementById('last-stats-text').textContent = 
+                                `${stats.updated} mis à jour, ${stats.created} créés, ${stats.errors} erreurs`;
+                            document.getElementById('last-sync-stats').style.display = 'block';
+                        }
+                    } else {
+                        statusText.textContent = 'Inactif';
+                        statusBadge.textContent = 'ARRÊTÉ';
+                        statusBadge.className = 'badge bg-secondary';
+                        startBtn.disabled = false;
+                        stopBtn.disabled = true;
+                        triggerBtn.disabled = true;
+                        document.getElementById('auto-sync-details').style.display = 'none';
+                    }
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+            }
+        }
+
+        // Démarrer la synchronisation automatique
+        document.getElementById('start-auto-sync-btn').addEventListener('click', async function() {
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Démarrage...';
+
+            try {
+                const spreadsheetId = document.getElementById('spreadsheet-id').value.trim();
+                const worksheetName = document.getElementById('worksheet-name').value.trim();
+                const payload = {
+                    spreadsheet_id: spreadsheetId || undefined,
+                    worksheet_name: worksheetName || undefined
+                };
+                const response = await fetch('/api/google-sheets/auto-sync/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showAlert(data.message, 'success');
+                    await loadAutoSyncStatus();
+                } else {
+                    showAlert(`Erreur: ${data.detail || data.message}`, 'danger');
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                showAlert('Erreur lors du démarrage de la synchronisation automatique', 'danger');
+                btn.disabled = false;
+            } finally {
+                btn.innerHTML = '<i class="fas fa-play me-1"></i>Démarrer';
+            }
+        });
+
+        // Arrêter la synchronisation automatique
+        document.getElementById('stop-auto-sync-btn').addEventListener('click', async function() {
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Arrêt...';
+
+            try {
+                const response = await fetch('/api/google-sheets/auto-sync/stop', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showAlert(data.message, 'info');
+                    await loadAutoSyncStatus();
+                } else {
+                    showAlert(`Erreur: ${data.message}`, 'danger');
+                    btn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                showAlert('Erreur lors de l\'arrêt de la synchronisation automatique', 'danger');
+                btn.disabled = false;
+            } finally {
+                btn.innerHTML = '<i class="fas fa-stop me-1"></i>Arrêter';
+            }
+        });
+
+        // Déclencher une synchronisation immédiate
+        document.getElementById('trigger-sync-btn').addEventListener('click', async function() {
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Synchronisation...';
+
+            try {
+                const response = await fetch('/api/google-sheets/auto-sync/trigger', {
+                    method: 'POST',
+                    credentials: 'include'
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    showAlert(data.message, 'success');
+                    
+                    if (data.stats) {
+                        showAlert(
+                            `Résultats: ${data.stats.updated} mis à jour, ${data.stats.created} créés, ${data.stats.errors} erreurs`,
+                            'info'
+                        );
+                    }
+                    
+                    await loadAutoSyncStatus();
+                } else {
+                    showAlert(`Erreur: ${data.detail || data.message}`, 'danger');
+                }
+            } catch (error) {
+                console.error('Erreur:', error);
+                showAlert('Erreur lors de la synchronisation', 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-sync me-1"></i>Synchroniser Maintenant';
+            }
+        });
+
+        // Actualiser le statut
+        document.getElementById('refresh-status-btn').addEventListener('click', async function() {
+            const btn = this;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Actualisation...';
+
+            await loadAutoSyncStatus();
+
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-refresh me-1"></i>Actualiser le Statut';
+            }, 500);
+        });
+
+        // Charger la configuration au chargement de la page
+        loadConfigStatus();
+        loadAutoSyncStatus();
+
+        // Actualiser le statut toutes les 30 secondes
+        setInterval(loadAutoSyncStatus, 30000);
+    </script>
+</body>
+</html>

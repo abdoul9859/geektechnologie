@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+
+{% block title %}Gestion des Produits - {{ _app_name }}{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3 mb-0">
+                <i class="bi bi-box-seam me-2"></i>Gestion des Produits
+            </h1>
+            <button id="newProductBtn" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#productModal" onclick="openProductModal()">
+                <i class="bi bi-plus-circle me-2"></i>Nouveau Produit
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Filtres (style aligné sur la page Devis) -->
+<div id="productsFilters" class="filters-compact">
+    <div class="row mb-4">
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="searchInput" class="form-label">Recherche</label>
+            <input type="text" class="form-control" id="searchInput" placeholder="Nom, marque, modèle ou code-barres">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="categoryFilter" class="form-label">Catégorie</label>
+            <select class="form-select" id="categoryFilter">
+                <option value="">Toutes les catégories</option>
+            </select>
+            <div class="form-text text-muted" id="categoriesHint" style="display:none">
+                <small>Chargé à <span id="categoriesCachedAt"></span></small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="conditionFilter" class="form-label">État</label>
+            <select class="form-select" id="conditionFilter">
+                <option value="">Tous les états</option>
+            </select>
+            <div class="form-text text-muted" id="conditionsHint" style="display:none">
+                <small>Options mises en cache</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label class="form-label">Variantes</label>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="hasVariantsFilter">
+                <label class="form-check-label" for="hasVariantsFilter">Avec variantes</label>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="minPriceFilter" class="form-label">Prix min</label>
+            <input type="number" step="1" min="0" inputmode="numeric" pattern="[0-9]*" class="form-control" id="minPriceFilter" placeholder="0">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="maxPriceFilter" class="form-label">Prix max</label>
+            <input type="number" step="1" min="0" inputmode="numeric" pattern="[0-9]*" class="form-control" id="maxPriceFilter" placeholder="0">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="brandFilter" class="form-label">Marque</label>
+            <input type="text" class="form-control" id="brandFilter" placeholder="Ex: Samsung">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="modelFilter" class="form-label">Modèle</label>
+            <input type="text" class="form-control" id="modelFilter" placeholder="Ex: Galaxy A12">
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="hasBarcodeFilter" class="form-label">Code-barres</label>
+            <select class="form-select" id="hasBarcodeFilter">
+                <option value="">Tous</option>
+                <option value="true">Avec code-barres</option>
+                <option value="false">Sans code-barres</option>
+            </select>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label class="form-label">Stock</label>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="inStockFilter">
+                <label class="form-check-label" for="inStockFilter">En stock uniquement</label>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6 d-flex align-items-end justify-content-end">
+        <button class="btn btn-outline-secondary" onclick="resetFilters()">
+            <i class="bi bi-arrow-clockwise me-2"></i>Réinitialiser
+        </button>
+    </div>
+</div>
+
+</div>
+
+<!-- Liste des produits -->
+<div class="card shadow">
+    <div class="card-header">
+        <h6 class="m-0 font-weight-bold text-primary">
+            <i class="bi bi-list me-2"></i>Liste des Produits
+        </h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table id="productsTable" class="table table-hover">
+                <thead>
+                    <tr>
+                        <th style="width: 80px;">Image</th>
+                        <th data-col="name">Nom</th>
+                        <th data-col="category">Catégorie</th>
+                        <th data-col="price">Prix</th>
+                        <th>Prix Gros</th>
+                        <th data-col="stock">Stock</th>
+                        <th data-col="barcode">Code-barres</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="productsTableBody">
+                    <tr>
+                        <td colspan="8" class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Chargement...</span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        <div id="pagination-container"></div>
+    </div>
+</div>
+
+<!-- Modal Produit -->
+<div class="modal fade" id="productModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="productModalTitle">
+                    <i class="bi bi-box-seam me-2"></i>Nouveau Produit
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="productForm">
+                    <input type="hidden" id="productId">
+                    
+                    <!-- Informations de base -->
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="mb-3">
+                                <label for="productName" class="form-label">Nom du produit *</label>
+                                <input type="text" class="form-control" id="productName" required>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="productCategory" class="form-label">Catégorie</label>
+                                <select class="form-select" id="productCategory" onchange="onCategoryChange()">
+                                    <option value="">Sélectionner...</option>
+                                    <option value="Smartphones">Smartphones</option>
+                                    <option value="Ordinateurs portables">Ordinateurs portables</option>
+                                    <option value="Tablettes">Tablettes</option>
+                                    <option value="Accessoires">Accessoires</option>
+                                    <option value="Téléphones fixes">Téléphones fixes</option>
+                                    <option value="Montres connectées">Montres connectées</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row" id="productConditionGroup">
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="productCondition" class="form-label">État</label>
+                                <select class="form-select" id="productCondition">
+                                    <option value="">Sélectionner...</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="productBrand" class="form-label">Marque</label>
+                                <input type="text" class="form-control" id="productBrand">
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="productModel" class="form-label">Modèle</label>
+                                <input type="text" class="form-control" id="productModel">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 admin-only" style="display: none;">
+                            <div class="mb-3">
+                                <label for="productPurchasePrice" class="form-label">Prix d'achat (FCFA)</label>
+                                <input type="number" class="form-control" id="productPurchasePrice" step="1" min="0" inputmode="numeric" pattern="[0-9]*">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="productPrice" class="form-label">Prix unitaire (FCFA) *</label>
+                                <input type="number" class="form-control" id="productPrice" step="1" min="0" inputmode="numeric" pattern="[0-9]*" required>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label for="productWholesalePrice" class="form-label">Prix en gros (FCFA)</label>
+                                <input type="number" class="form-control" id="productWholesalePrice" step="1" min="0" inputmode="numeric" pattern="[0-9]*">
+                                <div class="form-text">Optionnel - pour ventes en gros</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Code-barres produit (masqué si variantes) -->
+                    <div class="mb-3" id="productBarcodeGroup">
+                        <label for="productBarcode" class="form-label">Code-barres produit</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="productBarcode">
+                            <button type="button" id="productBarcodeGenBtn" class="btn btn-outline-secondary" onclick="generateNewProductBarcode()" title="Générer un code-barres">
+                                <i class="bi bi-upc-scan"></i>
+                            </button>
+                        </div>
+                        <div class="form-text" id="barcodeHelpText" style="display: none;">
+                            Les codes-barres sont gérés au niveau des variantes individuelles
+                        </div>
+                    </div>
+
+                    <!-- Quantité (pour produits sans variantes) -->
+                    <div class="mb-3" id="productQuantityGroup">
+                        <label for="productQuantity" class="form-label">Quantité en stock</label>
+                        <input type="number" class="form-control" id="productQuantity" min="0" value="0">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="productDescription" class="form-label">Description</label>
+                        <textarea class="form-control" id="productDescription" rows="3"></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="productNotes" class="form-label">Notes</label>
+                        <textarea class="form-control" id="productNotes" rows="2"></textarea>
+                    </div>
+
+                    <!-- Image du produit -->
+                    <div class="mb-3">
+                        <label class="form-label">Image du produit</label>
+                        <div id="productImagePreview" class="mb-2" style="display: none;">
+                            <img id="productImagePreviewImg" src="" alt="Image du produit" style="max-width: 200px; max-height: 200px; border-radius: 8px;">
+                            <button type="button" class="btn btn-sm btn-outline-danger ms-2" onclick="deleteProductImage()">
+                                <i class="bi bi-trash"></i> Supprimer
+                            </button>
+                        </div>
+                        <input type="file" class="form-control" id="productImageFile" accept="image/*" onchange="previewProductImage(this)">
+                        <div class="form-text">Formats acceptés : JPG, PNG, GIF, WEBP (max 5MB)</div>
+                    </div>
+
+                    <!-- Attributs dynamiques de la catégorie -->
+                    <div class="card mt-4" id="categoryAttributesSection">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">
+                                <i class="bi bi-sliders me-2"></i>Attributs de la catégorie
+                            </h6>
+                            <small class="text-muted" id="categoryAttributesHint">Sélectionnez une catégorie</small>
+                        </div>
+                        <div class="card-body" id="categoryAttributesContainer">
+                            <p class="text-muted mb-0">Aucun attribut à afficher</p>
+                        </div>
+                    </div>
+
+                    <!-- Section Variantes -->
+                    <div class="card mt-4" id="variantsSection">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">
+                                <i class="bi bi-collection me-2"></i>Variantes du produit
+                            </h6>
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addVariant()">
+                                <i class="bi bi-plus me-1"></i>Ajouter une variante
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="variantsList">
+                                <p class="text-muted text-center">Aucune variante ajoutée</p>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" onclick="saveProduct()">
+                    <i class="bi bi-check-circle me-2"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Détails Produit -->
+<div class="modal fade" id="productDetailsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-info-circle me-2"></i>Détails du Produit
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="productDetailsContent">
+                <!-- Contenu généré dynamiquement -->
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Charger rapidement les stats produits (catégories + états) avant le JS principal
+// pour accélérer le premier rendu perçu
+window.__productsBoot = (async function(){
+  try {
+    const res = await axios.get('/api/products/stats');
+    const stats = res && res.data ? res.data : {};
+    // Hydrater des variables globales consommées par products.js
+    window.__preloadedProductStats = stats;
+    // Pré-peupler les filtres si possible
+    if (stats.categories && Array.isArray(stats.categories)) {
+      const categoryFilter = document.getElementById('categoryFilter');
+      const productCategory = document.getElementById('productCategory');
+      if (categoryFilter) {
+        while (categoryFilter.options.length > 1) categoryFilter.remove(1);
+      }
+      if (productCategory) {
+        while (productCategory.options.length > 1) productCategory.remove(1);
+      }
+      (stats.categories || []).forEach(c => {
+        const name = c.name || '';
+        if (!name) return;
+        if (categoryFilter) {
+          const opt = document.createElement('option');
+          opt.value = name; opt.textContent = name; categoryFilter.appendChild(opt);
+        }
+        if (productCategory) {
+          const opt2 = document.createElement('option');
+          opt2.value = name; opt2.textContent = name; productCategory.appendChild(opt2);
+        }
+      });
+      const hint = document.getElementById('categoriesHint');
+      const ca = document.getElementById('categoriesCachedAt');
+      if (hint && ca && stats.cached_at) { hint.style.display='block'; ca.textContent = new Date(stats.cached_at).toLocaleString('fr-FR'); }
+    }
+    if (stats.allowed_conditions && Array.isArray(stats.allowed_conditions.options)) {
+      window.__preloadedAllowedConditions = stats.allowed_conditions;
+      const hint = document.getElementById('conditionsHint');
+      if (hint) hint.style.display='block';
+    }
+  } catch (e) {
+    // silencieux: le JS principal gérera les fallbacks
+  }
+})();
+
+// Afficher les éléments admin-only si l'utilisateur est admin
+function showAdminElements() {
+    try {
+        if (window.authManager && window.authManager.isAdmin()) {
+            document.querySelectorAll('.admin-only').forEach(el => {
+                el.style.display = 'block';
+            });
+        }
+    } catch (e) {
+        console.error('Erreur lors de la vérification du rôle:', e);
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Vérifier immédiatement
+    showAdminElements();
+    
+    // Revérifier après un court délai pour s'assurer que authManager.verifyAuth() est terminé
+    setTimeout(showAdminElements, 100);
+    setTimeout(showAdminElements, 500);
+});
+</script>
+<script src="/static/js/products.js?v={{ ASSET_VERSION() }}"></script>
+{% endblock %}

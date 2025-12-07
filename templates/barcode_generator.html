@@ -1,0 +1,368 @@
+{% extends "base.html" %}
+
+{% block title %}Générateur de Codes-barres - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+<style>
+    .barcode-card {
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    }
+    .barcode-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1) !important;
+    }
+    .main-content {
+        padding: 20px;
+    }
+    .barcode-container {
+        border: 1px solid #ddd;
+        padding: 6px;
+        margin: 6px;
+        text-align: center;
+        background: white;
+        border-radius: 6px;
+        page-break-inside: avoid;
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    .barcode-label {
+        font-size: 10px;
+        font-weight: bold;
+        margin-bottom: 4px;
+        line-height: 1.1;
+    }
+    .barcode-price {
+        font-size: 10px;
+        color: #2b2b2b;
+        font-weight: 600;
+        margin-top: 2px;
+    }
+    @media print {
+        body * {
+            visibility: hidden;
+        }
+        #printArea, #printArea * { visibility: visible; }
+        #printArea {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+        }
+        .barcode-container { border: 1px solid #000; margin: 2mm; }
+        .no-print {
+            display: none !important;
+        }
+    }
+    .product-selection {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+</style>
+{% endblock %}
+    {% block content %}
+    <div class="container-fluid">
+        <!-- En-tête -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center flex-wrap">
+                    <div>
+                        <h1 class="h3 mb-1">
+                            <i class="bi bi-upc-scan me-2 text-primary"></i>
+                            Générateur de Codes-barres
+                        </h1>
+                        <p class="text-muted mb-0">
+                            Générez et imprimez des codes-barres pour vos produits
+                        </p>
+                    </div>
+                        <div class="d-flex gap-2 align-items-center">
+                            <div class="d-flex align-items-center gap-2">
+                                <label class="form-label mb-0">Taille étiquette</label>
+                                <select class="form-select form-select-sm" id="labelSize" style="width:auto">
+                                    <option value="58x40">58 x 40 mm</option>
+                                    <option value="62x29">62 x 29 mm</option>
+                                    <option value="50x30">50 x 30 mm</option>
+                                    <option value="40x30">40 x 30 mm</option>
+                                    <option value="30x20">30 x 20 mm</option>
+                                </select>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <label class="form-label mb-0">Copies/produit</label>
+                                <input type="number" id="copiesPerProduct" class="form-control form-control-sm" value="1" min="1" max="100" style="width:80px">
+                            </div>
+                        <button class="btn btn-outline-primary" onclick="generateCustomBarcode()">
+                            <i class="bi bi-plus-circle me-2"></i>
+                            Code-barres personnalisé
+                        </button>
+                        <button class="btn btn-success" onclick="printSelected()" id="printBtn" disabled>
+                            <i class="bi bi-printer me-2"></i>
+                            Imprimer sélectionnés
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques -->
+        <div class="row mb-4">
+            <div class="col-md-3 mb-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalProducts">0</h4>
+                                <p class="mb-0">Total Produits</p>
+                            </div>
+                            <i class="bi bi-box display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="selectedCount">0</h4>
+                                <p class="mb-0">Sélectionnés</p>
+                            </div>
+                            <i class="bi bi-check-square display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="withBarcodes">0</h4>
+                                <p class="mb-0">Avec codes-barres</p>
+                            </div>
+                            <i class="bi bi-upc display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-warning text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="withoutBarcodes">0</h4>
+                                <p class="mb-0">Sans codes-barres</p>
+                            </div>
+                            <i class="bi bi-exclamation-triangle display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtres et sélection -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-4">
+                                <label for="searchInput" class="form-label">Recherche</label>
+                                <div class="input-group">
+                                    <span class="input-group-text">
+                                        <i class="bi bi-search"></i>
+                                    </span>
+                                    <input type="text" class="form-control" id="searchInput" 
+                                           placeholder="Rechercher un produit...">
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="categoryFilter" class="form-label">Catégorie</label>
+                                <select class="form-select" id="categoryFilter">
+                                    <option value="">Toutes les catégories</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="barcodeFilter" class="form-label">Code-barres</label>
+                                <select class="form-select" id="barcodeFilter">
+                                    <option value="">Tous</option>
+                                    <option value="with">Avec code-barres</option>
+                                    <option value="without">Sans code-barres</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="selectAllCheck">
+                                    <label class="form-check-label" for="selectAllCheck">
+                                        Tout sélectionner
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-outline-secondary w-100" onclick="clearFilters()">
+                                    <i class="bi bi-x-circle me-1"></i>
+                                    Effacer
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des produits -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="bi bi-list me-2"></i>
+                            Sélection des Produits
+                        </h5>
+                        <span class="badge bg-primary" id="resultsCount">0 produit</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="product-selection">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th width="50">
+                                                <input type="checkbox" class="form-check-input" id="selectAllTableCheck">
+                                            </th>
+                                            <th>Produit</th>
+                                            <th>Catégorie</th>
+                                            <th>Prix</th>
+                                            <th>Code-barres</th>
+                                            <th>Aperçu</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="productsTableBody">
+                                        <tr>
+                                            <td colspan="7" class="text-center py-4">
+                                                <div class="spinner-border text-primary" role="status">
+                                                    <span class="visually-hidden">Chargement...</span>
+                                                </div>
+                                                <p class="text-muted mt-2 mb-0">Chargement des produits...</p>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Zone d'impression (cachée) -->
+        <div id="printArea" style="display: none;">
+            <div id="printContent"></div>
+        </div>
+    </div>
+
+    <!-- Modal de code-barres personnalisé -->
+    <div class="modal fade" id="customBarcodeModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-upc-scan me-2"></i>
+                        Code-barres Personnalisé
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="customBarcodeForm">
+                        <div class="mb-3">
+                            <label for="customText" class="form-label">
+                                Texte à encoder <span class="text-danger">*</span>
+                            </label>
+                            <input type="text" class="form-control" id="customText" required
+                                   placeholder="Ex: 1234567890123">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="customLabel" class="form-label">
+                                Libellé (optionnel)
+                            </label>
+                            <input type="text" class="form-control" id="customLabel"
+                                   placeholder="Ex: Produit personnalisé">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="customPrice" class="form-label">
+                                Prix (optionnel)
+                            </label>
+                            <input type="number" class="form-control" id="customPrice" min="0" step="1"
+                                   placeholder="Prix en XOF">
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="barcodeFormat" class="form-label">
+                                Format du code-barres
+                            </label>
+                            <select class="form-select" id="barcodeFormat">
+                                <option value="CODE128">CODE128 (Recommandé)</option>
+                                <option value="EAN13">EAN13</option>
+                                <option value="EAN8">EAN8</option>
+                                <option value="CODE39">CODE39</option>
+                                <option value="ITF14">ITF14</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Aperçu -->
+                        <div class="mb-3">
+                            <label class="form-label">Aperçu</label>
+                            <div class="border rounded p-3 text-center bg-light">
+                                <div id="customBarcodePreview">
+                                    <p class="text-muted">Saisissez un texte pour voir l'aperçu</p>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="printCustomBarcode()">
+                        <i class="bi bi-printer me-1"></i>
+                        Imprimer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal d'aperçu d'impression -->
+    <div class="modal fade" id="printPreviewModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-eye me-2"></i>
+                        Aperçu d'impression
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="previewContent" class="d-flex flex-wrap justify-content-center">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmPrint()">
+                        <i class="bi bi-printer me-1"></i>
+                        Imprimer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+    <script src="{{ url_for('static', path='js/barcode_generator.js') }}"></script>
+{% endblock %}

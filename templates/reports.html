@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+
+{% block title %}Rapports - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+    .report-card {
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    }
+    .report-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1) !important;
+    }
+    .main-content {
+        padding: 20px;
+    }
+    .chart-container {
+        position: relative;
+        height: 400px;
+        margin-bottom: 20px;
+    }
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .stock-card {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+    .finance-card {
+        background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+    }
+    .sales-card {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+    }
+</style>
+{% endblock %}
+    {% block content %}
+    <div class="container-fluid">
+        <!-- En-tête -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center flex-wrap">
+                    <div>
+                        <h1 class="h3 mb-1">
+                            <i class="bi bi-graph-up me-2 text-primary"></i>
+                            Rapports et Analyses
+                        </h1>
+                        <p class="text-muted mb-0">
+                            Analysez vos performances et suivez vos indicateurs clés
+                        </p>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-primary" onclick="exportReport()">
+                            <i class="bi bi-download me-2"></i>
+                            Exporter
+                        </button>
+                        <button class="btn btn-primary" onclick="refreshReports()">
+                            <i class="bi bi-arrow-clockwise me-2"></i>
+                            Actualiser
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sélecteur de période -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-3">
+                                <label for="reportType" class="form-label">Type de rapport</label>
+                                <select class="form-select" id="reportType">
+                                    <option value="overview">Vue d'ensemble</option>
+                                    <option value="stock">Rapport de stock</option>
+                                    <option value="finance">Rapport financier</option>
+                                    <option value="sales">Rapport des ventes</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="periodType" class="form-label">Période</label>
+                                <select class="form-select" id="periodType">
+                                    <option value="today">Aujourd'hui</option>
+                                    <option value="week">Cette semaine</option>
+                                    <option value="month" selected>Ce mois</option>
+                                    <option value="quarter">Ce trimestre</option>
+                                    <option value="year">Cette année</option>
+                                    <option value="custom">Personnalisée</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2" id="dateFromContainer" style="display: none;">
+                                <label for="dateFrom" class="form-label">Date début</label>
+                                <input type="date" class="form-control" id="dateFrom">
+                            </div>
+                            <div class="col-md-2" id="dateToContainer" style="display: none;">
+                                <label for="dateTo" class="form-label">Date fin</label>
+                                <input type="date" class="form-control" id="dateTo">
+                            </div>
+                            <div class="col-md-3">
+                                <button class="btn btn-success w-100" onclick="generateReport()">
+                                    <i class="bi bi-play-fill me-2"></i>
+                                    Générer le rapport
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Métriques principales -->
+        <div class="row mb-4" id="metricsRow">
+            <div class="col-md-3 mb-3">
+                <div class="card text-white metric-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalRevenue">0 XOF</h4>
+                                <p class="mb-0">Chiffre d'affaires</p>
+                            </div>
+                            <i class="bi bi-currency-exchange display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-white stock-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalProducts">0</h4>
+                                <p class="mb-0">Produits en stock</p>
+                            </div>
+                            <i class="bi bi-box display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-white finance-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalInvoices">0</h4>
+                                <p class="mb-0">Factures émises</p>
+                            </div>
+                            <i class="bi bi-receipt display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card text-white sales-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalClients">0</h4>
+                                <p class="mb-0">Clients actifs</p>
+                            </div>
+                            <i class="bi bi-people display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Contenu des rapports -->
+        <div id="reportContent">
+            <!-- Vue d'ensemble -->
+            <div id="overviewReport">
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-graph-up me-2"></i>
+                                    Évolution du chiffre d'affaires
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="revenueChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-pie-chart me-2"></i>
+                                    Répartition des ventes
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="salesChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rapport de stock -->
+            <div id="stockReport" style="display: none;">
+                <div class="row mb-4">
+                    <div class="col-md-8">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-boxes me-2"></i>
+                                    Stock par produit
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="stockChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-exclamation-triangle me-2"></i>
+                                    Alertes de stock
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="stockAlerts">
+                                    <div class="text-center py-3">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Chargement...</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tableau détaillé du stock -->
+                <div class="row">
+                    <div class="col-12">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-table me-2"></i>
+                                    Détail du stock
+                                </h5>
+                            </div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Produit</th>
+                                                <th>Quantité</th>
+                                                <th>Prix unitaire</th>
+                                                <th>Valeur stock</th>
+                                                <th>Statut</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="stockTableBody">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rapport financier -->
+            <div id="financeReport" style="display: none;">
+                <div class="row mb-4">
+                    <div class="col-md-6">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-cash-stack me-2"></i>
+                                    Revenus vs Dépenses
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="financeChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-credit-card me-2"></i>
+                                    Méthodes de paiement
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="paymentMethodsChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rapport des ventes -->
+            <div id="salesReport" style="display: none;">
+                <div class="row mb-4">
+                    <div class="col-md-8">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-graph-up-arrow me-2"></i>
+                                    Tendance des ventes
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="chart-container">
+                                    <canvas id="salesTrendChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card shadow-sm">
+                            <div class="card-header">
+                                <h5 class="mb-0">
+                                    <i class="bi bi-trophy me-2"></i>
+                                    Top produits
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="topProducts">
+                                    <div class="text-center py-3">
+                                        <div class="spinner-border text-primary" role="status">
+                                            <span class="visually-hidden">Chargement...</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+    <script src="{{ url_for('static', path='js/reports.js') }}?v={{ ASSET_VERSION() }}"></script>
+{% endblock %}

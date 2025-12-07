@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+
+{% block title %}Gestionnaire de Cache - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<style>
+    .cache-card {
+        transition: all 0.3s ease;
+        border-left: 4px solid transparent;
+    }
+    .cache-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    .cache-card.active {
+        border-left-color: #198754;
+    }
+    .cache-card.expired {
+        border-left-color: #ffc107;
+    }
+    .cache-card.disabled {
+        border-left-color: #6c757d;
+    }
+    .memory-usage {
+        height: 200px;
+    }
+    .cache-stats {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .performance-chart {
+        height: 300px;
+    }
+</style>
+{% endblock %}
+    {% block content %}
+    <div class="container-fluid">
+        <!-- En-tête -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h1 class="h3 mb-1">
+                            <i class="bi bi-hdd-stack me-2 text-primary"></i>
+                            Gestionnaire de Cache
+                        </h1>
+                        <p class="text-muted mb-0">
+                            Surveillance et gestion du système de cache de l'application
+                        </p>
+                    </div>
+                    <div>
+                        <button class="btn btn-danger me-2" onclick="clearAllCache()">
+                            <i class="bi bi-trash me-2"></i>
+                            Vider Tout
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="refreshCacheData()">
+                            <i class="bi bi-arrow-clockwise me-2"></i>
+                            Actualiser
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques globales -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card cache-stats text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Utilisation Mémoire</h6>
+                                <h3 class="mb-0" id="memoryUsage">0 MB</h3>
+                                <small id="memoryPercent">0% utilisé</small>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="bi bi-memory display-6"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Taux de Réussite</h6>
+                                <h3 class="mb-0" id="hitRate">0%</h3>
+                                <small id="hitCount">0 hits</small>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="bi bi-check-circle display-6"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-warning text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Entrées Actives</h6>
+                                <h3 class="mb-0" id="activeEntries">0</h3>
+                                <small id="totalEntries">sur 0 total</small>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="bi bi-database display-6"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Temps Moyen</h6>
+                                <h3 class="mb-0" id="avgResponseTime">0ms</h3>
+                                <small>Temps de réponse</small>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="bi bi-speedometer2 display-6"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Graphiques de performance -->
+        <div class="row mb-4">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-graph-up me-2"></i>
+                            Performance du Cache
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="performanceChart" class="performance-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="bi bi-pie-chart me-2"></i>
+                            Utilisation Mémoire
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="memoryChart" class="memory-usage"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtres -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <div class="row align-items-end">
+                            <div class="col-md-3">
+                                <label class="form-label">Type de Cache</label>
+                                <select class="form-select" id="typeFilter">
+                                    <option value="">Tous les types</option>
+                                    <option value="database">Base de données</option>
+                                    <option value="api">API</option>
+                                    <option value="session">Session</option>
+                                    <option value="static">Fichiers statiques</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Statut</label>
+                                <select class="form-select" id="statusFilter">
+                                    <option value="">Tous les statuts</option>
+                                    <option value="active">Actif</option>
+                                    <option value="expired">Expiré</option>
+                                    <option value="disabled">Désactivé</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Recherche</label>
+                                <input type="text" class="form-control" id="searchInput" 
+                                       placeholder="Rechercher par clé ou valeur...">
+                            </div>
+                            <div class="col-md-2">
+                                <button class="btn btn-outline-secondary w-100" onclick="clearFilters()">
+                                    <i class="bi bi-x-lg me-2"></i>
+                                    Effacer
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des entrées de cache -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="bi bi-list me-2"></i>
+                            Entrées de Cache
+                        </h5>
+                        <span class="badge bg-primary" id="entriesCount">0 entrées</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="cacheEntriesContainer">
+                            <!-- Les entrées seront chargées ici -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Détails Cache -->
+    <div class="modal fade" id="cacheDetailsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Détails de l'Entrée Cache
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="cacheDetailsContent">
+                        <!-- Contenu des détails -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-danger" onclick="deleteCacheEntry()">
+                        <i class="bi bi-trash me-2"></i>
+                        Supprimer
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        Fermer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Configuration Cache -->
+    <div class="modal fade" id="configModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-gear me-2"></i>
+                        Configuration du Cache
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="configForm">
+                        <div class="mb-3">
+                            <label class="form-label">Taille Maximum (MB)</label>
+                            <input type="number" class="form-control" id="maxSize" value="100" min="10" max="1000">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">TTL par Défaut (minutes)</label>
+                            <input type="number" class="form-control" id="defaultTTL" value="60" min="1" max="1440">
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="autoCleanup" checked>
+                                <label class="form-check-label" for="autoCleanup">
+                                    Nettoyage automatique des entrées expirées
+                                </label>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="compressionEnabled" checked>
+                                <label class="form-check-label" for="compressionEnabled">
+                                    Activer la compression des données
+                                </label>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                        Annuler
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="saveConfiguration()">
+                        <i class="bi bi-check me-2"></i>
+                        Sauvegarder
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="{{ url_for('static', path='js/cache_manager.js') }}"></script>
+{% endblock %}

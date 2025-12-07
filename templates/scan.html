@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Scanner Codes-Barres - Geek Technologie{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3 mb-0">
+                <i class="bi bi-qr-code-scan me-2"></i>Scanner de Codes-Barres
+            </h1>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Scanner -->
+    <div class="col-md-6">
+        <div class="card shadow">
+            <div class="card-header">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="bi bi-camera me-2"></i>Scanner
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="barcodeInput" class="form-label">Code-barres</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="barcodeInput" placeholder="Scannez ou saisissez le code-barres" autofocus>
+                        <button class="btn btn-primary" onclick="searchBarcode()">
+                            <i class="bi bi-search"></i>
+                        </button>
+                    </div>
+                    <div class="form-text">Placez le curseur dans le champ et utilisez votre scanner</div>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button class="btn btn-success" onclick="startCamera()">
+                        <i class="bi bi-camera-video me-2"></i>Démarrer la caméra
+                    </button>
+                    <button class="btn btn-secondary" onclick="stopCamera()" style="display: none;" id="stopCameraBtn">
+                        <i class="bi bi-camera-video-off me-2"></i>Arrêter la caméra
+                    </button>
+                </div>
+
+                <!-- Zone de la caméra -->
+                <div id="cameraContainer" class="mt-3" style="display: none;">
+                    <video id="video" width="100%" height="300" style="border: 1px solid #ddd; border-radius: 5px;"></video>
+                    <canvas id="canvas" style="display: none;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Résultats -->
+    <div class="col-md-6">
+        <div class="card shadow">
+            <div class="card-header">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="bi bi-box me-2"></i>Résultats de la recherche
+                </h6>
+            </div>
+            <div class="card-body">
+                <div id="searchResults">
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-qr-code fs-1 d-block mb-2"></i>
+                        Scannez un code-barres pour voir les résultats
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Historique des scans -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card shadow">
+            <div class="card-header">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="bi bi-clock-history me-2"></i>Historique des scans
+                </h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th>Heure</th>
+                                <th>Code-barres</th>
+                                <th>Produit</th>
+                                <th>Stock</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="scanHistoryBody">
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">
+                                    Aucun scan effectué
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/scan.js?v={{ ASSET_VERSION }}"></script>
+{% endblock %}

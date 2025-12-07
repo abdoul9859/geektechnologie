@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}Erreur Interne - Geek Technologie{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row justify-content-center">
+        <div class="col-lg-6">
+            <div class="text-center">
+                <div class="error mx-auto" data-text="500">500</div>
+                <p class="lead text-gray-800 mb-5">Erreur Interne du Serveur</p>
+                <p class="text-gray-500 mb-0">Une erreur inattendue s'est produite sur le serveur.</p>
+                <a href="/">&larr; Retour au Dashboard</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.error {
+    font-size: 7rem;
+    position: relative;
+    line-height: 1;
+    width: 12.5rem;
+}
+
+.error:before {
+    content: attr(data-text);
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+    background-size: 400%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.25);
+    animation: animate 3s ease-in-out infinite;
+}
+
+@keyframes animate {
+    0%, 100% {
+        background-position: 0 0;
+    }
+    25% {
+        background-position: 100% 0;
+    }
+    50% {
+        background-position: 100% 100%;
+    }
+    75% {
+        background-position: 0% 100%;
+    }
+}
+</style>
+{% endblock %}

@@ -1,0 +1,376 @@
+{% extends "base.html" %}
+
+{% block title %}Gestion des Devis - Geek Technologie{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3 mb-0">
+                <i class="bi bi-file-earmark-text me-2"></i>Gestion des Devis
+            </h1>
+            <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#quotationModal" onclick="openQuotationModal()">
+                <i class="bi bi-plus-circle me-2"></i>Nouveau Devis
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Statistiques -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Total Devis</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="totalQuotations">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-file-earmark-text fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-left-success shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Acceptés</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="acceptedQuotations">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-check-circle fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-left-warning shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">En Attente</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="pendingQuotations">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-clock fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-left-info shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Valeur Totale</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="totalValue">0 XOF</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-currency-exchange fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Détails Devis -->
+<div class="modal fade" id="quotationDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-eye me-2"></i>Détails du Devis</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="quotationDetailBody">
+                <div class="text-center py-4 text-muted">Chargement...</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                <button type="button" class="btn btn-primary" onclick="printQuotation(document.getElementById('quotationDetailModal').dataset.quotationId)"><i class="bi bi-printer me-2"></i>Imprimer</button>
+            </div>
+        </div>
+    </div>
+    </div>
+
+<!-- Filtres -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="statusFilter" class="form-label">Statut</label>
+            <select class="form-select" id="statusFilter">
+                <option value="">Tous les statuts</option>
+                <option value="en attente">En attente</option>
+                <option value="accepté">Accepté</option>
+                <option value="refusé">Refusé</option>
+                <option value="expiré">Expiré</option>
+            </select>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="clientFilter" class="form-label">Client</label>
+            <input type="text" class="form-control" id="clientFilter" placeholder="Rechercher un client...">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="dateFromFilter" class="form-label">Date de début</label>
+            <input type="date" class="form-control" id="dateFromFilter">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label for="dateToFilter" class="form-label">Date de fin</label>
+            <input type="date" class="form-control" id="dateToFilter">
+        </div>
+    </div>
+</div>
+
+<!-- Liste des devis -->
+<div class="card shadow">
+    <div class="card-header">
+        <h6 class="m-0 font-weight-bold text-primary">
+            <i class="bi bi-list me-2"></i>Liste des Devis
+        </h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table id="quotationsTable" class="table table-hover">
+                <thead>
+                    <tr>
+                        <th data-col="number">Numéro</th>
+                        <th data-col="client">Client</th>
+                        <th data-col="date">Date</th>
+                        <th data-col="validity">Validité</th>
+                        <th data-col="total">Montant</th>
+                        <th data-col="status">Statut</th>
+                        <th data-col="sent" class="text-center">Envoyé</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="quotationsTableBody">
+                    <tr>
+                        <td colspan="7" class="text-center">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Chargement...</span>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        <div id="pagination-container"></div>
+    </div>
+</div>
+
+<!-- Modal Devis -->
+<div class="modal fade" id="quotationModal" tabindex="-1">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="quotationModalTitle">
+                    <i class="bi bi-plus-circle me-2"></i>Nouveau Devis
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="quotationForm">
+                    <input type="hidden" id="quotationId">
+                    
+                    <!-- Informations générales -->
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="quotationNumber" class="form-label">Numéro de devis</label>
+                                <input type="text" class="form-control" id="quotationNumber" readonly>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="quotationDate" class="form-label">Date de devis *</label>
+                                <input type="date" class="form-control" id="quotationDate" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="mb-3 position-relative">
+                                <label for="clientSearch" class="form-label">Client *</label>
+                                <div class="input-group">
+                                    <input type="text" id="clientSearch" class="form-control" 
+                                           placeholder="Rechercher un client..." 
+                                           autocomplete="off" required>
+                                    <button class="btn btn-outline-primary" type="button" id="openQuickClientBtnQ">
+                                        <i class="bi bi-person-plus"></i> Nouveau
+                                    </button>
+                                </div>
+                                <input type="hidden" id="clientSelect" required>
+                                <div id="clientSearchResults" class="list-group position-absolute w-100" 
+                                     style="z-index: 1050; max-height: 200px; overflow-y: auto; display: none;"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="mb-3">
+                                <label for="validUntil" class="form-label">Valide jusqu'au</label>
+                                <input type="date" class="form-control" id="validUntil">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Articles -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6>Articles</h6>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-sm btn-outline-primary" onclick="addQuotationItem()">
+                                    <i class="bi bi-plus-circle me-1"></i>Ajouter un article
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addCustomItem()">
+                                    <i class="bi bi-file-earmark-plus me-1"></i>Ajouter un service/ligne libre
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Produit / Service</th>
+                                        <th>Quantité</th>
+                                        <th>Type de prix</th>
+                                        <th>Prix unitaire</th>
+                                        <th>Total</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="quotationItemsBody">
+                                    <!-- Les articles seront ajoutés ici -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Totaux + paramètres TVA (aligné sur facture) -->
+                    <div class="row">
+                        <div class="col-md-8"></div>
+                        <div class="col-md-4">
+                            <div class="card">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between">
+                                        <span>Sous-total:</span>
+                                        <span id="subtotal">0 XOF</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                        <span id="taxLabel">TVA (18%):</span>
+                                        <span id="taxAmount">0 XOF</span>
+                                    </div>
+                                    <div class="row g-2 align-items-center">
+                                        <div class="col-6">
+                                            <div class="form-check form-switch">
+                                                <input class="form-check-input" type="checkbox" id="showTaxSwitch" checked>
+                                                <label class="form-check-label" for="showTaxSwitch">Afficher TVA</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <div class="input-group input-group-sm">
+                                                <span class="input-group-text">Taux</span>
+                                                <input type="number" class="form-control" id="taxRateInput" min="0" max="100" step="0.01" value="18">
+                                                <span class="input-group-text">%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <hr>
+                                    <div class="d-flex justify-content-between fw-bold">
+                                        <span>Total:</span>
+                                        <span id="totalAmount">0 XOF</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="quotationNotes" class="form-label">Notes</label>
+                        <textarea class="form-control" id="quotationNotes" rows="3" placeholder="Notes sur ce devis..."></textarea>
+                    </div>
+
+                    <!-- Signature -->
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0"><i class="bi bi-pen me-2"></i>Signature</h6>
+                            <small class="text-muted">PNG importé ou signature manuscrite</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Importer une image PNG</label>
+                                    <input type="file" id="signatureFile" accept="image/png" class="form-control" />
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Ou signer ci-dessous</label>
+                                    <canvas id="signatureCanvas" height="150" class="border w-100" style="background:#fff; cursor: crosshair;"></canvas>
+                                    <div class="mt-2">
+                                        <button type="button" class="btn btn-sm btn-outline-secondary" id="signatureClearBtn"><i class="bi bi-eraser"></i> Effacer</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <small class="text-muted">La signature sera ajoutée au devis et visible à l'impression.</small>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" onclick="saveQuotation()">
+                    <i class="bi bi-check-circle me-2"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Modal Client rapide (reprise facture) -->
+<div class="modal fade" id="clientQuickModalQ" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>Nouveau Client</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-2">
+                    <label class="form-label">Nom *</label>
+                    <input type="text" class="form-control" id="qcNameQ" required>
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Téléphone</label>
+                    <input type="text" class="form-control" id="qcPhoneQ">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label">Email</label>
+                    <input type="email" class="form-control" id="qcEmailQ">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" id="saveQuickClientBtnQ">
+                    <i class="bi bi-check-circle me-1"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/quotations.js?v={{ ASSET_VERSION }}"></script>
+{% endblock %}

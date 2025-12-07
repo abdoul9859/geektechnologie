@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% set _gs = global_settings or {} %}
+    {% set _comp = _gs.company if _gs.company is defined else {} %}
+    {% set _app_name = _gs.name or _gs.company_name or (_comp.companyName if _comp is defined else None) or (_comp.name if _comp is defined else None) or 'Geek Technologie' %}
+    <title>{% block title %}{{ _app_name }}{% endblock %}</title>
+    {% set _favicon = _gs.favicon if (_gs is defined and _gs.favicon) else None %}
+    {% if _favicon %}
+    <link rel="icon" href="{{ _favicon }}?v={{ ASSET_VERSION() }}">
+    <link rel="shortcut icon" href="{{ _favicon }}?v={{ ASSET_VERSION() }}">
+    {% else %}
+    <link rel="icon" href="/static/favicon.ico?v={{ ASSET_VERSION() }}">
+    <link rel="shortcut icon" href="/static/favicon.ico?v={{ ASSET_VERSION() }}">
+    {% endif %}
+    
+    <!-- Google Fonts - Anybody -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Anybody:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons (primary CDN) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <!-- Bootstrap Icons (fallback CDN) -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <script>
+      (function(){
+        function ensureBootstrapIcons(){
+          try {
+            var probe = document.createElement('i');
+            probe.className = 'bi';
+            document.body.appendChild(probe);
+            var famBefore = getComputedStyle(probe, '::before').fontFamily || '';
+            var fam = getComputedStyle(probe).fontFamily || '';
+            probe.remove();
+            if(!/bootstrap-icons/i.test(famBefore+fam)){
+              var link = document.createElement('link');
+              link.rel = 'stylesheet';
+              link.href = 'https://unpkg.com/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css';
+              link.crossOrigin = 'anonymous';
+              document.head.appendChild(link);
+            }
+          } catch(e){}
+        }
+        document.addEventListener('DOMContentLoaded', ensureBootstrapIcons);
+      })();
+    </script>
+    <!-- Custom CSS -->
+    <link href="/static/css/style.css?v={{ ASSET_VERSION() }}" rel="stylesheet">
+
+    <style>
+        /* Padding pour compenser la navbar fixe */
+        body#app-body {
+            padding-top: 88px;
+        }
+        
+        /* Ajustement pour les écrans plus petits */
+        @media (max-width: 991.98px) {
+            body#app-body {
+                padding-top: 78px;
+            }
+        }
+        /* Mode embarqué (iframe) : pas de navbar, pas de padding top */
+        body#app-body.embedded {
+            padding-top: 0 !important;
+        }
+        body#app-body.embedded > nav.navbar {
+            display: none !important;
+        }
+        .app-container {
+            max-width: 1900px;
+        }
+    </style>
+    
+    {% block extra_head %}{% endblock %}
+</head>
+<body id="app-body">
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top">
+        <div class="container app-container px-3 px-lg-5">
+            <a class="navbar-brand fw-bold d-flex align-items-center gap-2" href="/">
+                {% set _logo_global = (global_settings.logo or global_settings.logo_path) if global_settings is defined else None %}
+                {% if _logo_global %}
+                    <img src="{{ _logo_global }}" alt="Logo" style="height:32px; width:auto; object-fit:contain;" />
+                {% else %}
+                    <i class="bi bi-gear-fill"></i>
+                {% endif %}
+            </a>
+            
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav me-auto">
+                    <!-- Dashboard -->
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">
+                            <i class="bi bi-house-fill me-1"></i>Dashboard
+                        </a>
+                    </li>
+                    
+                    <!-- Gestion des stocks -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-boxes me-1"></i>Stock
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/products">
+                                <i class="bi bi-box-seam me-2"></i>Produits
+                            </a></li>
+                            <!-- Lien mouvements de stock masqué temporairement pour éviter l'accès -->
+                            <!--
+                            <li><a class="dropdown-item" href="/stock-movements">
+                                <i class="bi bi-arrow-left-right me-2"></i>Mouvements Stock
+                            </a></li>
+                            -->
+                            <li><a class="dropdown-item" href="/scan">
+                                <i class="bi bi-qr-code-scan me-2"></i>Scanner Codes-barres
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                        </ul>
+                    </li>
+                    
+                    <!-- Ventes -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-cart3 me-1"></i>Ventes
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/clients">
+                                <i class="bi bi-people-fill me-2"></i>Clients
+                            </a></li>
+                            <li><a class="dropdown-item" href="/quotations">
+                                <i class="bi bi-file-earmark-text me-2"></i>Devis
+                            </a></li>
+                            <li><a class="dropdown-item" href="/invoices">
+                                <i class="bi bi-receipt me-2"></i>Factures
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/daily-requests">
+                                <i class="bi bi-chat-dots me-2"></i>Demandes Clients
+                            </a></li>
+                            <li><a class="dropdown-item" href="/daily-sales">
+                                <i class="bi bi-cart-check me-2"></i>Ventes Quotidiennes
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/debts">
+                                <i class="bi bi-credit-card me-2"></i>Créances Clients
+                            </a></li>
+                        </ul>
+                    </li>
+                    
+                    <!-- Achats -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-truck me-1"></i>Achats
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/supplier-invoices">
+                                <i class="bi bi-receipt-cutoff me-2"></i>Factures Fournisseur
+                            </a></li>
+                            <li><a class="dropdown-item" href="/daily-purchases">
+                                <i class="bi bi-basket2-fill me-2"></i>Achats quotidiens
+                            </a></li>
+                            <li class="admin-only" style="display: none;"><hr class="dropdown-divider"></li>
+                            <li class="admin-only" style="display: none;"><a class="dropdown-item" href="/debts">
+                                <i class="bi bi-credit-card-2-back me-2"></i>Dettes Fournisseur
+                            </a></li>
+                        </ul>
+                    </li>
+                    
+                    <!-- Finances -->
+                    <li class="nav-item dropdown admin-only" style="display: none;">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-calculator me-1"></i>Finances
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/bank-transactions">
+                                <i class="bi bi-bank me-2"></i>Transactions Bancaires
+                            </a></li>
+                            <li><a class="dropdown-item" href="/reports">
+                                <i class="bi bi-graph-up me-2"></i>Rapports
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/daily-recap">
+                                <i class="bi bi-calendar-day me-2"></i>Récap Quotidien
+                            </a></li>
+                        </ul>
+                    </li>
+                    
+                    <!-- Outils -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-tools me-1"></i>Outils
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/guide">
+                                <i class="bi bi-book me-2"></i>Guide Utilisateur
+                            </a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="/google-sheets-sync">
+                                <i class="bi bi-table me-2"></i>Synchronisation Google Sheets
+                            </a></li>
+                            <li><a class="dropdown-item" href="/cache-manager">
+                                <i class="bi bi-hdd-stack me-2"></i>Gestionnaire Cache
+                            </a></li>
+                        </ul>
+                    </li>
+                </ul>
+                
+                <!-- Navbar searches: Clients and Products -->
+                <form class="d-flex align-items-center gap-2 ms-auto me-3" role="search" id="navSearchContainer" onsubmit="return false;">
+                    <div class="input-group input-group-sm position-relative" style="max-width: 260px;">
+                        <span class="input-group-text bg-white"><i class="bi bi-people"></i></span>
+                        <input class="form-control" type="search" placeholder="Rechercher client..." aria-label="Recherche client" id="navClientSearch">
+                        <button class="btn btn-light" id="navClientSearchBtn" title="Chercher client" type="button"><i class="bi bi-search"></i></button>
+                        <div class="dropdown-menu shadow p-0" id="navClientDropdown" style="width:100%; max-height: 320px; overflow:auto;"></div>
+                    </div>
+                    <div class="input-group input-group-sm position-relative" style="max-width: 260px;">
+                        <span class="input-group-text bg-white"><i class="bi bi-box"></i></span>
+                        <input class="form-control" type="search" placeholder="Rechercher produit..." aria-label="Recherche produit" id="navProductSearch">
+                        <button class="btn btn-light" id="navProductSearchBtn" title="Chercher produit" type="button"><i class="bi bi-search"></i></button>
+                        <div class="dropdown-menu shadow p-0" id="navProductDropdown" style="width:100%; max-height: 320px; overflow:auto;"></div>
+                    </div>
+                </form>
+
+                <ul class="navbar-nav">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/settings">
+                            <i class="bi bi-gear-fill me-1"></i>Paramètres
+                        </a>
+                    </li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                            <i class="bi bi-person-circle me-1"></i><span id="username">Utilisateur</span>
+                        </a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="#" onclick="logout()">
+                                <i class="bi bi-box-arrow-right me-1"></i>Déconnexion
+                            </a></li>
+                        </ul>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Contenu principal -->
+    <main class="container app-container py-4 px-3 px-lg-5">
+        <!-- Alertes (toast/alerts au-dessus des modals) -->
+        <div id="alerts-container" class="position-fixed top-0 end-0 p-3" style="z-index: 20000; width: 360px;"></div>
+        
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Client HTTP léger (remplace Axios) -->
+    <script src="/static/js/http.js?v={{ ASSET_VERSION() }}"></script>
+    <!-- JsBarcode pour l'affichage/imp. des codes-barres -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <!-- Custom JS -->
+    <script src="/static/js/auth.js?v={{ ASSET_VERSION() }}"></script>
+    <script src="/static/js/utils.js?v={{ ASSET_VERSION() }}"></script>
+    <script src="/static/js/storage.js?v={{ ASSET_VERSION() }}"></script>
+    
+    <script>
+      // Wire navbar searches to pages with query param ?q=
+      document.addEventListener('DOMContentLoaded', function() {
+        // Détecter le mode embarqué pour cacher la navbar et le padding
+        try {
+          const qp = new URLSearchParams(window.location.search);
+          const isEmbed = qp.get('embed') === '1' || (window.top !== window.self);
+          if (isEmbed) {
+            document.body.classList.add('embedded');
+          }
+        } catch(e) {}
+
+        // Afficher les éléments admin-only si l'utilisateur est admin
+        function showAdminElements() {
+          try {
+            if (window.authManager && window.authManager.isAdmin()) {
+              document.querySelectorAll('.admin-only').forEach(el => {
+                el.style.display = 'block';
+              });
+            }
+          } catch(e) {
+            console.error('Erreur lors de la vérification du rôle:', e);
+          }
+        }
+        
+        // Vérifier immédiatement
+        showAdminElements();
+        
+        // Revérifier après un court délai pour s'assurer que authManager.verifyAuth() est terminé
+        setTimeout(showAdminElements, 100);
+        setTimeout(showAdminElements, 500);
+
+        const clientInput = document.getElementById('navClientSearch');
+        const clientBtn = document.getElementById('navClientSearchBtn');
+        const productInput = document.getElementById('navProductSearch');
+        const productBtn = document.getElementById('navProductSearchBtn');
+        const clientMenu = document.getElementById('navClientDropdown');
+        const productMenu = document.getElementById('navProductDropdown');
+
+        function go(path, q){
+          const query = (q || '').trim();
+          const url = query ? `${path}?q=${encodeURIComponent(query)}` : path;
+          window.location.href = url;
+        }
+
+        // Helpers
+        const debounce = (fn, wait=250) => {
+          let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), wait); };
+        };
+        const showMenu = (menu) => { if (menu && !menu.classList.contains('show')) menu.classList.add('show'); };
+        const hideMenu = (menu) => { if (menu && menu.classList.contains('show')) menu.classList.remove('show'); };
+        const formatCurrency = (v) => {
+          try { return new Intl.NumberFormat('fr-FR', { style:'currency', currency:'XOF', maximumFractionDigits:0 }).format(v||0); } catch { return (v||0)+' XOF'; }
+        };
+        const highlight = (text, q) => {
+          if (!q) return text;
+          const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          return text.replace(new RegExp(esc, 'ig'), m => `<mark class="px-0">${m}</mark>`);
+        };
+
+        // Renderers
+        function renderClientResults(items, q) {
+          if (!clientMenu) return; 
+          if (!items || items.length === 0) { clientMenu.innerHTML = '<div class="dropdown-item text-muted small px-3 py-2">Aucun client</div>'; showMenu(clientMenu); return; }
+          clientMenu.innerHTML = items.slice(0,8).map(c => {
+            const name = highlight(escapeHtml(c.name || ''), q);
+            const sub = [c.email, c.phone].filter(Boolean).join(' • ');
+            return `<button type="button" class="dropdown-item d-flex flex-column align-items-start px-3 py-2" data-id="${c.client_id}" data-type="client">
+                      <span class="fw-semibold">${name}</span>
+                      ${sub ? `<small class="text-muted">${escapeHtml(sub)}</small>`: ''}
+                    </button>`;
+          }).join('');
+          showMenu(clientMenu);
+        }
+        function renderProductResults(items, q) {
+          if (!productMenu) return;
+          if (!items || items.length === 0) { productMenu.innerHTML = '<div class="dropdown-item text-muted small px-3 py-2">Aucun produit</div>'; showMenu(productMenu); return; }
+          productMenu.innerHTML = items.slice(0,8).map(p => {
+            const name = highlight(escapeHtml(p.name || ''), q);
+            const sub = [p.category, p.brand, p.model].filter(Boolean).join(' • ');
+            const hasVariants = Array.isArray(p.variants) && p.variants.length > 0;
+            const availableVariants = hasVariants ? (p.variants || []).filter(v => !v.is_sold).length : 0;
+            const inStock = hasVariants ? (availableVariants > 0) : ((p.quantity || 0) > 0);
+            const stockBadge = inStock
+              ? '<span class="badge bg-success ms-1">En stock</span>'
+              : '<span class="badge bg-danger ms-1">Rupture</span>';
+            return `<button type="button" class="dropdown-item d-flex flex-column align-items-start px-3 py-2" data-id="${p.product_id}" data-type="product">
+                      <span class="fw-semibold d-flex align-items-center">${name} ${stockBadge}</span>
+                      ${sub ? `<small class="text-muted">${escapeHtml(sub)}</small>`: ''}
+                    </button>`;
+          }).join('');
+          showMenu(productMenu);
+        }
+
+        // Fetchers
+        const fetchClients = debounce(async (q) => {
+          try {
+            if (!q || q.trim().length < 2) { hideMenu(clientMenu); return; }
+            // Utiliser le paramètre search de l'API pour une recherche côté serveur
+            const params = new URLSearchParams({ limit: 50, search: q });
+            const { data } = await axios.get(`/api/clients/?${params.toString()}`);
+            const list = data.items || data || [];
+            renderClientResults(list, q);
+          } catch(e) {
+            clientMenu.innerHTML = '<div class="dropdown-item text-danger small px-3 py-2">Erreur chargement</div>';
+            showMenu(clientMenu);
+          }
+        }, 250);
+
+        const fetchProducts = debounce(async (q) => {
+          try {
+            if (!q || q.trim().length < 2) { hideMenu(productMenu); return; }
+            const params = new URLSearchParams({ limit: 20, search: q });
+            const resp = await axios.get(`/api/products?${params.toString()}`);
+            const items = resp.data || [];
+            renderProductResults(items, q);
+          } catch(e) {
+            productMenu.innerHTML = '<div class="dropdown-item text-danger small px-3 py-2">Erreur chargement</div>';
+            showMenu(productMenu);
+          }
+        }, 250);
+
+        if (clientInput && clientBtn) {
+          clientBtn.addEventListener('click', () => go('/clients', clientInput.value));
+          clientInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go('/clients', clientInput.value); } });
+          clientInput.addEventListener('input', () => fetchClients(clientInput.value));
+          clientInput.addEventListener('focus', () => { if ((clientInput.value||'').length >= 2) fetchClients(clientInput.value); });
+        }
+        if (productInput && productBtn) {
+          productBtn.addEventListener('click', () => go('/products', productInput.value));
+          productInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go('/products', productInput.value); } });
+          productInput.addEventListener('input', () => fetchProducts(productInput.value));
+          productInput.addEventListener('focus', () => { if ((productInput.value||'').length >= 2) fetchProducts(productInput.value); });
+        }
+
+        // Click handling on dropdowns
+        function handleMenuClick(ev) {
+          const btn = ev.target.closest('.dropdown-item');
+          if (!btn) return;
+          const id = btn.getAttribute('data-id');
+          const type = btn.getAttribute('data-type');
+          if (type === 'client') {
+            window.location.href = `/clients/detail?id=${encodeURIComponent(id)}`;
+          } else if (type === 'product') {
+            // Redirige vers la page produits et ouvre le détail via paramètre
+            const q = (productInput && productInput.value) ? `&q=${encodeURIComponent(productInput.value)}` : '';
+            window.location.href = `/products?selected=${encodeURIComponent(id)}${q}`;
+          }
+        }
+        if (clientMenu) clientMenu.addEventListener('click', handleMenuClick);
+        if (productMenu) productMenu.addEventListener('click', handleMenuClick);
+
+        // Close menus on outside click or escape
+        document.addEventListener('click', (e) => {
+          if (!e.target.closest('#navSearchContainer')) { hideMenu(clientMenu); hideMenu(productMenu); }
+        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { hideMenu(clientMenu); hideMenu(productMenu); } });
+      });
+    </script>
+    <script>
+      (function(){
+        try{
+          if (document.body && document.body.classList.contains('embedded')) return;
+          var lastV = '{{ ASSET_VERSION() }}';
+          function reloadWith(v){
+            try{
+              if ('caches' in window) {
+                caches.keys().then(function(keys){ keys.forEach(function(k){ caches.delete(k); }); });
+              }
+            }catch(e){}
+            try{
+              var u = new URL(window.location.href);
+              u.searchParams.set('__v', v);
+              window.location.replace(u.toString());
+            }catch(e){ window.location.reload(); }
+          }
+          function tick(){
+            fetch('/__live/version', {cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
+              var v = j && j.v ? String(j.v) : null;
+              if (v && v !== lastV){ reloadWith(v); }
+            }).catch(function(){});
+          }
+          setInterval(tick, 2000);
+        }catch(e){}
+      })();
+    </script>
+    
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

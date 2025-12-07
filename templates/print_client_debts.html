@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Récap créances • {{ client.name }}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root { --brand: #FBCF00; }
+    @page { size: A4 portrait; margin: 10mm; }
+    html, body { height: 100%; }
+    body { margin: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-size: 13.5px; }
+    .print-container { padding: 16px; }
+    @media print {
+      .no-print { display:none !important; }
+      .print-container { padding: 0; margin: 0; }
+      .container, .container-fluid { max-width: 100% !important; padding: 0 !important; }
+      .table-responsive { overflow: visible !important; }
+    }
+    .title-bar { border-bottom: 3px solid var(--brand); background:#000; color:#fff; padding:14px 16px; display:flex; justify-content:space-between; align-items:center; }
+    .title-bar h1 { font-size: 22px; margin:0; font-weight:800; letter-spacing:.2px; }
+    .summary-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .summary-card { border:1px solid #e9ecef; border-left:4px solid var(--brand); border-radius:8px; padding:16px; background:#fff; }
+    .section-title { font-size: 15px; font-weight: 700; margin: 18px 0 10px; }
+    .table { width: 100%; font-size: 13px; }
+    .table thead th { background:#f6f6f6; border-bottom:1px solid #e5e5e5; }
+    .table td, .table th { padding: 10px; vertical-align: top; }
+    .page-break-avoid { page-break-inside: avoid; }
+    .print-header { display:flex; gap:16px; align-items:center; border-bottom:2px solid var(--brand); padding:8px 0 10px; margin-bottom:10px; }
+    .print-header .logo { height:60px; max-height:60px; object-fit:contain; }
+    .print-header .company { min-width: 0; }
+    .print-header .company .name { font-weight:800; font-size:16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .print-footer { border-top:2px solid var(--brand); font-size:10px; color:#555; padding-top:8px; margin-top:16px; }
+    @media print {
+      .print-header { position: fixed; top: 10mm; left: 10mm; right: 10mm; }
+      .print-footer { position: fixed; bottom: 10mm; left: 10mm; right: 10mm; }
+      .content { padding-top: 110px; padding-bottom: 56px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-container">
+    <div class="no-print mb-3 d-flex gap-2">
+      <a class="btn btn-secondary" href="/clients/debts?client_id={{ client.client_id }}"><i class="bi bi-arrow-left"></i> Retour</a>
+      <button class="btn btn-primary" onclick="window.print()"><i class="bi bi-printer"></i> Imprimer</button>
+    </div>
+
+    <div class="print-header">
+      <div>
+        {% set _logo = settings.logo or settings.logo_path %}
+        {% if _logo %}<img class="logo" src="{{ _logo }}" alt="Logo">{% endif %}
+      </div>
+      <div class="company">
+        <div class="name">{{ settings.company_name or global_settings.name or 'Entreprise' }}</div>
+        <div class="small text-muted">{% if settings.address %}{{ settings.address }}{% if settings.city %}, {{ settings.city }}{% endif %}{% endif %}</div>
+        <div class="small text-muted">{% if settings.phone %}{{ settings.phone }}{% endif %}{% if settings.email %} • {{ settings.email }}{% endif %}</div>
+      </div>
+    </div>
+
+    <div class="content">
+
+    <div class="title-bar mb-3">
+      <h1>Récapitulatif des créances — {{ client.name }}</h1>
+      <div>{{ (summary.total_remaining or 0) | format_cfa }}</div>
+    </div>
+
+    <div class="summary-grid mb-3 page-break-avoid">
+      <div class="summary-card"><div class="text-muted small">Montant total</div><div class="fw-bold fs-5">{{ (summary.total_amount or 0) | format_cfa }}</div></div>
+      <div class="summary-card"><div class="text-muted small">Déjà payé</div><div class="text-success fw-bold fs-5">{{ (summary.total_paid or 0) | format_cfa }}</div></div>
+      <div class="summary-card"><div class="text-muted small">Solde restant</div><div class="text-danger fw-bold fs-5">{{ (summary.total_remaining or 0) | format_cfa }}</div></div>
+    </div>
+
+    <h3 class="section-title">Factures liées</h3>
+    <div class="table-responsive mb-4">
+      <table class="table table-sm table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Facture</th>
+            <th>Date</th>
+            <th>Échéance</th>
+            <th class="text-end">Montant</th>
+            <th class="text-end">Payé</th>
+            <th class="text-end">Restant</th>
+            <th>Statut</th>
+            <th>Produits</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if invoices and invoices|length %}
+          {% for inv in invoices %}
+          {% if (inv.remaining_amount or 0) > 0 and (inv.status or '') != 'paid' %}
+          <tr>
+            <td>#{{ inv.invoice_number or inv.id }}</td>
+            <td>{{ inv.date | format_date }}</td>
+            <td>{{ inv.due_date | format_date }}</td>
+            <td class="text-end">{{ inv.amount | format_cfa }}</td>
+            <td class="text-end text-success">{{ inv.paid_amount | format_cfa }}</td>
+            <td class="text-end {{ 'text-danger' if (inv.remaining_amount or 0) > 0 else 'text-success' }}">{{ inv.remaining_amount | format_cfa }}</td>
+            <td>
+              {% set _st = (inv.status or '') %}
+              {% set _st_fr = 'En attente' %}
+              {% if _st == 'paid' %}{% set _st_fr = 'Payé' %}{% elif _st == 'partial' %}{% set _st_fr = 'Partiel' %}{% elif _st == 'overdue' %}{% set _st_fr = 'En retard' %}{% elif _st == 'pending' %}{% set _st_fr = 'En attente' %}{% endif %}
+              {{ _st_fr }}
+            </td>
+            <td class="small">
+              {% for it in inv['items'] %}
+                {{ it.product_name }} × {{ it.quantity }} — {{ it.total | format_cfa }}<br>
+              {% endfor %}
+            </td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted">Aucune facture</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="section-title">Créances manuelles</h3>
+    <div class="table-responsive mb-4">
+      <table class="table table-sm table-striped align-middle">
+        <thead>
+          <tr>
+            <th>Référence</th>
+            <th>Date</th>
+            <th>Échéance</th>
+            <th class="text-end">Montant</th>
+            <th class="text-end">Payé</th>
+            <th class="text-end">Restant</th>
+            <th>Statut</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if manual_debts and manual_debts|length %}
+          {% for d in manual_debts %}
+          {% if (d.remaining_amount or 0) > 0 and (d.status or '') != 'paid' %}
+          <tr>
+            <td>{{ d.reference or d.id }}</td>
+            <td>{{ d.date | format_date }}</td>
+            <td>{{ d.due_date | format_date }}</td>
+            <td class="text-end">{{ d.amount | format_cfa }}</td>
+            <td class="text-end text-success">{{ d.paid_amount | format_cfa }}</td>
+            <td class="text-end {{ 'text-danger' if (d.remaining_amount or 0) > 0 else 'text-success' }}">{{ d.remaining_amount | format_cfa }}</td>
+            <td>
+              {% set _st = (d.status or '') %}
+              {% set _st_fr = 'En attente' %}
+              {% if _st == 'paid' %}{% set _st_fr = 'Payé' %}{% elif _st == 'partial' %}{% set _st_fr = 'Partiel' %}{% elif _st == 'overdue' %}{% set _st_fr = 'En retard' %}{% elif _st == 'pending' %}{% set _st_fr = 'En attente' %}{% endif %}
+              {{ _st_fr }}
+            </td>
+            <td class="small">{{ d.description or '' }}</td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+          {% else %}
+          <tr><td colspan="8" class="text-center text-muted">Aucune créance manuelle</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    </div>
+
+    <div class="print-footer">
+      <div class="d-flex justify-content-between">
+        <div class="small">{{ settings.footer_text or '' }}</div>
+        <div class="small">{% if settings.website %}{{ settings.website }}{% endif %}</div>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Auto print if in popup
+    if (window.opener) { setTimeout(()=>window.print(), 400); }
+  </script>
+</body>
+</html>

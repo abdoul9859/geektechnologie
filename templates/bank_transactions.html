@@ -1,0 +1,322 @@
+{% extends "base.html" %}
+
+{% block title %}Transactions Bancaires - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<style>
+    .transaction-card {
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    }
+    .transaction-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1) !important;
+    }
+    .main-content {
+        padding: 20px;
+    }
+    .balance-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    .income-card {
+        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    }
+    .expense-card {
+        background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+    }
+</style>
+{% endblock %}
+    {% block content %}
+    <div class="container-fluid">
+        <!-- En-tête -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center flex-wrap">
+                    <div>
+                        <h1 class="h3 mb-1">
+                            <i class="bi bi-bank me-2 text-primary"></i>
+                            Transactions Bancaires
+                        </h1>
+                        <p class="text-muted mb-0">
+                            Gérez vos transactions bancaires et suivez votre trésorerie
+                        </p>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button 
+                            class="btn btn-success btn-lg shadow-sm" 
+                            onclick="createTransaction()"
+                        >
+                            <i class="bi bi-plus-circle me-2"></i>
+                            Nouvelle Transaction
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques financières -->
+        <div class="row mb-4">
+            <div class="col-md-4 mb-3">
+                <div class="card text-white balance-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="currentBalance">0 XOF</h4>
+                                <p class="mb-0">Solde Actuel</p>
+                            </div>
+                            <i class="bi bi-wallet2 display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card text-white income-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalIncome">0 XOF</h4>
+                                <p class="mb-0">Total Entrées</p>
+                            </div>
+                            <i class="bi bi-arrow-down-circle display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card text-white expense-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalExpense">0 XOF</h4>
+                                <p class="mb-0">Total Sorties</p>
+                            </div>
+                            <i class="bi bi-arrow-up-circle display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtres -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-2">
+                                <label for="typeFilter" class="form-label">Type</label>
+                                <select class="form-select" id="typeFilter">
+                                    <option value="">Tous les types</option>
+                                    <option value="entry">Entrée</option>
+                                    <option value="exit">Sortie</option>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <label for="methodFilter" class="form-label">Méthode</label>
+                                <select class="form-select" id="methodFilter">
+                                    <option value="">Toutes les méthodes</option>
+                                    <option value="virement">Virement</option>
+                                    <option value="cheque">Chèque</option>
+                                </select>
+                            </div>
+                            <!-- Champ Catégorie supprimé -->
+                            <div class="col-md-2">
+                                <label for="dateFromFilter" class="form-label">Date début</label>
+                                <input type="date" class="form-control" id="dateFromFilter">
+                            </div>
+                            <div class="col-md-2">
+                                <label for="dateToFilter" class="form-label">Date fin</label>
+                                <input type="date" class="form-control" id="dateToFilter">
+                            </div>
+                            <div class="col-md-2 d-flex align-items-end">
+                                <button class="btn btn-outline-secondary w-100" onclick="clearFilters()">
+                                    <i class="bi bi-x-circle me-1"></i>
+                                    Effacer
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des transactions -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card shadow-sm">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="bi bi-list me-2"></i>
+                            Historique des Transactions
+                        </h5>
+                        <span class="badge bg-primary" id="resultsCount">0 transaction</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Type</th>
+                                        <th>Description</th>
+                                        <th>Méthode</th>
+                                        <th>Montant</th>
+                                        <th>Référence</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="transactionsTableBody">
+                                    <tr>
+                                        <td colspan="7" class="text-center py-4">
+                                            <div class="spinner-border text-primary" role="status">
+                                                <span class="visually-hidden">Chargement...</span>
+                                            </div>
+                                            <p class="text-muted mt-2 mb-0">Chargement des transactions...</p>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <nav aria-label="Navigation des transactions">
+                    <ul class="pagination justify-content-center" id="pagination">
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de création/édition -->
+    <div class="modal fade" id="transactionModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="transactionModalTitle">
+                        <i class="bi bi-plus-circle me-2"></i>
+                        Nouvelle Transaction
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="transactionForm">
+                        <input type="hidden" id="transactionId">
+                        
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="transactionType" class="form-label">
+                                    <i class="bi bi-arrow-left-right me-1"></i>
+                                    Type <span class="text-danger">*</span>
+                                </label>
+                                <select class="form-select" id="transactionType" required>
+                                    <option value="entry">Entrée (Crédit)</option>
+                                    <option value="exit">Sortie (Débit)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="transactionDate" class="form-label">
+                                    <i class="bi bi-calendar me-1"></i>
+                                    Date <span class="text-danger">*</span>
+                                </label>
+                                <input type="date" class="form-control" id="transactionDate" required>
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="amount" class="form-label">
+                                    <i class="bi bi-currency-exchange me-1"></i>
+                                    Montant (XOF) <span class="text-danger">*</span>
+                                </label>
+                                <input type="number" class="form-control" id="amount" min="0" step="1" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="paymentMethod" class="form-label">
+                                    <i class="bi bi-credit-card me-1"></i>
+                                    Méthode de paiement
+                                </label>
+                                <select class="form-select" id="paymentMethod">
+                                    <option value="virement">Virement bancaire</option>
+                                    <option value="cheque">Chèque</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="reference" class="form-label">
+                                    <i class="bi bi-hash me-1"></i>
+                                    Référence
+                                </label>
+                                <input type="text" class="form-control" id="reference" 
+                                       placeholder="Numéro de chèque, référence virement, etc.">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="motif" class="form-label">
+                                    <i class="bi bi-bookmark me-1"></i>
+                                    Motif <span class="text-danger">*</span>
+                                </label>
+                                <input type="text" class="form-control" id="motif" placeholder="Motif de la transaction" required>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="description" class="form-label">
+                                <i class="bi bi-chat-text me-1"></i>
+                                Description <span class="text-danger">*</span>
+                            </label>
+                            <textarea class="form-control" id="description" rows="3" 
+                                      placeholder="Description de la transaction" required></textarea>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="notes" class="form-label">
+                                <i class="bi bi-sticky me-1"></i>
+                                Notes
+                            </label>
+                            <textarea class="form-control" id="notes" rows="2" 
+                                      placeholder="Notes additionnelles (optionnel)"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="saveTransaction()">
+                        <i class="bi bi-check-circle me-1"></i>
+                        Enregistrer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de confirmation de suppression -->
+    <div class="modal fade" id="deleteModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Confirmer la suppression</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Êtes-vous sûr de vouloir supprimer cette transaction ?</p>
+                    <p class="text-muted">Cette action est irréversible et affectera votre solde.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+    <script src="{{ url_for('static', path='js/bank_transactions.js') }}?v={{ ASSET_VERSION() }}"></script>
+{% endblock %}

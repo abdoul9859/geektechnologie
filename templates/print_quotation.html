@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="fr" style="margin:0;padding:0;width:100%;height:100%;">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Devis {{ quotation.quotation_number }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        :root { --primary-color:#2c3e50; --secondary-color:#34495e; --accent-color:#3498db; --text-primary:#2c3e50; --text-secondary:#7f8c8d; --border-color:#ecf0f1; --bg-light:#f8f9fa; }
+        *{box-sizing:border-box;margin:0;padding:0}
+        html,body{margin:0!important;padding:0!important;width:100%!important;min-height:100vh!important;background-color:#f5f5f5}
+        body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;font-size:11pt;color:var(--text-primary);display:flex;flex-direction:column;align-items:center;min-height:100vh}
+        .page-controls{position:fixed;top:20px;left:0;right:0;display:flex;justify-content:center;gap:10px;z-index:1000}
+        .btn-print{background-color:var(--primary-color);color:#fff;border:none}
+        .btn-return{background-color:var(--secondary-color);color:#fff;border:none}
+        .page-container{display:flex;justify-content:center;align-items:center;padding:80px 0 0;min-height:100vh;width:100%;box-sizing:border-box}
+        @media print {
+            html, body { width:210mm; height:auto; margin:0 !important; padding:0 !important; overflow:visible; }
+            .page-container { padding:0 !important; margin:0 !important; width:210mm; height:auto; }
+            #quotation-container { margin:0 !important; padding:0 !important; border:none !important; box-shadow:none !important; width:210mm !important; height:auto !important; transform:none !important; min-height:297mm !important; }
+            .no-print { display:none !important; }
+            @page { size:A4; margin:2mm 15mm 0mm 15mm; }
+            .products { 
+                page-break-inside: auto; 
+                margin-top: 0 !important;
+                padding-top: 0 !important;
+            }
+            .product-row { 
+                page-break-inside: avoid; 
+                break-inside: avoid; 
+            }
+            .totals { page-break-before: avoid; break-before: avoid; }
+            .footer { 
+                position: fixed; 
+                bottom: 0; 
+                left: 0; 
+                right: 0; 
+                width: 210mm; 
+                height: 20mm; 
+                background: #f8f9fa; 
+                border-top: 1px solid #e0e0e0; 
+                padding: 6px 25mm; 
+                font-size: 10px; 
+                z-index: 1000;
+                page-break-inside: avoid; 
+                break-inside: avoid; 
+                margin: 0 !important;
+                box-sizing: border-box;
+            }
+        }
+        .container-a4{width:210mm!important;max-width:210mm!important;min-height:297mm!important;margin:0!important;padding:0!important;background:#fff!important;box-shadow:0 5px 15px rgba(0,0,0,.08);overflow:visible;display:flex;flex-direction:column;position:relative}
+        .header{background:#fff;padding:28px 32px 22px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;align-items:flex-start;width:100%}
+        .logo-section{display:flex;align-items:center;gap:16px}
+        .logo{max-width:150px;max-height:150px;object-fit:contain}
+        .company-info h1{font-size:22px;font-weight:800;margin:0;color:#111}
+        .company-info p{margin:2px 0;font-size:12px;color:var(--text-secondary)}
+        .company-info{display:flex;flex-direction:column;justify-content:center}
+        .invoice-info{text-align:right}
+        .invoice-title{font-size:28px;font-weight:300;color:var(--text-secondary);margin:0 0 6px 0}
+        .invoice-number{font-size:16px;font-weight:600;color:var(--primary-color);margin:0 0 6px 0}
+        .invoice-date{font-size:13px;color:var(--text-secondary);margin:0}
+        .billing{display:flex;padding:16px 24px;gap:24px;background:#fff;border-bottom:1px solid var(--border-color);margin:0 20px}
+        .section-title{font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px;letter-spacing:.5px;border-bottom:2px solid var(--accent-color);padding-bottom:6px;display:inline-block}
+        .client-details p{margin:4px 0;font-size:13px;color:var(--text-primary)}
+        .info-box{background:var(--bg-light);padding:16px;border-radius:6px;border:1px solid var(--border-color)}
+        .products{flex:1;display:flex;flex-direction:column;width:calc(100% - 60px);margin:16px 30px 0;background:#fff;overflow:hidden}
+        .products-header{display:grid;grid-template-columns:1fr 80px 120px 120px;background:#f8f9fa;padding:12px 16px;font-size:12px;font-weight:600;color:#333;text-transform:uppercase;border:1px solid #ddd;border-bottom:2px solid #333}
+        .product-row{display:grid;grid-template-columns:1fr 80px 120px 120px;padding:12px 16px;border-bottom:1px solid #eee}
+        .product-name{font-weight:500;font-size:13px;color:var(--text-primary);padding-right:12px}
+        .product-qty,.product-price,.product-total{text-align:right;font-size:13px}
+        .product-desc{color:#777;font-size:10px;margin-top:3px;text-align:justify}
+        .totals{margin:12px 24px 0;display:flex;justify-content:flex-end}
+        .totals-card{min-width:320px;max-width:360px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 10px rgba(0,0,0,.05);padding:14px 16px}
+        .totals-header{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-secondary);margin-bottom:8px}
+        .totals-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0}
+        .totals-row + .totals-row{border-top:1px dashed #e5e7eb}
+        .totals-label{color:#6b7280;font-size:12px}
+        .totals-value{color:#2563eb;font-weight:700;font-variant-numeric:tabular-nums}
+        .totals-row.grand{border-top:2px solid #d1d5db;margin-top:4px;padding-top:10px}
+        .totals-row.grand .totals-label{color:#111827;font-weight:700}
+        .totals-row.grand .totals-value{color:#111827;font-size:15px}
+        .footer{padding:16px 28px;border-top:1px solid #e0e0e0;font-size:11px;width:100%;margin-top:auto;background:#f8f9fa}
+        .footer-content{display:flex;justify-content:space-between;gap:16px}
+        .footer-section h4{font-size:12px;font-weight:600;color:#333;margin:0 0 6px 0;text-transform:uppercase}
+        .footer-section p{margin:2px 0;color:#666;font-size:11px}
+        
+        /* Footer fixe pour l'impression */
+        @media print {
+            .footer-content { 
+                display: flex; 
+                justify-content: space-between; 
+                gap: 15px; 
+                align-items: center;
+                height: 100%;
+                padding: 0;
+            }
+            .footer-section { 
+                text-align: center; 
+                flex: 1; 
+            }
+            .footer-section h4 { 
+                font-size: 10px; 
+                font-weight: 600; 
+                color: #333; 
+                margin: 0 0 3px 0; 
+                text-transform: uppercase; 
+            }
+            .footer-section p { 
+                margin: 0; 
+                color: #666; 
+                font-size: 9px; 
+                line-height: 1.3;
+            }
+        }
+        .products{page-break-inside:auto}
+        .product-row{page-break-inside:avoid;break-inside:avoid}
+        .totals{page-break-before:avoid;break-before:avoid}
+        .footer{page-break-inside:avoid;break-inside:avoid}
+    </style>
+</head>
+<body>
+    <div class="page-controls no-print">
+        <button id="printBtn" class="btn btn-print">Imprimer</button>
+        <button id="returnBtn" class="btn btn-return">Retour</button>
+    </div>
+    <div class="page-container">
+        <div id="quotation-container" class="container-a4">
+            <div class="header">
+                <div class="logo-section">
+                    {% set _logo = settings.logo or settings.logo_path %}
+                    {% if _logo %}<img src="{{ _logo }}" alt="Logo" class="logo">{% endif %}
+                    <div class="company-info">
+                        {% set _name = settings.company_name or settings.name %}
+                        <h1>{{ _name or 'Geek Technologie' }}</h1>
+                        <p>{{ settings.address or '' }}{% if settings.city %}, {{ settings.city }}{% endif %}</p>
+                    </div>
+                </div>
+                <div class="invoice-info">
+                    <h2 class="invoice-title">DEVIS</h2>
+                    <p class="invoice-number">#{{ quotation.quotation_number }}</p>
+                     <p class="invoice-date">Date: {{ quotation.date | format_date }}</p>
+                </div>
+            </div>
+
+            <div class="billing">
+                <div style="flex:1">
+                    <div class="section-title">Devis à</div>
+                    <div class="client-details">
+                        {% if quotation.client %}
+                        <p><strong>{{ quotation.client.name }}</strong></p>
+                        {% if quotation.client.address %}<p>{{ quotation.client.address }}</p>{% endif %}
+                        {% if quotation.client.phone %}<p>{{ quotation.client.phone }}</p>{% endif %}
+                        {% if quotation.client.email %}<p>{{ quotation.client.email }}</p>{% endif %}
+                        {% else %}
+                        <p><strong>Client</strong></p>
+                        {% endif %}
+                    </div>
+                </div>
+                <div style="flex:1">
+                    <div class="section-title">Informations</div>
+                    <div class="info-box">
+                        <div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Validité</div>
+                        <div style="font-size:16px;font-weight:600;color:var(--primary-color);">{{ quotation.expiry_date | format_date }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="products">
+                <div class="products-header">
+                    <div>Description</div>
+                    <div class="text-end">Qté</div>
+                    <div class="text-end">PU</div>
+                    <div class="text-end">Montant</div>
+                </div>
+                {% for item in quotation.items %}
+                <div class="product-row">
+                    <div class="product-name">
+                        <div><strong>{{ item.product_name }}</strong></div>
+                        
+                    </div>
+                    <div class="product-qty">{{ item.quantity }}</div>
+                    <div class="product-price">{{ (item.price or 0) | format_cfa }}</div>
+                    <div class="product-total">{{ (item.total or 0) | format_cfa }}</div>
+                </div>
+                {% endfor %}
+
+                <div class="totals">
+                    <div class="totals-card">
+                        <div class="totals-header">Résumé financier</div>
+                        <div class="totals-row"><div class="totals-label">Sous-total</div><div class="totals-value">{{ (quotation.subtotal or 0) | format_cfa }}</div></div>
+                        {% if (quotation.tax_rate or 0) > 0 %}
+                        <div class="totals-row"><div class="totals-label">TVA ({{ (quotation.tax_rate or 0) | int }}%)</div><div class="totals-value">{{ (quotation.tax_amount or 0) | format_cfa }}</div></div>
+                        {% endif %}
+                        <div class="totals-row grand"><div class="totals-label">Total</div><div class="totals-value">{{ (quotation.total or 0) | format_cfa }}</div></div>
+                    </div>
+                </div>
+            </div>
+
+            {% if signature_data_url %}
+            <div style="margin: 14px 24px 0; display:flex; justify-content:flex-end;">
+                <div style="min-width:320px; max-width:360px; text-align:center;">
+                    <div style="font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:.6px; margin-bottom:8px;">Signature</div>
+                    <img src="{{ signature_data_url }}" alt="Signature" style="max-width: 220px; max-height: 90px; display:block; margin: 0 auto 6px;" />
+                    <div style="border-top:1px solid #d1d5db; width: 240px; margin: 6px auto 0; height: 0;"></div>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="footer">
+                <div class="footer-content">
+                    <div class="footer-section">
+                        <h4>Adresse</h4>
+                        <p>{{ settings.address or '' }}{% if settings.city %}, {{ settings.city }}{% endif %}</p>
+                    </div>
+                    <div class="footer-section">
+                        <h4>Contact</h4>
+                        {% if settings.phone %}<p>{{ settings.phone }}</p>{% endif %}
+                        {% if settings.phone2 %}<p>{{ settings.phone2 }}</p>{% endif %}
+                        {% if settings.email %}<p>{{ settings.email }}</p>{% endif %}
+                    </div>
+                    <div class="footer-section">
+                        <h4>Liens</h4>
+                        {% if settings.instagram %}<p>@{{ settings.instagram }}</p>{% endif %}
+                        {% if settings.website %}<p>{{ settings.website }}</p>{% endif %}
+                    </div>
+                </div>
+                {% if settings.footer_text %}
+                <div style="margin-top:8px;color:#6b7280;font-size:11px">{{ settings.footer_text }}</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        window.onload = function(){
+            document.getElementById('printBtn')?.addEventListener('click', function(){ window.print(); });
+            document.getElementById('returnBtn')?.addEventListener('click', function(){ window.location.href = '/quotations'; });
+            const isInPopup = !!window.opener && window.name === 'quotation_print_popup';
+            if (isInPopup) { setTimeout(() => window.print(), 400); }
+        };
+        window.onafterprint = function(){ if (!!window.opener && window.name === 'quotation_print_popup') { try{ window.close(); }catch(e){} } };
+    </script>
+</body>
+</html>
+
+

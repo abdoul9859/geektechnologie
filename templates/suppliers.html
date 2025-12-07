@@ -1,0 +1,265 @@
+{% extends "base.html" %}
+
+{% block title %}Fournisseurs - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<style>
+    .supplier-card {
+        transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+    }
+    .supplier-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1) !important;
+    }
+    .supplier-info {
+        font-size: 0.9rem;
+    }
+    .main-content {
+        padding: 20px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+    <div class="container-fluid">
+        <!-- En-tête -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center flex-wrap">
+                    <div>
+                        <h1 class="h3 mb-1">
+                            <i class="bi bi-truck me-2 text-primary"></i>
+                            Fournisseurs
+                        </h1>
+                        <p class="text-muted mb-0">
+                            Gérez vos fournisseurs et leurs informations de contact
+                        </p>
+                    </div>
+                    <button 
+                        class="btn btn-success btn-lg shadow-sm" 
+                        onclick="toggleForm()"
+                        id="toggleFormBtn"
+                    >
+                        <i class="bi bi-plus-circle me-2"></i>
+                        Ajouter un Fournisseur
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistiques -->
+        <div class="row mb-4">
+            <div class="col-md-3 mb-3">
+                <div class="card bg-primary text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="totalSuppliers">0</h4>
+                                <p class="mb-0">Total Fournisseurs</p>
+                            </div>
+                            <i class="bi bi-truck display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-success text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="activeSuppliers">0</h4>
+                                <p class="mb-0">Actifs</p>
+                            </div>
+                            <i class="bi bi-check-circle display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-info text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="suppliersWithEmail">0</h4>
+                                <p class="mb-0">Avec Email</p>
+                            </div>
+                            <i class="bi bi-envelope display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-3">
+                <div class="card bg-warning text-white">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h4 class="mb-0" id="suppliersWithPhone">0</h4>
+                                <p class="mb-0">Avec Téléphone</p>
+                            </div>
+                            <i class="bi bi-telephone display-6"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Barre de recherche et filtres -->
+        <div class="row mb-4">
+            <div class="col-md-6">
+                <div class="input-group">
+                    <span class="input-group-text bg-light">
+                        <i class="bi bi-search"></i>
+                    </span>
+                    <input
+                        type="text"
+                        class="form-control"
+                        placeholder="Rechercher un fournisseur..."
+                        id="searchInput"
+                    />
+                </div>
+            </div>
+            <div class="col-md-6 text-end">
+                <small class="text-muted" id="resultsCount">
+                    0 fournisseur trouvé
+                </small>
+            </div>
+        </div>
+
+        <!-- Formulaire d'ajout/modification -->
+        <div class="row mb-4" id="supplierForm" style="display: none;">
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0" id="formTitle">
+                            <i class="bi bi-plus-circle me-2"></i>
+                            Ajouter un Fournisseur
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="supplierFormElement">
+                            <input type="hidden" id="supplierId" />
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="name" class="form-label">
+                                        <i class="bi bi-building me-1"></i>
+                                        Nom de l'entreprise <span class="text-danger">*</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="name"
+                                        name="name"
+                                        required
+                                    />
+                                </div>
+                                
+                                <div class="col-md-6 mb-3">
+                                    <label for="contact_person" class="form-label">
+                                        <i class="bi bi-person me-1"></i>
+                                        Personne à contacter
+                                    </label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="contact_person"
+                                        name="contact_person"
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="email" class="form-label">
+                                        <i class="bi bi-envelope me-1"></i>
+                                        Email
+                                    </label>
+                                    <input
+                                        type="email"
+                                        class="form-control"
+                                        id="email"
+                                        name="email"
+                                    />
+                                </div>
+                                
+                                <div class="col-md-6 mb-3">
+                                    <label for="phone" class="form-label">
+                                        <i class="bi bi-telephone me-1"></i>
+                                        Téléphone
+                                    </label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="phone"
+                                        name="phone"
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <label for="address" class="form-label">
+                                    <i class="bi bi-geo-alt me-1"></i>
+                                    Adresse
+                                </label>
+                                <textarea
+                                    class="form-control"
+                                    id="address"
+                                    name="address"
+                                    rows="2"
+                                ></textarea>
+                            </div>
+                            
+                            <div class="d-flex justify-content-end gap-2">
+                                <button type="button" class="btn btn-outline-secondary" onclick="resetForm()">
+                                    <i class="bi bi-x-circle me-1"></i>
+                                    Annuler
+                                </button>
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-check-circle me-1"></i>
+                                    <span id="submitBtnText">Ajouter</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Liste des fournisseurs -->
+        <div id="suppliersContainer">
+            <div class="text-center py-5" id="emptyState">
+                <i class="bi bi-truck display-1 text-muted"></i>
+                <h4 class="text-muted mt-3">Aucun fournisseur</h4>
+                <p class="text-muted">Commencez par ajouter votre premier fournisseur</p>
+            </div>
+        </div>
+
+        <!-- Liste des fournisseurs (template) -->
+        <div class="row" id="suppliersList" style="display: none;">
+        </div>
+    </div>
+
+    <!-- Modal de confirmation de suppression -->
+    <div class="modal fade" id="deleteModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Confirmer la suppression</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Êtes-vous sûr de vouloir supprimer ce fournisseur ?</p>
+                    <p class="text-muted">Cette action est irréversible.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="confirmDeleteBtn">Supprimer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="{{ url_for('static', path='js/suppliers.js') }}?v={{ ASSET_VERSION() }}"></script>
+{% endblock %}

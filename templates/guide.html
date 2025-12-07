@@ -1,0 +1,606 @@
+{% extends "base.html" %}
+
+{% block title %}Guide Utilisateur - Geek Technologie{% endblock %}
+
+{% block extra_head %}
+<style>
+    .main-content { padding: 20px; }
+    .guide-sidebar { background: #f8f9fa; border-radius: 8px; padding: 20px; height: fit-content; position: sticky; top: 20px; }
+    .guide-section { display: none; }
+    .guide-section.active { display: block; }
+    .workflow-step { padding: 20px; text-align: center; }
+    .step-number { width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; margin-bottom: 10px; }
+    .feature-card { transition: transform 0.2s ease-in-out; }
+    .feature-card:hover { transform: translateY(-2px); }
+    .nav-link { border-radius: 8px; margin-bottom: 5px; }
+    .nav-link.active { background-color: #0d6efd; color: white; }
+</style>
+{% endblock %}
+    {% block content %}
+    <div class="container-fluid">
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h1 class="h3 mb-1">
+                            <i class="bi bi-book me-2 text-primary"></i>
+                            Guide Utilisateur
+                        </h1>
+                        <p class="text-muted mb-0">Documentation complète de l'application Geek Technologie</p>
+                    </div>
+                    <button class="btn btn-outline-primary" onclick="printGuide()">
+                        <i class="bi bi-printer me-2"></i>Imprimer
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-3">
+                <div class="guide-sidebar">
+                    <h5 class="mb-3"><i class="bi bi-list me-2"></i>Sommaire</h5>
+                    <nav class="nav flex-column">
+                        <a class="nav-link active" href="#" onclick="showSection('workflow')">
+                            <i class="bi bi-diagram-3 me-2"></i>Workflow Global
+                        </a>
+                        <a class="nav-link" href="#" onclick="showSection('modules')">
+                            <i class="bi bi-grid-3x3 me-2"></i>Modules & Fonctionnalités
+                        </a>
+                        <a class="nav-link" href="#" onclick="showSection('quickstart')">
+                            <i class="bi bi-play-circle me-2"></i>Guide de Démarrage
+                        </a>
+                        <a class="nav-link" href="#" onclick="showSection('troubleshooting')">
+                            <i class="bi bi-tools me-2"></i>Dépannage
+                        </a>
+                    </nav>
+                </div>
+            </div>
+
+            <div class="col-md-9">
+                <!-- Section Workflow -->
+                <div id="workflow" class="guide-section active">
+                    <h2 class="mb-4 text-primary">
+                        <i class="bi bi-diagram-3 me-2"></i>Workflow Global
+                    </h2>
+                    
+                    <div class="alert alert-info">
+                        <i class="bi bi-info-circle me-2"></i>
+                        <strong>Principe :</strong> L'application suit un flux logique métier du devis à la facturation.
+                    </div>
+
+                    <div class="card mb-4">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="mb-0">Flux Principal : Devis → Bon de Livraison → Facture</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row text-center">
+                                <div class="col-md-3">
+                                    <div class="workflow-step">
+                                        <div class="step-number bg-warning text-dark">1</div>
+                                        <i class="bi bi-file-earmark-text display-4 text-warning"></i>
+                                        <h6 class="mt-2">Devis</h6>
+                                        <small>Proposition commerciale</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="workflow-step">
+                                        <div class="step-number bg-info text-white">2</div>
+                                        <i class="bi bi-truck display-4 text-info"></i>
+                                        <h6 class="mt-2">Bon de Livraison</h6>
+                                        <small>Préparation & livraison</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="workflow-step">
+                                        <div class="step-number bg-success text-white">3</div>
+                                        <i class="bi bi-receipt display-4 text-success"></i>
+                                        <h6 class="mt-2">Facture</h6>
+                                        <small>Facturation & paiement</small>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="workflow-step">
+                                        <div class="step-number bg-primary text-white">4</div>
+                                        <i class="bi bi-boxes display-4 text-primary"></i>
+                                        <h6 class="mt-2">Stock</h6>
+                                        <small>Mise à jour automatique</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section Modules -->
+                <div id="modules" class="guide-section">
+                    <h2 class="mb-4 text-primary">
+                        <i class="bi bi-grid-3x3 me-2"></i>Modules & Fonctionnalités
+                    </h2>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-speedometer2 text-primary me-2"></i>Dashboard
+                                    </h5>
+                                    <p class="card-text">Vue d'ensemble avec statistiques temps réel, chiffres d'affaires, stock et indicateurs clés de performance.</p>
+                                    <small class="text-muted">Accès : Menu principal → Dashboard</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-box text-warning me-2"></i>Gestion Produits
+                                    </h5>
+                                    <p class="card-text">Catalogue complet avec variantes, codes-barres automatiques, gestion IMEI/séries et filtres avancés.</p>
+                                    <small class="text-muted">Accès : Menu → Produits</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-people text-info me-2"></i>Gestion Clients
+                                    </h5>
+                                    <p class="card-text">Base clients complète avec historique achats, suivi créances et informations de contact détaillées.</p>
+                                    <small class="text-muted">Accès : Menu → Clients</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-receipt text-success me-2"></i>Facturation
+                                    </h5>
+                                    <p class="card-text">Création factures avec calculs automatiques TVA, suivi paiements et impression PDF.</p>
+                                    <small class="text-muted">Accès : Menu → Factures</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-file-earmark-text text-primary me-2"></i>Devis
+                                    </h5>
+                                    <p class="card-text">Création et gestion des devis avec conversion automatique en factures et bons de livraison.</p>
+                                    <small class="text-muted">Accès : Menu → Devis</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-truck text-info me-2"></i>Bons de Livraison
+                                    </h5>
+                                    <p class="card-text">Gestion des livraisons avec suivi des adresses, contacts et numéros de série des produits.</p>
+                                    <small class="text-muted">Accès : Menu → Bons de Livraison</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-boxes text-warning me-2"></i>Mouvements de Stock
+                                    </h5>
+                                    <p class="card-text">Suivi complet des entrées/sorties de stock avec traçabilité et historique détaillé.</p>
+                                    <small class="text-muted">Accès : Menu → Mouvements de Stock</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-credit-card text-danger me-2"></i>Gestion des Dettes
+                                    </h5>
+                                    <p class="card-text">Suivi des créances clients et dettes fournisseurs avec échéanciers et relances.</p>
+                                    <small class="text-muted">Accès : Menu → Dettes</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-building text-secondary me-2"></i>Fournisseurs
+                                    </h5>
+                                    <p class="card-text">Base fournisseurs avec contacts, conditions commerciales et historique des commandes.</p>
+                                    <small class="text-muted">Accès : Menu → Fournisseurs</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-bank text-success me-2"></i>Transactions Bancaires
+                                    </h5>
+                                    <p class="card-text">Suivi des mouvements bancaires avec rapprochement et catégorisation automatique.</p>
+                                    <small class="text-muted">Accès : Menu → Transactions Bancaires</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-upc-scan text-primary me-2"></i>Scanner & Codes-barres
+                                    </h5>
+                                    <p class="card-text">Scanner de codes-barres intégré et générateur automatique pour tous les produits.</p>
+                                    <small class="text-muted">Accès : Menu → Scanner / Générateur de codes-barres</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-4">
+                            <div class="card feature-card h-100">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-graph-up text-info me-2"></i>Rapports & Analyses
+                                    </h5>
+                                    <p class="card-text">Rapports détaillés de ventes, stock, rentabilité avec graphiques et exports.</p>
+                                    <small class="text-muted">Accès : Menu → Rapports</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section Guide de Démarrage -->
+                <div id="quickstart" class="guide-section">
+                    <h2 class="mb-4 text-primary">
+                        <i class="bi bi-play-circle me-2"></i>Guide de Démarrage Rapide
+                    </h2>
+
+                    <div class="alert alert-success">
+                        <i class="bi bi-check-circle me-2"></i>
+                        <strong>Bienvenue !</strong> Suivez ces étapes pour configurer votre application Geek Technologie.
+                    </div>
+
+                    <div class="accordion" id="quickstartAccordion">
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#step1">
+                                    <i class="bi bi-person-check me-2"></i>Étape 1 : Première connexion
+                                </button>
+                            </h2>
+                            <div id="step1" class="accordion-collapse collapse show">
+                                <div class="accordion-body">
+                                    <div class="alert alert-info">
+                                        <strong>Comptes par défaut :</strong>
+                                        <ul class="mb-0 mt-2">
+                                            <li><strong>Admin :</strong> admin / admin123</li>
+                                            <li><strong>Utilisateur :</strong> user / user123</li>
+                                        </ul>
+                                    </div>
+                                    <ol>
+                                        <li>Accédez à <code>http://localhost:8000</code></li>
+                                        <li>Connectez-vous avec le compte admin</li>
+                                        <li>Changez immédiatement le mot de passe par défaut</li>
+                                        <li>Explorez le dashboard pour vous familiariser</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#step2">
+                                    <i class="bi bi-gear me-2"></i>Étape 2 : Configuration de l'entreprise
+                                </button>
+                            </h2>
+                            <div id="step2" class="accordion-collapse collapse">
+                                <div class="accordion-body">
+                                    <ol>
+                                        <li>Allez dans <strong>Paramètres</strong> (icône engrenage)</li>
+                                        <li>Remplissez les <strong>Informations de l'entreprise</strong> :
+                                            <ul>
+                                                <li>Nom de l'entreprise</li>
+                                                <li>Adresse complète</li>
+                                                <li>Téléphone et email</li>
+                                                <li>Logo (optionnel)</li>
+                                            </ul>
+                                        </li>
+                                        <li>Configurez les <strong>Paramètres fiscaux</strong> :
+                                            <ul>
+                                                <li>Devise : XOF (Franc CFA) par défaut</li>
+                                                <li>Taux de TVA : 18% par défaut</li>
+                                                <li>Numéro RC et NINEA</li>
+                                            </ul>
+                                        </li>
+                                        <li>Enregistrez les modifications</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#step3">
+                                    <i class="bi bi-people me-2"></i>Étape 3 : Créer vos premiers clients
+                                </button>
+                            </h2>
+                            <div id="step3" class="accordion-collapse collapse">
+                                <div class="accordion-body">
+                                    <ol>
+                                        <li>Accédez au menu <strong>Clients</strong></li>
+                                        <li>Cliquez sur <strong>"Nouveau Client"</strong></li>
+                                        <li>Remplissez les informations :
+                                            <ul>
+                                                <li>Nom et prénom</li>
+                                                <li>Téléphone et email</li>
+                                                <li>Adresse de livraison</li>
+                                                <li>Type de client (particulier/entreprise)</li>
+                                            </ul>
+                                        </li>
+                                        <li>Enregistrez le client</li>
+                                        <li>Répétez pour vos clients principaux</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#step4">
+                                    <i class="bi bi-box me-2"></i>Étape 4 : Créer votre catalogue produits
+                                </button>
+                            </h2>
+                            <div id="step4" class="accordion-collapse collapse">
+                                <div class="accordion-body">
+                                    <ol>
+                                        <li>Allez dans <strong>Produits</strong></li>
+                                        <li>Cliquez sur <strong>"Nouveau Produit"</strong></li>
+                                        <li>Remplissez les informations de base :
+                                            <ul>
+                                                <li>Nom du produit</li>
+                                                <li>Catégorie (Smartphones, Ordinateurs, etc.)</li>
+                                                <li>Prix d'achat et de vente</li>
+                                                <li>Quantité en stock</li>
+                                            </ul>
+                                        </li>
+                                        <li>Pour les produits avec variantes (ex: couleurs) :
+                                            <ul>
+                                                <li>Ajoutez des variantes avec IMEI/numéros de série</li>
+                                                <li>Définissez l'état (neuf, occasion, venant)</li>
+                                            </ul>
+                                        </li>
+                                        <li>Les codes-barres sont générés automatiquement</li>
+                                        <li>Enregistrez le produit</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#step5">
+                                    <i class="bi bi-file-earmark-text me-2"></i>Étape 5 : Créer votre premier devis
+                                </button>
+                            </h2>
+                            <div id="step5" class="accordion-collapse collapse">
+                                <div class="accordion-body">
+                                    <ol>
+                                        <li>Accédez au menu <strong>Devis</strong></li>
+                                        <li>Cliquez sur <strong>"Nouveau Devis"</strong></li>
+                                        <li>Sélectionnez le client</li>
+                                        <li>Ajoutez les produits :
+                                            <ul>
+                                                <li>Recherchez par nom ou scannez le code-barres</li>
+                                                <li>Définissez les quantités</li>
+                                                <li>Les prix se remplissent automatiquement</li>
+                                            </ul>
+                                        </li>
+                                        <li>Vérifiez le total et la TVA</li>
+                                        <li>Enregistrez et imprimez le devis</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="accordion-item">
+                            <h2 class="accordion-header">
+                                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#step6">
+                                    <i class="bi bi-receipt me-2"></i>Étape 6 : Convertir en facture
+                                </button>
+                            </h2>
+                            <div id="step6" class="accordion-collapse collapse">
+                                <div class="accordion-body">
+                                    <ol>
+                                        <li>Dans la liste des devis, trouvez votre devis</li>
+                                        <li>Cliquez sur <strong>"Convertir en facture"</strong></li>
+                                        <li>Vérifiez les informations</li>
+                                        <li>Sélectionnez les numéros de série/IMEI si applicable</li>
+                                        <li>Choisissez le mode de paiement</li>
+                                        <li>Validez la facture</li>
+                                        <li>Le stock se met à jour automatiquement</li>
+                                        <li>Imprimez la facture pour le client</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning mt-4">
+                        <i class="bi bi-lightbulb me-2"></i>
+                        <strong>Conseil :</strong> Commencez par quelques produits et clients pour vous familiariser, puis étoffez progressivement votre catalogue.
+                    </div>
+                </div>
+
+                <!-- Section Dépannage -->
+                <div id="troubleshooting" class="guide-section">
+                    <h2 class="mb-4 text-primary">
+                        <i class="bi bi-tools me-2"></i>Dépannage & FAQ
+                    </h2>
+
+                    <div class="row">
+                        <div class="col-12">
+                            <div class="accordion" id="troubleshootingAccordion">
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq1">
+                                            <i class="bi bi-key me-2"></i>Problèmes de connexion
+                                        </button>
+                                    </h2>
+                                    <div id="faq1" class="accordion-collapse collapse">
+                                        <div class="accordion-body">
+                                            <strong>Impossible de se connecter :</strong>
+                                            <ul>
+                                                <li>Vérifiez que vous utilisez les bons identifiants</li>
+                                                <li>Comptes par défaut : admin/admin123 ou user/user123</li>
+                                                <li>Assurez-vous que Caps Lock n'est pas activé</li>
+                                                <li>Essayez de vider le cache du navigateur</li>
+                                            </ul>
+                                            <strong>Session expirée :</strong>
+                                            <ul>
+                                                <li>Reconnectez-vous simplement</li>
+                                                <li>Les sessions expirent après 24h d'inactivité</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq2">
+                                            <i class="bi bi-funnel me-2"></i>Filtres ne fonctionnent pas
+                                        </button>
+                                    </h2>
+                                    <div id="faq2" class="accordion-collapse collapse">
+                                        <div class="accordion-body">
+                                            <strong>Les filtres sur la page produits ne marchent pas :</strong>
+                                            <ul>
+                                                <li>Actualisez la page (F5)</li>
+                                                <li>Vérifiez que JavaScript est activé</li>
+                                                <li>Essayez de vider les filtres et recommencer</li>
+                                                <li>Si le problème persiste, contactez le support</li>
+                                            </ul>
+                                            <strong>Recherche ne trouve pas de résultats :</strong>
+                                            <ul>
+                                                <li>Vérifiez l'orthographe</li>
+                                                <li>Essayez avec moins de mots-clés</li>
+                                                <li>Utilisez la recherche par catégorie</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq3">
+                                            <i class="bi bi-calculator me-2"></i>Problèmes de calculs
+                                        </button>
+                                    </h2>
+                                    <div id="faq3" class="accordion-collapse collapse">
+                                        <div class="accordion-body">
+                                            <strong>Erreurs dans les totaux de factures :</strong>
+                                            <ul>
+                                                <li>Vérifiez la configuration du taux de TVA dans les paramètres</li>
+                                                <li>Assurez-vous que les prix produits sont corrects</li>
+                                                <li>Contrôlez les remises appliquées</li>
+                                            </ul>
+                                            <strong>Stock incorrect :</strong>
+                                            <ul>
+                                                <li>Vérifiez l'historique des mouvements de stock</li>
+                                                <li>Contrôlez les factures récentes</li>
+                                                <li>Effectuez un inventaire si nécessaire</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq4">
+                                            <i class="bi bi-printer me-2"></i>Problèmes d'impression
+                                        </button>
+                                    </h2>
+                                    <div id="faq4" class="accordion-collapse collapse">
+                                        <div class="accordion-body">
+                                            <strong>Facture ne s'imprime pas correctement :</strong>
+                                            <ul>
+                                                <li>Utilisez le format PDF pour l'impression</li>
+                                                <li>Vérifiez les paramètres d'impression (format A4)</li>
+                                                <li>Assurez-vous que l'imprimante est bien connectée</li>
+                                            </ul>
+                                            <strong>Codes-barres illisibles :</strong>
+                                            <ul>
+                                                <li>Imprimez en haute qualité</li>
+                                                <li>Utilisez du papier blanc de bonne qualité</li>
+                                                <li>Vérifiez que l'encre n'est pas faible</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#faq5">
+                                            <i class="bi bi-speedometer2 me-2"></i>Performance lente
+                                        </button>
+                                    </h2>
+                                    <div id="faq5" class="accordion-collapse collapse">
+                                        <div class="accordion-body">
+                                            <strong>Application lente :</strong>
+                                            <ul>
+                                                <li>Videz le cache du navigateur (Ctrl+Shift+Del)</li>
+                                                <li>Fermez les onglets inutiles</li>
+                                                <li>Redémarrez le navigateur</li>
+                                                <li>Vérifiez votre connexion internet</li>
+                                            </ul>
+                                            <strong>Chargement des pages long :</strong>
+                                            <ul>
+                                                <li>Utilisez les filtres pour limiter les résultats</li>
+                                                <li>Évitez d'afficher trop de produits à la fois</li>
+                                                <li>Redémarrez l'application si nécessaire</li>
+                                            </ul>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row mt-4">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-headset text-info me-2"></i>Support Technique
+                                    </h5>
+                                    <p class="card-text">Pour toute assistance technique :</p>
+                                    <ul class="list-unstyled">
+                                        <li><i class="bi bi-envelope me-2"></i>Email : support@geektechnologie.com</li>
+                                        <li><i class="bi bi-telephone me-2"></i>Téléphone : +221 XX XXX XX XX</li>
+                                        <li><i class="bi bi-clock me-2"></i>Horaires : 8h-18h (Lun-Ven)</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">
+                                        <i class="bi bi-book text-primary me-2"></i>Ressources Utiles
+                                    </h5>
+                                    <ul class="list-unstyled">
+                                        <li><i class="bi bi-arrow-right me-2"></i><a href="/guide">Guide utilisateur complet</a></li>
+                                        <li><i class="bi bi-arrow-right me-2"></i><a href="#workflow">Workflow de l'application</a></li>
+                                        <li><i class="bi bi-arrow-right me-2"></i><a href="#quickstart">Guide de démarrage rapide</a></li>
+                                        <li><i class="bi bi-arrow-right me-2"></i><a href="/">Retour au dashboard</a></li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+    <script src="{{ url_for('static', path='js/guide.js') }}"></script>
+{% endblock %}

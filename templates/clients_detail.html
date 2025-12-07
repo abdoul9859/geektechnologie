@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block title %}Client - Détails{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12 d-flex justify-content-between align-items-center mb-3">
+        <h1 class="h4 mb-0"><i class="bi bi-person-circle me-2"></i>Détails Client</h1>
+        <div class="d-flex gap-2">
+            <a id="clientDebtsBtn" class="btn btn-warning"><i class="bi bi-cash-coin me-1"></i>Créances</a>
+            <a href="/clients" class="btn btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Retour</a>
+        </div>
+    </div>
+</div>
+
+<div id="clientDetailRoot" class="d-none">
+    <div class="row g-3 mb-3">
+        <div class="col-lg-4">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="card-title mb-3">Informations</h5>
+                    <div id="clientInfo"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-8">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <div class="card text-bg-primary h-100">
+                        <div class="card-body">
+                            <div class="small">Total facturé</div>
+                            <div class="fs-5 fw-bold" id="statTotalInvoiced">0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-bg-success h-100">
+                        <div class="card-body">
+                            <div class="small">Total payé</div>
+                            <div class="fs-5 fw-bold" id="statTotalPaid">0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-bg-warning h-100">
+                        <div class="card-body">
+                            <div class="small">Restant dû</div>
+                            <div class="fs-5 fw-bold" id="statTotalDue">0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card text-bg-danger h-100">
+                        <div class="card-body">
+                            <div class="small">Dettes</div>
+                            <div class="fs-5 fw-bold" id="statTotalDebts">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-3">
+        <div class="col-lg-7">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-receipt me-2"></i>Factures</h6>
+                    <a id="newInvoiceBtn" class="btn btn-sm btn-primary" href="#"><i class="bi bi-plus me-1"></i>Nouvelle facture</a>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Date</th>
+                                    <th>Statut</th>
+                                    <th class="text-end">Total</th>
+                                    <th class="text-end">Payé</th>
+                                    <th class="text-end">Reste</th>
+                                </tr>
+                            </thead>
+                            <tbody id="invoicesBody">
+                                <tr><td colspan="6" class="text-center py-4 text-muted">Aucune facture</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-5">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-credit-card me-2"></i>Dettes</h6>
+                    <a id="manageDebtsBtn" class="btn btn-sm btn-outline-secondary" href="/debts"><i class="bi bi-gear"></i></a>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Échéance</th>
+                                    <th>Statut</th>
+                                    <th class="text-end">Montant</th>
+                                </tr>
+                            </thead>
+                            <tbody id="debtsBody">
+                                <tr><td colspan="4" class="text-center py-4 text-muted">Aucune dette</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="clientDetailLoading" class="text-center py-5">
+    <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Chargement...</span></div>
+    <div class="mt-2">Chargement des détails client...</div>
+    </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/client_detail.js?v={{ ASSET_VERSION() }}"></script>
+{% endblock %}
+
+

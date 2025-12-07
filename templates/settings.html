@@ -1,0 +1,702 @@
+{% extends "base.html" %}
+
+{% block title %}Paramètres - Geek Technologie{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3 mb-0">
+                <i class="bi bi-gear-fill me-2"></i>Paramètres de l'Application
+            </h1>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Navigation des paramètres -->
+    <div class="col-md-3">
+        <div class="card shadow">
+            <div class="card-header">
+                <h6 class="m-0 font-weight-bold text-primary">
+                    <i class="bi bi-list me-2"></i>Catégories
+                </h6>
+            </div>
+
+            
+            <div class="list-group list-group-flush">
+                <a href="#general" class="list-group-item list-group-item-action active" data-bs-toggle="pill">
+                    <i class="bi bi-gear me-2"></i>Général
+                </a>
+                <a href="#company" class="list-group-item list-group-item-action" data-bs-toggle="pill">
+                    <i class="bi bi-building me-2"></i>Entreprise
+                </a>
+                <a href="#invoice" class="list-group-item list-group-item-action" data-bs-toggle="pill">
+                    <i class="bi bi-receipt me-2"></i>Facturation
+                </a>
+                <a href="#stock" class="list-group-item list-group-item-action" data-bs-toggle="pill">
+                    <i class="bi bi-box me-2"></i>Stock
+                </a>
+                <a href="#product-conditions" class="list-group-item list-group-item-action" data-bs-toggle="pill">
+                    <i class="bi bi-sliders me-2"></i>États produits
+                </a>
+                <a href="#users" class="list-group-item list-group-item-action" data-bs-toggle="pill">
+                    <i class="bi bi-people me-2"></i>Utilisateurs
+                </a>
+                <a href="#categories" class="list-group-item list-group-item-action" data-bs-toggle="pill">
+                    <i class="bi bi-tags me-2"></i>Catégories
+                </a>
+                <a href="#backup" class="list-group-item list-group-item-action" data-bs-toggle="pill">
+                    <i class="bi bi-cloud-download me-2"></i>Sauvegarde
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Contenu des paramètres -->
+    <div class="col-md-9">
+        <div class="tab-content">
+            <!-- Paramètres Généraux -->
+            <div class="tab-pane fade show active" id="general">
+                <div class="card shadow">
+                    <div class="card-header">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-gear me-2"></i>Paramètres Généraux
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <form id="generalSettingsForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="appName" class="form-label">Nom de l'application</label>
+                                        <input type="text" class="form-control" id="appName" value="Geek Technologie">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="appVersion" class="form-label">Version</label>
+                                        <input type="text" class="form-control" id="appVersion" value="1.0.0" readonly>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="defaultCurrency" class="form-label">Devise par défaut</label>
+                                        <select class="form-select" id="defaultCurrency">
+                                            <option value="XOF" selected>Franc CFA (XOF)</option>
+                                            <option value="EUR">Euro (EUR)</option>
+                                            <option value="USD">Dollar US (USD)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="defaultLanguage" class="form-label">Langue par défaut</label>
+                                        <select class="form-select" id="defaultLanguage">
+                                            <option value="fr" selected>Français</option>
+                                            <option value="en">English</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="timezone" class="form-label">Fuseau horaire</label>
+                                        <select class="form-select" id="timezone">
+                                            <option value="Africa/Dakar" selected>Afrique/Dakar (GMT+0)</option>
+                                            <option value="Europe/Paris">Europe/Paris (GMT+1)</option>
+                                            <option value="America/New_York">Amérique/New York (GMT-5)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="dateFormat" class="form-label">Format de date</label>
+                                        <select class="form-select" id="dateFormat">
+                                            <option value="DD/MM/YYYY" selected>DD/MM/YYYY</option>
+                                            <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                                            <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr class="my-4">
+                            <h6 class="mb-3"><i class="bi bi-image me-2"></i>Favicon de l'onglet</h6>
+                            <div class="row g-3 align-items-center">
+                              <div class="col-md-6">
+                                <label class="form-label" for="faviconFile">Fichier image (ICO, PNG, SVG)</label>
+                                <input type="file" class="form-control" id="faviconFile" accept="image/x-icon,image/png,image/svg+xml">
+                                <div class="form-text">Taille recommandée: 32x32 ou 64x64 pixels</div>
+                              </div>
+                              <div class="col-md-6">
+                                <div class="card" style="max-width: 420px;">
+                                  <div class="card-body">
+                                    <div class="mb-2 small text-muted">Aperçu</div>
+                                    <div class="d-flex align-items-center gap-3 mb-2">
+                                      <img id="faviconPreview" alt="Aperçu favicon" style="width:32px; height:32px; display:none; border: 1px solid #ddd; border-radius: 4px;" />
+                                      <input id="faviconUrl" type="text" class="form-control form-control-sm" placeholder="URL actuelle" readonly>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div class="mt-3 d-flex gap-2">
+                              <button type="button" class="btn btn-outline-primary" onclick="uploadFavicon()">
+                                <i class="bi bi-cloud-upload me-2"></i>Uploader
+                              </button>
+                              <button type="button" class="btn btn-outline-secondary" onclick="resetFavicon()">
+                                <i class="bi bi-arrow-counterclockwise me-2"></i>Réinitialiser
+                              </button>
+                            </div>
+
+                            <button type="button" class="btn btn-primary mt-4" onclick="saveGeneralSettings()">
+                                <i class="bi bi-check-circle me-2"></i>Enregistrer
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- États des produits -->
+            <div class="tab-pane fade" id="product-conditions">
+                <div class="card shadow">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-sliders me-2"></i>États configurables des produits
+                        </h6>
+                        <span class="text-muted small">Utilisé dans les formulaires Produits et Variantes</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            Définissez la liste des états autorisés (ex: "neuf", "occasion", "venant") et l'état par défaut pour les nouveaux produits.
+                        </div>
+                        <form id="productConditionsForm">
+                            <div class="mb-3">
+                                <label class="form-label" for="productConditionsOptions">États autorisés</label>
+                                <textarea id="productConditionsOptions" class="form-control" rows="3" placeholder="Une valeur par ligne (ex: neuf\noccasion\nvenant)"></textarea>
+                                <div class="form-text">Chaque ligne représente un état autorisé. Pas de doublons.</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="productConditionsDefault">État par défaut</label>
+                                <select id="productConditionsDefault" class="form-select">
+                                    <option value="">Sélectionner...</option>
+                                </select>
+                            </div>
+                            <div class="text-end">
+                                <button type="button" class="btn btn-primary" onclick="saveProductConditions()">
+                                    <i class="bi bi-check-circle me-2"></i>Enregistrer
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Paramètres Entreprise -->
+            <div class="tab-pane fade" id="company">
+                <div class="card shadow">
+                    <div class="card-header">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-building me-2"></i>Informations de l'Entreprise
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <form id="companySettingsForm">
+                            <div class="row">
+                                <div class="col-md-8">
+                                    <div class="mb-3">
+                                        <label for="companyName" class="form-label">Nom de l'entreprise *</label>
+                                        <input type="text" class="form-control" id="companyName" value="Geek Technologie" required>
+                                    </div>
+                                </div>
+                                <div class="col-md-4">
+                                    <div class="mb-3">
+                                        <label for="companyPhone" class="form-label">Téléphone</label>
+                                        <input type="tel" class="form-control" id="companyPhone" value="+221 33 XXX XX XX">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="companyAddress" class="form-label">Adresse</label>
+                                <textarea class="form-control" id="companyAddress" rows="2">Dakar, Sénégal</textarea>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="companyEmail" class="form-label">Email</label>
+                                        <input type="email" class="form-control" id="companyEmail" value="contact@geek-technologie.com">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="companyWebsite" class="form-label">Site web</label>
+                                        <input type="url" class="form-control" id="companyWebsite" value="https://geek-technologie.com">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="companyTaxNumber" class="form-label">Numéro fiscal</label>
+                                        <input type="text" class="form-control" id="companyTaxNumber">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="companyRegistration" class="form-label">Numéro d'enregistrement</label>
+                                        <input type="text" class="form-control" id="companyRegistration">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="companyLogo" class="form-label">Logo de l'entreprise</label>
+                                <input type="file" class="form-control" id="companyLogo" accept="image/*">
+                                <div class="form-text">Formats acceptés: JPG, PNG, SVG (max 2MB)</div>
+                            </div>
+
+                            <button type="button" class="btn btn-primary" onclick="saveCompanySettings()">
+                                <i class="bi bi-check-circle me-2"></i>Enregistrer
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Paramètres Facturation -->
+            <div class="tab-pane fade" id="invoice">
+                <div class="card shadow">
+                    <div class="card-header">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-receipt me-2"></i>Paramètres de Facturation
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <form id="invoiceSettingsForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="invoicePrefix" class="form-label">Préfixe des factures</label>
+                                        <input type="text" class="form-control" id="invoicePrefix" value="FAC-">
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="quotationPrefix" class="form-label">Préfixe des devis</label>
+                                        <input type="text" class="form-control" id="quotationPrefix" value="DEV-">
+                                    </div>
+                                </div>
+                            </div>
+
+                             <div class="mb-3">
+                                 <label for="invoicePaymentMethods" class="form-label">Méthodes de paiement utilisées</label>
+                                 <textarea class="form-control" id="invoicePaymentMethods" rows="4" placeholder="Une méthode par ligne (ex: Espèces, Orange Money, Wave, Chèque, Virement bancaire)"></textarea>
+                                 <div class="form-text">Ces méthodes alimentent les listes de choix lors de la création d'une facture et l'enregistrement des paiements.</div>
+                             </div>
+
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="paymentTerms" class="form-label">Conditions de paiement (jours)</label>
+                                        <input type="number" class="form-control" id="paymentTerms" value="30" min="0">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="invoiceFooter" class="form-label">Pied de page des factures</label>
+                                <textarea class="form-control" id="invoiceFooter" rows="3">Merci de votre confiance. Paiement à réception de facture.</textarea>
+                            </div>
+
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="autoInvoiceNumber" checked>
+                                <label class="form-check-label" for="autoInvoiceNumber">
+                                    Numérotation automatique des factures
+                                </label>
+                            </div>
+
+                            <button type="button" class="btn btn-primary" onclick="saveInvoiceSettings()">
+                                <i class="bi bi-check-circle me-2"></i>Enregistrer
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Paramètres Stock -->
+            <div class="tab-pane fade" id="stock">
+                <div class="card shadow">
+                    <div class="card-header">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-box me-2"></i>Paramètres de Stock
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <form id="stockSettingsForm">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="lowStockThreshold" class="form-label">Seuil de stock faible</label>
+                                        <input type="number" class="form-control" id="lowStockThreshold" value="10" min="0">
+                                        <div class="form-text">Alerte quand le stock est inférieur à cette valeur</div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="mb-3">
+                                        <label for="stockMethod" class="form-label">Méthode de valorisation</label>
+                                        <select class="form-select" id="stockMethod">
+                                            <option value="FIFO" selected>FIFO (Premier entré, premier sorti)</option>
+                                            <option value="LIFO">LIFO (Dernier entré, premier sorti)</option>
+                                            <option value="AVERAGE">Prix moyen pondéré</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="trackSerialNumbers" checked>
+                                <label class="form-check-label" for="trackSerialNumbers">
+                                    Suivre les numéros de série/IMEI
+                                </label>
+                            </div>
+
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="autoStockMovements" checked>
+                                <label class="form-check-label" for="autoStockMovements">
+                                    Mouvements de stock automatiques lors des ventes
+                                </label>
+                            </div>
+
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="stockAlerts" checked>
+                                <label class="form-check-label" for="stockAlerts">
+                                    Alertes de stock faible
+                                </label>
+                            </div>
+
+                            <button type="button" class="btn btn-primary" onclick="saveStockSettings()">
+                                <i class="bi bi-check-circle me-2"></i>Enregistrer
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gestion Utilisateurs -->
+            <div class="tab-pane fade" id="users">
+                <div class="card shadow">
+                    <div class="card-header">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-people me-2"></i>Gestion des Utilisateurs
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <h6>Utilisateurs du système</h6>
+                            <button class="btn btn-primary btn-sm" onclick="openUserModal()">
+                                <i class="bi bi-person-plus me-2"></i>Nouvel utilisateur
+                            </button>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Utilisateur</th>
+                                        <th>Email</th>
+                                        <th>Rôle</th>
+                                        <th>Statut</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="usersTableBody">
+                                    <tr>
+                                        <td colspan="5" class="text-center">
+                                            <div class="spinner-border" role="status">
+                                                <span class="visually-hidden">Chargement...</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Catégories -->
+            <div class="tab-pane fade" id="categories">
+                <div class="card shadow">
+                    <div class="card-header">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-tags me-2"></i>Gestion des Catégories de Produits
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-4">
+                            <div class="col-md-8">
+                                <form id="categoryForm" class="row g-2 align-items-center">
+                                    <input type="hidden" id="categoryId">
+                                    <div class="col-md-6">
+                                        <input type="text" class="form-control" id="categoryName" placeholder="Nom de la catégorie" required>
+                                    </div>
+                                    <div class="col-md-4 form-check">
+                                        <input class="form-check-input" type="checkbox" id="categoryRequiresVariants">
+                                        <label class="form-check-label" for="categoryRequiresVariants">
+                                            Variantes requises
+                                        </label>
+                                    </div>
+                                    <div class="col-md-2">
+                                        <button type="button" class="btn btn-primary w-100" id="saveCategoryBtn" onclick="saveCategory()">
+                                            <i class="bi bi-plus-circle me-2"></i>Ajouter
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                        
+                        <div class="table-responsive">
+                            <table class="table table-bordered table-hover">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Nom</th>
+                                        <th>Nombre de produits</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="categoriesTableBody">
+                                    <tr>
+                                        <td colspan="3" class="text-center">
+                                            <div class="spinner-border" role="status">
+                                                <span class="visually-hidden">Chargement...</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- Gestion des Attributs de Catégorie -->
+                        <div class="card mt-4" id="categoryAttributesCard">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h6 class="m-0 font-weight-bold text-primary">
+                                    <i class="bi bi-sliders me-2"></i>Attributs de la Catégorie
+                                </h6>
+                                <div class="text-muted small" id="selectedCategoryLabel">Aucune catégorie sélectionnée</div>
+                            </div>
+                            <div class="card-body">
+                                <form id="attributeForm" class="row g-2 align-items-end">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Nom de l'attribut</label>
+                                        <input type="text" class="form-control" id="attrName" placeholder="ex: Stockage">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">Type</label>
+                                        <select class="form-select" id="attrType">
+                                            <option value="select" selected>Liste (sélection)</option>
+                                            <option value="multiselect">Liste (multi-sélection)</option>
+                                            <option value="text">Texte</option>
+                                            <option value="number">Nombre</option>
+                                            <option value="boolean">Oui/Non</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-2 form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="attrRequired">
+                                        <label class="form-check-label" for="attrRequired">Obligatoire</label>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">Valeurs (séparées par des virgules)</label>
+                                        <input type="text" class="form-control" id="attrValues" placeholder="64 GB, 128 GB">
+                                    </div>
+                                    <div class="col-md-12 text-end">
+                                        <button type="button" class="btn btn-primary" onclick="saveCategoryAttribute()">
+                                            <i class="bi bi-plus-circle me-2"></i>Ajouter l'attribut
+                                        </button>
+                                    </div>
+                                </form>
+
+                                <hr>
+
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-bordered align-middle">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Nom</th>
+                                                <th>Type</th>
+                                                <th>Obligatoire</th>
+                                                <th>Valeurs</th>
+                                                <th style="width:160px">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="attributesTableBody">
+                                            <tr>
+                                                <td colspan="5" class="text-center text-muted">Sélectionnez une catégorie pour gérer ses attributs</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info mt-3">
+                            <i class="bi bi-info-circle me-2"></i>
+                            Les catégories sont utilisées pour organiser vos produits et peuvent déterminer certains comportements comme l'exigence d'IMEI pour les appareils électroniques.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sauvegarde -->
+            <div class="tab-pane fade" id="backup">
+                <div class="card shadow">
+                    <div class="card-header">
+                        <h6 class="m-0 font-weight-bold text-primary">
+                            <i class="bi bi-cloud-download me-2"></i>Sauvegarde et Restauration
+                        </h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Sauvegarde de la base de données</h6>
+                                <p class="text-muted">Créer une sauvegarde complète de vos données</p>
+                                <button id="createBackupBtn" class="btn btn-success" onclick="createBackup()">
+                                    <i class="bi bi-download me-2"></i>Créer une sauvegarde
+                                </button>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Restauration</h6>
+                                <p class="text-muted">Restaurer depuis un fichier de sauvegarde</p>
+                                <input type="file" class="form-control mb-2" id="backupFile" accept=".db,.sql">
+                                <button id="restoreBackupBtn" class="btn btn-warning" onclick="restoreBackup()">
+                                    <i class="bi bi-upload me-2"></i>Restaurer
+                                </button>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <div class="row">
+                            <div class="col-12">
+                                <h6>Sauvegardes automatiques</h6>
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input" type="checkbox" id="autoBackup" checked>
+                                    <label class="form-check-label" for="autoBackup">
+                                        Activer les sauvegardes automatiques
+                                    </label>
+                                </div>
+                                
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="backupFrequency" class="form-label">Fréquence</label>
+                                            <select class="form-select" id="backupFrequency">
+                                                <option value="daily" selected>Quotidienne</option>
+                                                <option value="weekly">Hebdomadaire</option>
+                                                <option value="monthly">Mensuelle</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="backupRetention" class="form-label">Conservation (jours)</label>
+                                            <input type="number" class="form-control" id="backupRetention" value="30" min="1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="button" class="btn btn-primary" onclick="saveBackupSettings()">
+                                    <i class="bi bi-check-circle me-2"></i>Enregistrer
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Utilisateur -->
+<div class="modal fade" id="userModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-person-plus me-2"></i>Nouvel Utilisateur
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="userForm">
+                    <div class="mb-3">
+                        <label for="userName" class="form-label">Nom d'utilisateur *</label>
+                        <input type="text" class="form-control" id="userName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="userEmail" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="userEmail">
+                    </div>
+                    <div class="mb-3">
+                        <label for="userPassword" class="form-label">Mot de passe *</label>
+                        <input type="password" class="form-control" id="userPassword" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="userRole" class="form-label">Rôle *</label>
+                        <select class="form-select" id="userRole" required>
+                            <option value="">Sélectionner un rôle</option>
+                            <option value="user">Utilisateur</option>
+                            <option value="manager">Manager</option>
+                            <option value="admin">Administrateur</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" onclick="saveUser()">
+                    <i class="bi bi-check-circle me-2"></i>Créer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Confirmation Suppression Catégorie -->
+<div class="modal fade" id="deleteCategoryModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-exclamation-triangle-fill text-danger me-2"></i>Confirmer la suppression
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Êtes-vous sûr de vouloir supprimer la catégorie <strong id="categoryToDelete"></strong> ?</p>
+                <p class="text-danger">Cette action est irréversible et pourrait affecter les produits associés à cette catégorie.</p>
+                <input type="hidden" id="deleteCategoryId">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-danger" onclick="confirmDeleteCategory()">
+                    <i class="bi bi-trash me-2"></i>Supprimer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/settings.js?v={{ ASSET_VERSION }}"></script>
+{% endblock %}
