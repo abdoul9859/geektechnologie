@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, and_, or_
 from typing import List, Optional
 from datetime import datetime, date, timedelta
+import httpx
 from ..database import (
     get_db,
     Invoice,
@@ -146,6 +147,8 @@ async def list_invoices(
             "remaining_amount": float(invoice.remaining_amount or 0),
             "notes": invoice.notes,
             "show_tax": bool(invoice.show_tax),
+            "show_item_prices": bool(getattr(invoice, 'show_item_prices', True)),
+            "show_section_totals": bool(getattr(invoice, 'show_section_totals', True)),
             "price_display": invoice.price_display or "FCFA",
             # Champs de garantie
             "has_warranty": bool(getattr(invoice, "has_warranty", False)),
@@ -280,7 +283,8 @@ async def list_invoices_paginated(
     skip = (page - 1) * page_size
     rows = base.offset(skip).limit(page_size).all()
 
-    # Façonner la réponse légère (pas d'items/payments pour la liste)
+    # Façonner la réponse légère (pas d'items/payments pour la liste,
+    # et surtout pas le champ "notes" qui peut contenir des signatures base64 très lourdes)
     result_invoices = []
     for inv, client_name in rows:
         result_invoices.append({
@@ -299,7 +303,6 @@ async def list_invoices_paginated(
             "total": float(inv.total or 0),
             "paid_amount": float(inv.paid_amount or 0),
             "remaining_amount": float(inv.remaining_amount or 0),
-            "notes": inv.notes,
             "show_tax": bool(inv.show_tax),
             "price_display": inv.price_display or "FCFA",
             "created_at": inv.created_at,
@@ -338,16 +341,22 @@ async def get_invoice(
     _ = invoice.payments
 
     client_name = None
+    client_phone = None
     try:
-        client_name = db.query(Client.name).filter(Client.client_id == invoice.client_id).scalar()
+        client_data = db.query(Client.name, Client.phone).filter(Client.client_id == invoice.client_id).first()
+        if client_data:
+            client_name = client_data.name
+            client_phone = client_data.phone
     except Exception:
         client_name = None
+        client_phone = None
 
     return {
         "invoice_id": invoice.invoice_id,
         "invoice_number": invoice.invoice_number,
         "client_id": invoice.client_id,
         "client_name": client_name,
+        "client": {"name": client_name, "phone": client_phone} if client_name else None,
         "date": invoice.date,
         "due_date": invoice.due_date,
         "status": invoice.status,
@@ -359,6 +368,8 @@ async def get_invoice(
         "paid_amount": float(invoice.paid_amount or 0),
         "remaining_amount": float(invoice.remaining_amount or 0),
         "show_tax": bool(invoice.show_tax),
+        "show_item_prices": bool(getattr(invoice, 'show_item_prices', True)),
+        "show_section_totals": bool(getattr(invoice, 'show_section_totals', True)),
         "notes": invoice.notes,
         # Champs de garantie
         "has_warranty": bool(getattr(invoice, "has_warranty", False)),
@@ -435,6 +446,8 @@ async def create_invoice(
             remaining_amount=remaining_amount,
             notes=invoice_data.notes,
             show_tax=invoice_data.show_tax,
+            show_item_prices=getattr(invoice_data, 'show_item_prices', True),
+            show_section_totals=getattr(invoice_data, 'show_section_totals', True),
             price_display=invoice_data.price_display,
             # Champs de garantie
             has_warranty=bool(getattr(invoice_data, "has_warranty", False)),
@@ -837,6 +850,8 @@ async def update_invoice(
         invoice.total = invoice_data.total
         invoice.notes = invoice_data.notes
         invoice.show_tax = bool(invoice_data.show_tax)
+        invoice.show_item_prices = bool(getattr(invoice_data, 'show_item_prices', True))
+        invoice.show_section_totals = bool(getattr(invoice_data, 'show_section_totals', True))
         invoice.price_display = invoice_data.price_display
         # Champs de garantie
         invoice.has_warranty = bool(getattr(invoice_data, "has_warranty", False))
@@ -951,6 +966,84 @@ async def update_invoice(
                 logging.warning(f"Échec de synchronisation Google Sheets pour le produit {item_data.product_id}: {e}")
                 pass
 
+        # Mettre à jour les ventes quotidiennes associées à cette facture
+        try:
+            # Supprimer les ventes quotidiennes existantes pour cette facture
+            existing_sales = db.query(DailySale).filter(DailySale.invoice_id == invoice.invoice_id).all()
+            for s in existing_sales:
+                db.delete(s)
+            db.flush()
+
+            # Recréer les ventes quotidiennes à partir des nouveaux items produits
+            for item_data in (invoice_data.items or []):
+                if not getattr(item_data, "product_id", None):
+                    continue
+
+                product = db.query(Product).filter(Product.product_id == item_data.product_id).first()
+                if not product:
+                    continue
+
+                # Préparer les infos de variante si applicable
+                variant_id_val = None
+                variant_imei_val = None
+                variant_barcode_val = None
+                variant_condition_val = None
+                try:
+                    has_variants = (
+                        db.query(ProductVariant.variant_id)
+                        .filter(ProductVariant.product_id == product.product_id)
+                        .first()
+                        is not None
+                    )
+                    if has_variants:
+                        resolved_variant = None
+                        if getattr(item_data, "variant_id", None):
+                            resolved_variant = (
+                                db.query(ProductVariant)
+                                .filter(ProductVariant.variant_id == item_data.variant_id)
+                                .first()
+                            )
+                        elif getattr(item_data, "variant_imei", None):
+                            imei_code = str(item_data.variant_imei).strip()
+                            if imei_code:
+                                resolved_variant = (
+                                    db.query(ProductVariant)
+                                    .filter(
+                                        ProductVariant.product_id == product.product_id,
+                                        func.trim(ProductVariant.imei_serial) == imei_code,
+                                    )
+                                    .first()
+                                )
+                        if resolved_variant is not None:
+                            variant_id_val = resolved_variant.variant_id
+                            variant_imei_val = resolved_variant.imei_serial
+                            variant_barcode_val = resolved_variant.barcode
+                            variant_condition_val = resolved_variant.condition
+                except Exception:
+                    pass
+
+                daily_sale = DailySale(
+                    client_id=invoice.client_id,
+                    client_name=client.name,
+                    product_id=item_data.product_id,
+                    product_name=item_data.product_name or product.name,
+                    variant_id=variant_id_val,
+                    variant_imei=variant_imei_val,
+                    variant_barcode=variant_barcode_val,
+                    variant_condition=variant_condition_val,
+                    quantity=item_data.quantity,
+                    unit_price=item_data.price,
+                    total_amount=item_data.total,
+                    sale_date=invoice.date.date(),
+                    payment_method=invoice.payment_method or "espece",
+                    invoice_id=invoice.invoice_id,
+                    notes=f"Mise à jour automatique depuis facture {invoice.invoice_number}",
+                )
+                db.add(daily_sale)
+        except Exception as e:
+            # Ne pas bloquer la mise à jour de facture si la mise à jour des ventes quotidiennes échoue
+            logging.warning(f"Erreur lors de la mise à jour des ventes quotidiennes pour la facture {invoice.invoice_id}: {e}")
+
         db.commit()
         db.refresh(invoice)
 
@@ -989,6 +1082,8 @@ async def update_invoice(
             "remaining_amount": float(invoice.remaining_amount or 0),
             "notes": invoice.notes,
             "show_tax": bool(invoice.show_tax),
+            "show_item_prices": bool(getattr(invoice, 'show_item_prices', True)),
+            "show_section_totals": bool(getattr(invoice, 'show_section_totals', True)),
             "price_display": invoice.price_display or "FCFA",
             "created_at": getattr(invoice, "created_at", None),
             "items": [
@@ -1662,3 +1757,207 @@ async def get_warranty_certificate(
     except Exception as e:
         logging.error(f"Erreur lors de la génération du certificat de garantie: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
+
+# Configuration n8n
+# N8N_BASE_URL: URL de base de n8n (sans path) pour les webhooks de factures/devis
+N8N_BASE_URL = os.getenv("N8N_BASE_URL", "http://n8n:5678")
+
+from pydantic import BaseModel
+
+class SendWhatsAppRequest(BaseModel):
+    invoice_id: int
+    phone: str
+
+class SendEmailRequest(BaseModel):
+    invoice_id: int
+    email: str
+
+@router.post("/send-whatsapp")
+async def send_invoice_whatsapp(
+    request: Request,
+    data: SendWhatsAppRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Envoyer une facture par WhatsApp via n8n"""
+    try:
+        # Vérifier que la facture existe
+        invoice = db.query(Invoice).filter(Invoice.invoice_id == data.invoice_id).first()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Facture non trouvée")
+        
+        # Construire l'URL du PDF de la facture (accessible depuis n8n via réseau Docker)
+        app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
+        pdf_url = f"{app_public_url}/invoices/print/{data.invoice_id}"
+        
+        # Appeler le webhook n8n pour envoyer via WhatsApp
+        webhook_url = f"{N8N_BASE_URL}/webhook/send-invoice-whatsapp"
+        
+        payload = {
+            "invoice_id": data.invoice_id,
+            "invoice_number": invoice.invoice_number,
+            "phone": data.phone,
+            "pdf_url": pdf_url,
+            "client_name": invoice.client.name if invoice.client else "Client",
+            "total": float(invoice.total or 0)
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload)
+            
+        if response.status_code == 200:
+            return {"success": True, "message": "Facture envoyée par WhatsApp"}
+        else:
+            logging.error(f"Erreur n8n WhatsApp: {response.status_code} - {response.text}")
+            return {"success": False, "message": f"Erreur n8n: {response.text}"}
+            
+    except httpx.RequestError as e:
+        logging.error(f"Erreur connexion n8n: {e}")
+        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except Exception as e:
+        logging.error(f"Erreur envoi WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/send-email")
+async def send_invoice_email(
+    request: Request,
+    data: SendEmailRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Envoyer une facture par Email via n8n"""
+    try:
+        # Vérifier que la facture existe
+        invoice = db.query(Invoice).filter(Invoice.invoice_id == data.invoice_id).first()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Facture non trouvée")
+        
+        # Construire l'URL du PDF de la facture
+        base_url = str(request.base_url).rstrip('/')
+        pdf_url = f"{base_url}/api/invoices/{data.invoice_id}/print"
+        
+        # Appeler le webhook n8n pour envoyer par email
+        webhook_url = f"{N8N_BASE_URL}/webhook/send-invoice-email"
+        
+        payload = {
+            "invoice_id": data.invoice_id,
+            "invoice_number": invoice.invoice_number,
+            "email": data.email,
+            "pdf_url": pdf_url,
+            "client_name": invoice.client.name if invoice.client else "Client",
+            "total": float(invoice.total or 0)
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload)
+            
+        if response.status_code == 200:
+            return {"success": True, "message": "Facture envoyée par email"}
+        else:
+            logging.error(f"Erreur n8n Email: {response.status_code} - {response.text}")
+            return {"success": False, "message": f"Erreur n8n: {response.text}"}
+            
+    except httpx.RequestError as e:
+        logging.error(f"Erreur connexion n8n: {e}")
+        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except Exception as e:
+        logging.error(f"Erreur envoi email: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{invoice_id}/duplicate", response_model=InvoiceResponse)
+async def duplicate_invoice(
+    invoice_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Dupliquer une facture existante avec tous ses articles (sans les paiements)"""
+    try:
+        original = db.query(Invoice).filter(Invoice.invoice_id == invoice_id).first()
+        if not original:
+            raise HTTPException(status_code=404, detail="Facture non trouvée")
+        
+        # Générer un nouveau numéro de facture
+        new_number = _next_invoice_number(db)
+        
+        # Créer une copie de la facture
+        new_date = datetime.now()
+        new_invoice = Invoice(
+            invoice_number=new_number,
+            client_id=original.client_id,
+            date=new_date,
+            due_date=new_date + timedelta(days=30),
+            status="en attente",
+            payment_method=original.payment_method,
+            subtotal=original.subtotal,
+            tax_rate=original.tax_rate,
+            tax_amount=original.tax_amount,
+            total=original.total,
+            paid_amount=0,
+            remaining_amount=original.total,
+            notes=original.notes,
+            show_tax=original.show_tax,
+            show_item_prices=original.show_item_prices,
+            show_section_totals=original.show_section_totals,
+            price_display=original.price_display,
+            has_warranty=original.has_warranty,
+            warranty_duration=original.warranty_duration,
+        )
+        
+        db.add(new_invoice)
+        db.flush()  # Pour obtenir l'ID de la nouvelle facture
+        
+        # Copier les articles (sans décrémenter le stock)
+        original_items = db.query(InvoiceItem).filter(InvoiceItem.invoice_id == invoice_id).all()
+        for item in original_items:
+            new_item = InvoiceItem(
+                invoice_id=new_invoice.invoice_id,
+                product_id=item.product_id,
+                product_name=item.product_name,
+                quantity=item.quantity,
+                price=item.price,
+                total=item.total,
+            )
+            db.add(new_item)
+        
+        db.commit()
+        db.refresh(new_invoice)
+        
+        # Récupérer le nom du client pour la réponse
+        client = db.query(Client).filter(Client.client_id == new_invoice.client_id).first()
+        client_name = client.name if client else ""
+        
+        # Construire la réponse avec client_name
+        return {
+            "invoice_id": new_invoice.invoice_id,
+            "invoice_number": new_invoice.invoice_number,
+            "client_id": new_invoice.client_id,
+            "client_name": client_name,
+            "quotation_id": new_invoice.quotation_id,
+            "date": new_invoice.date,
+            "due_date": new_invoice.due_date,
+            "status": new_invoice.status,
+            "payment_method": new_invoice.payment_method,
+            "subtotal": new_invoice.subtotal,
+            "tax_rate": new_invoice.tax_rate,
+            "tax_amount": new_invoice.tax_amount,
+            "total": new_invoice.total,
+            "paid_amount": new_invoice.paid_amount,
+            "remaining_amount": new_invoice.remaining_amount,
+            "notes": new_invoice.notes,
+            "show_tax": new_invoice.show_tax,
+            "show_item_prices": new_invoice.show_item_prices,
+            "show_section_totals": new_invoice.show_section_totals,
+            "price_display": new_invoice.price_display,
+            "has_warranty": new_invoice.has_warranty,
+            "warranty_duration": new_invoice.warranty_duration,
+            "warranty_start_date": new_invoice.warranty_start_date,
+            "warranty_end_date": new_invoice.warranty_end_date,
+            "created_at": new_invoice.created_at,
+            "items": [],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Erreur lors de la duplication de la facture: {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de la duplication")

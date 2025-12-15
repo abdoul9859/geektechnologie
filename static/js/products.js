@@ -250,6 +250,13 @@ function attachFilterListeners() {
         currentFilters.has_variants = hasVariantsChk.checked ? true : null;
         currentPage = 1; loadProducts();
     });
+    
+    // Filtre pour afficher les produits archivés
+    const includeArchivedChk = document.getElementById('includeArchivedFilter');
+    if (includeArchivedChk) includeArchivedChk.addEventListener('change', () => {
+        currentFilters.include_archived = includeArchivedChk.checked ? true : false;
+        currentPage = 1; loadProducts();
+    });
 
     // Event listener pour le changement de catégorie dans le modal produit
     const productCategory = document.getElementById('productCategory');
@@ -408,7 +415,10 @@ function resetFilters() {
         currentFilters.has_barcode = null;
         currentFilters.in_stock = null;
         currentFilters.has_variants = null;
+        currentFilters.include_archived = false;
     }
+    const includeArchivedChk = document.getElementById('includeArchivedFilter');
+    if (includeArchivedChk) includeArchivedChk.checked = false;
     if (typeof currentPage !== 'undefined') currentPage = 1;
     loadProducts();
 }
@@ -439,6 +449,7 @@ async function loadProducts() {
         if (currentFilters.has_barcode != null) params.append('has_barcode', String(currentFilters.has_barcode));
         if (currentFilters.in_stock != null) params.append('in_stock', String(currentFilters.in_stock));
         if (currentFilters.has_variants != null) params.append('has_variants', String(currentFilters.has_variants));
+        if (currentFilters.include_archived) params.append('include_archived', 'true');
         
         // Utiliser safeLoadData pour éviter les chargements infinis
         const response = await safeLoadData(
@@ -586,6 +597,7 @@ function displayProducts(products) {
                 <td>
                     <div>
                         <strong>${escapeHtml(product.name)}</strong> ${condBadge}
+                        ${product.is_archived ? '<span class="badge bg-secondary ms-1"><i class="bi bi-archive"></i> Archivé</span>' : ''}
                         ${product.brand ? `<br><small class="text-muted">${escapeHtml(product.brand)} ${escapeHtml(product.model || '')}</small>` : ''}
                     </div>
                 </td>
@@ -593,7 +605,6 @@ function displayProducts(products) {
                     ${product.category ? `<span class="badge bg-secondary">${escapeHtml(product.category)}</span>` : '-'}
                 </td>
                 <td>${formatCurrency(product.price)}</td>
-                <td>${product.wholesale_price ? formatCurrency(product.wholesale_price) : '<span class="text-muted">-</span>'}</td>
                 <td>
                     <span class="badge ${stockBadgeClass}">${stockDisplay}</span>
                     ${conditionBadges}
@@ -610,6 +621,18 @@ function displayProducts(products) {
                                 id="edit-btn-${product.product_id}" title="Modifier">
                             <i class="bi bi-pencil"></i>
                         </button>
+                        <button class="btn btn-outline-secondary" onclick="duplicateProduct(${product.product_id})" title="Dupliquer">
+                            <i class="bi bi-copy"></i>
+                        </button>
+                        ${product.is_archived ? `
+                            <button class="btn btn-outline-success" onclick="unarchiveProduct(${product.product_id})" title="Désarchiver">
+                                <i class="bi bi-box-arrow-up"></i>
+                            </button>
+                        ` : `
+                            <button class="btn btn-outline-warning" onclick="archiveProduct(${product.product_id})" title="Archiver">
+                                <i class="bi bi-archive"></i>
+                            </button>
+                        `}
                         ${authManager.isAdmin() ? `
                             <button class="btn btn-outline-danger" onclick="deleteProduct(${product.product_id})"
                                     id="delete-btn-${product.product_id}" title="Supprimer">
@@ -970,7 +993,6 @@ async function loadProductForEdit(productId) {
         document.getElementById('productBrand').value = product.brand || '';
         document.getElementById('productModel').value = product.model || '';
         document.getElementById('productPrice').value = Math.round(product.price || 0);
-        document.getElementById('productWholesalePrice').value = Math.round(product.wholesale_price || 0);
         document.getElementById('productPurchasePrice').value = Math.round(product.purchase_price || 0);
         document.getElementById('productBarcode').value = product.barcode || '';
         document.getElementById('productQuantity').value = product.quantity;
@@ -1337,12 +1359,6 @@ async function saveProduct() {
             }
         }
         const variants = requiresVariants ? serializeVariants() : [];
-        
-        // Gestion du prix en gros : null si vide, sinon la valeur
-        const wholesalePriceValue = document.getElementById('productWholesalePrice').value;
-        const wholesalePrice = wholesalePriceValue && wholesalePriceValue.trim() !== ''
-            ? parseInt(wholesalePriceValue, 10)
-            : null;
 
         const productData = {
             name: document.getElementById('productName').value.trim(),
@@ -1350,7 +1366,6 @@ async function saveProduct() {
             brand: document.getElementById('productBrand').value.trim() || null,
             model: document.getElementById('productModel').value.trim() || null,
             price: parseInt(document.getElementById('productPrice').value, 10) || 0,
-            wholesale_price: wholesalePrice,
             purchase_price: parseInt(document.getElementById('productPurchasePrice').value, 10) || 0,
             barcode: document.getElementById('productBarcode').value.trim() || null,
             quantity: parseInt(document.getElementById('productQuantity').value) || 0,
@@ -1442,7 +1457,6 @@ async function viewProduct(productId) {
                         <tr><td><strong>Marque:</strong></td><td>${product.brand || '-'}</td></tr>
                         <tr><td><strong>Modèle:</strong></td><td>${product.model || '-'}</td></tr>
                         <tr><td><strong>Prix unitaire:</strong></td><td>${formatCurrency(product.price)}</td></tr>
-                        <tr><td><strong>Prix en gros:</strong></td><td>${product.wholesale_price ? formatCurrency(product.wholesale_price) : '-'}</td></tr>
                         ${window.authManager && window.authManager.isAdmin() ? `<tr><td><strong>Prix d'achat:</strong></td><td>${formatCurrency(product.purchase_price)}</td></tr>` : ''}
                         <tr><td><strong>État:</strong></td><td>${product.condition || '-'}</td></tr>
                         <tr><td><strong>Stock:</strong></td><td>${product.quantity} unités</td></tr>
@@ -1635,6 +1649,62 @@ async function deleteProduct(productId) {
     } catch (error) {
         console.error('Erreur lors de la suppression:', error);
         showAlert('Erreur lors de la suppression du produit', 'danger');
+    }
+}
+
+// Dupliquer un produit
+async function duplicateProduct(productId) {
+    try {
+        const response = await apiRequest(`/api/products/${productId}/duplicate`, { method: 'POST' });
+        showAlert('Produit dupliqué avec succès', 'success');
+        loadProducts();
+        // Ouvrir le produit dupliqué en édition
+        if (response.data && response.data.product_id) {
+            editProduct(response.data.product_id);
+        }
+    } catch (error) {
+        console.error('Erreur lors de la duplication:', error);
+        showAlert('Erreur lors de la duplication du produit', 'danger');
+    }
+}
+
+// Archiver un produit
+async function archiveProduct(productId) {
+    try {
+        await apiRequest(`/api/products/${productId}/archive`, { method: 'PUT' });
+        showAlert('Produit archivé avec succès', 'success');
+        loadProducts();
+    } catch (error) {
+        console.error('Erreur lors de l\'archivage:', error);
+        showAlert('Erreur lors de l\'archivage du produit', 'danger');
+    }
+}
+
+// Désarchiver un produit
+async function unarchiveProduct(productId) {
+    try {
+        await apiRequest(`/api/products/${productId}/unarchive`, { method: 'PUT' });
+        showAlert('Produit désarchivé avec succès', 'success');
+        loadProducts();
+    } catch (error) {
+        console.error('Erreur lors du désarchivage:', error);
+        showAlert('Erreur lors du désarchivage du produit', 'danger');
+    }
+}
+
+// Archiver tous les produits vendus (stock = 0)
+async function archiveSoldProducts() {
+    if (!confirm('Archiver tous les produits vendus (stock épuisé) ?\nCette action masquera ces produits de la liste par défaut.')) {
+        return;
+    }
+    try {
+        const response = await apiRequest('/api/products/archive-sold', { method: 'POST' });
+        const count = response.data?.archived_count || 0;
+        showAlert(`${count} produit(s) archivé(s) avec succès`, 'success');
+        loadProducts();
+    } catch (error) {
+        console.error('Erreur lors de l\'archivage des produits vendus:', error);
+        showAlert('Erreur lors de l\'archivage des produits vendus', 'danger');
     }
 }
 

@@ -167,24 +167,77 @@
                 </div>
             </div>
 
+            {% set show_prices = quotation.show_item_prices if quotation.show_item_prices is defined else true %}
+            {% set show_section_totals = quotation.show_section_totals if quotation.show_section_totals is defined else true %}
             <div class="products">
                 <div class="products-header">
                     <div>Description</div>
+                    {% if show_prices %}
                     <div class="text-end">Qté</div>
                     <div class="text-end">PU</div>
                     <div class="text-end">Montant</div>
+                    {% endif %}
                 </div>
+                {% set ns = namespace(section_total=0, in_section=false, section_name='') %}
                 {% for item in quotation.items %}
+                {% set pname = item.product_name | default('', true) %}
+                {% if pname.startswith('[SECTION]') %}
+                {# Afficher le total de la section précédente si elle existe #}
+                {% if ns.in_section and show_section_totals %}
+                <div class="product-row" style="background:#e9ecef; border-top:1px solid #ccc;">
+                    <div class="product-name" style="font-weight:600; font-style:italic; text-align:right; padding-right:10px;">
+                        Total {{ ns.section_name }}
+                    </div>
+                    {% if show_prices %}
+                    <div class="product-qty"></div>
+                    <div class="product-price"></div>
+                    <div class="product-total" style="font-weight:600;">{{ ns.section_total | format_cfa }}</div>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {# Nouvelle section #}
+                {% set ns.section_total = 0 %}
+                {% set ns.in_section = true %}
+                {% set ns.section_name = pname | replace('[SECTION]', '') | trim %}
+                <div class="product-row" style="background:#f8f9fa; border-top:2px solid #ddd;">
+                    <div class="product-name" style="font-weight:700; text-transform:uppercase;">
+                        {{ ns.section_name }}
+                    </div>
+                    {% if show_prices %}
+                    <div class="product-qty"></div>
+                    <div class="product-price"></div>
+                    <div class="product-total"></div>
+                    {% endif %}
+                </div>
+                {% else %}
+                {# Accumuler le total de la section #}
+                {% set ns.section_total = ns.section_total + (item.total or 0) %}
                 <div class="product-row">
                     <div class="product-name">
-                        <div><strong>{{ item.product_name }}</strong></div>
+                        <div><strong>{{ pname }}</strong></div>
                         
                     </div>
+                    {% if show_prices %}
                     <div class="product-qty">{{ item.quantity }}</div>
                     <div class="product-price">{{ (item.price or 0) | format_cfa }}</div>
                     <div class="product-total">{{ (item.total or 0) | format_cfa }}</div>
+                    {% endif %}
                 </div>
+                {% endif %}
                 {% endfor %}
+                {# Afficher le total de la dernière section si elle existe #}
+                {% if ns.in_section and show_section_totals %}
+                <div class="product-row" style="background:#e9ecef; border-top:1px solid #ccc;">
+                    <div class="product-name" style="font-weight:600; font-style:italic; text-align:right; padding-right:10px;">
+                        Total {{ ns.section_name }}
+                    </div>
+                    {% if show_prices %}
+                    <div class="product-qty"></div>
+                    <div class="product-price"></div>
+                    <div class="product-total" style="font-weight:600;">{{ ns.section_total | format_cfa }}</div>
+                    {% endif %}
+                </div>
+                {% endif %}
 
                 <div class="totals">
                     <div class="totals-card">

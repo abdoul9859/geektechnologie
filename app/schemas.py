@@ -86,6 +86,7 @@ class ClientCreate(BaseModel):
     country: str = "Sénégal"
     tax_number: Optional[str] = None
     notes: Optional[str] = None
+    disable_debt_reminder: Optional[bool] = False
 
 class ClientUpdate(BaseModel):
     name: Optional[str] = None
@@ -98,6 +99,7 @@ class ClientUpdate(BaseModel):
     country: Optional[str] = None
     tax_number: Optional[str] = None
     notes: Optional[str] = None
+    disable_debt_reminder: Optional[bool] = None
 
 class ClientResponse(BaseModel):
     client_id: int
@@ -111,6 +113,7 @@ class ClientResponse(BaseModel):
     country: Optional[str] = None
     tax_number: Optional[str]
     notes: Optional[str]
+    disable_debt_reminder: Optional[bool] = False
     created_at: Optional[datetime] = None
     
     class Config:
@@ -164,6 +167,7 @@ class ProductCreate(BaseModel):
     entry_date: Optional[datetime] = None
     notes: Optional[str] = None
     image_path: Optional[str] = None  # Chemin vers l'image du produit
+    is_archived: Optional[bool] = False
     variants: List[ProductVariantCreate] = []
 
 class ProductUpdate(BaseModel):
@@ -182,6 +186,7 @@ class ProductUpdate(BaseModel):
     entry_date: Optional[datetime] = None
     notes: Optional[str] = None
     image_path: Optional[str] = None  # Chemin vers l'image du produit
+    is_archived: Optional[bool] = None
     variants: Optional[List[ProductVariantCreate]] = None
 
 class ProductResponse(BaseModel):
@@ -201,6 +206,7 @@ class ProductResponse(BaseModel):
     entry_date: Optional[datetime]
     notes: Optional[str]
     image_path: Optional[str] = None  # Chemin vers l'image du produit
+    is_archived: Optional[bool] = False
     created_at: datetime
     variants: List[ProductVariantResponse] = []
 
@@ -240,6 +246,7 @@ class ProductListItem(BaseModel):
     notes: Optional[str]
     image_path: Optional[str] = None  # Chemin vers l'image du produit
     created_at: datetime
+    is_archived: Optional[bool] = False
     # Champs légers pour l'affichage de la liste (optimisation)
     has_variants: Optional[bool] = None
     variants_available: Optional[int] = None
@@ -323,6 +330,8 @@ class QuotationCreate(BaseModel):
     tax_amount: Decimal
     total: Decimal
     notes: Optional[str] = None
+    show_item_prices: bool = True
+    show_section_totals: bool = True
     items: List[QuotationItemCreate]
 
 class QuotationResponse(BaseModel):
@@ -338,6 +347,8 @@ class QuotationResponse(BaseModel):
     tax_amount: Decimal
     total: Decimal
     notes: Optional[str]
+    show_item_prices: bool = True
+    show_section_totals: bool = True
     created_at: datetime
     invoice_id: Optional[int] = None
     items: List[QuotationItemResponse] = []
@@ -379,6 +390,8 @@ class InvoiceCreate(BaseModel):
     total: Decimal
     notes: Optional[str] = None
     show_tax: bool = True
+    show_item_prices: bool = True
+    show_section_totals: bool = True
     price_display: str = "TTC"
     # Champs de garantie
     has_warranty: bool = False
@@ -405,6 +418,8 @@ class InvoiceResponse(BaseModel):
     remaining_amount: Decimal
     notes: Optional[str]
     show_tax: bool
+    show_item_prices: bool = True
+    show_section_totals: bool = True
     price_display: str
     # Champs de garantie
     has_warranty: bool = False

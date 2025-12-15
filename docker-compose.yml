@@ -1,5 +1,6 @@
 # Docker Compose configuration for PowerClass
 # Note: 'version' is obsolete in recent Docker Compose versions
+# Migré vers SQLite le 2025-12-07
 
 services:
 
@@ -11,8 +12,8 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgres://geekuser:geekpassword@db:5432/geekdb
-      DB_SSLMODE: disable
+      # SQLite - base de données locale
+      DATABASE_URL: sqlite:///./data/geektech.db
       HOST: 0.0.0.0
       PORT: "8000"
       RELOAD: "false"
@@ -23,6 +24,10 @@ services:
       GOOGLE_SHEETS_SPREADSHEET_ID: 1VHMujdZw-iPs28pz1rC9Ol72T9l9YTW6Wr9j5ujEsXQ
       GOOGLE_SHEETS_WORKSHEET_NAME: Les produits
       GOOGLE_SHEETS_AUTO_SYNC: "true"
+      # n8n base URL pour les webhooks (sans path)
+      N8N_BASE_URL: "http://n8n:5678"
+      # URL publique de l'application pour les liens accessibles depuis n8n
+      APP_PUBLIC_URL: "http://nitek_app:8000"
       # Debt reminder / Twilio will be injected from .env via env_file above
     ports:
       - "127.0.0.1:8001:8000"
@@ -37,28 +42,20 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    networks:
-      - default
 
-  db:
-    image: postgres:16
-    container_name: nitek_db
-    environment:
-      POSTGRES_DB: geekdb
-      POSTGRES_USER: geekuser
-      POSTGRES_PASSWORD: geekpassword
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5434:5432"
-    restart: unless-stopped
-    networks:
-      - default
+  # PostgreSQL désactivé - conservé en commentaire pour référence
+  # db:
+  #   image: postgres:16
+  #   container_name: nitek_db
+  #   environment:
+  #     POSTGRES_DB: geekdb
+  #     POSTGRES_USER: geekuser
+  #     POSTGRES_PASSWORD: geekpassword
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "127.0.0.1:5434:5432"
+  #   restart: unless-stopped
 
-
-networks:
-  default:
-    driver: bridge
-
-volumes:
-  postgres_data:
+# volumes:
+#   postgres_data:

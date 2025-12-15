@@ -105,9 +105,21 @@
             </div>
         </div>
     </div>
-    <div class="col-md-6 d-flex align-items-end justify-content-end">
+    <div class="col-md-3">
+        <div class="mb-3">
+            <label class="form-label">Archivés</label>
+            <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" id="includeArchivedFilter">
+                <label class="form-check-label" for="includeArchivedFilter">Afficher les archivés</label>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3 d-flex align-items-end justify-content-end gap-2">
+        <button class="btn btn-outline-warning" onclick="archiveSoldProducts()" title="Archiver tous les produits vendus">
+            <i class="bi bi-archive me-1"></i>Archiver vendus
+        </button>
         <button class="btn btn-outline-secondary" onclick="resetFilters()">
-            <i class="bi bi-arrow-clockwise me-2"></i>Réinitialiser
+            <i class="bi bi-arrow-clockwise me-1"></i>Réinitialiser
         </button>
     </div>
 </div>
@@ -130,7 +142,6 @@
                         <th data-col="name">Nom</th>
                         <th data-col="category">Catégorie</th>
                         <th data-col="price">Prix</th>
-                        <th>Prix Gros</th>
                         <th data-col="stock">Stock</th>
                         <th data-col="barcode">Code-barres</th>
                         <th>Actions</th>
@@ -138,7 +149,7 @@
                 </thead>
                 <tbody id="productsTableBody">
                     <tr>
-                        <td colspan="8" class="text-center">
+                        <td colspan="7" class="text-center">
                             <div class="spinner-border" role="status">
                                 <span class="visually-hidden">Chargement...</span>
                             </div>
@@ -230,13 +241,6 @@
                                 <input type="number" class="form-control" id="productPrice" step="1" min="0" inputmode="numeric" pattern="[0-9]*" required>
                             </div>
                         </div>
-                        <div class="col-md-4">
-                            <div class="mb-3">
-                                <label for="productWholesalePrice" class="form-label">Prix en gros (FCFA)</label>
-                                <input type="number" class="form-control" id="productWholesalePrice" step="1" min="0" inputmode="numeric" pattern="[0-9]*">
-                                <div class="form-text">Optionnel - pour ventes en gros</div>
-                            </div>
-                        </div>
                     </div>
 
                     <!-- Code-barres produit (masqué si variantes) -->
@@ -309,6 +313,11 @@
                             <div id="variantsList">
                                 <p class="text-muted text-center">Aucune variante ajoutée</p>
                             </div>
+                        </div>
+                        <div class="card-footer text-center">
+                            <button type="button" class="btn btn-outline-primary" onclick="addVariant()">
+                                <i class="bi bi-plus me-1"></i>Ajouter une variante
+                            </button>
                         </div>
                     </div>
                 </form>

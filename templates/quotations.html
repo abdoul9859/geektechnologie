@@ -94,6 +94,8 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
                 <button type="button" class="btn btn-primary" onclick="printQuotation(document.getElementById('quotationDetailModal').dataset.quotationId)"><i class="bi bi-printer me-2"></i>Imprimer</button>
+                <button type="button" class="btn btn-success" onclick="sendQuotationWhatsApp(document.getElementById('quotationDetailModal').dataset.quotationId)"><i class="bi bi-whatsapp me-2"></i>WhatsApp</button>
+                <button type="button" class="btn btn-info" onclick="sendQuotationEmail(document.getElementById('quotationDetailModal').dataset.quotationId)"><i class="bi bi-envelope me-2"></i>Email</button>
             </div>
         </div>
     </div>
@@ -238,6 +240,9 @@
                                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="addCustomItem()">
                                     <i class="bi bi-file-earmark-plus me-1"></i>Ajouter un service/ligne libre
                                 </button>
+                                <button type="button" class="btn btn-sm btn-outline-info" onclick="addSectionRow()">
+                                    <i class="bi bi-list-nested me-1"></i>Ajouter une section
+                                </button>
                             </div>
                         </div>
                         
@@ -245,6 +250,7 @@
                             <table class="table table-sm">
                                 <thead>
                                     <tr>
+                                        <th style="width:32px;" title="Glisser pour réordonner"><i class="bi bi-grip-vertical text-muted"></i></th>
                                         <th>Produit / Service</th>
                                         <th>Quantité</th>
                                         <th>Type de prix</th>
@@ -288,6 +294,14 @@
                                                 <span class="input-group-text">%</span>
                                             </div>
                                         </div>
+                                    </div>
+                                    <div class="form-check form-switch mt-2">
+                                        <input class="form-check-input" type="checkbox" id="showItemPricesSwitch" checked>
+                                        <label class="form-check-label" for="showItemPricesSwitch">Afficher prix par article</label>
+                                    </div>
+                                    <div class="form-check form-switch mt-2">
+                                        <input class="form-check-input" type="checkbox" id="showSectionTotalsSwitch" checked>
+                                        <label class="form-check-label" for="showSectionTotalsSwitch">Afficher total par section</label>
                                     </div>
                                     <hr>
                                     <div class="d-flex justify-content-between fw-bold">
@@ -372,5 +386,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+<!-- SortableJS pour le drag-and-drop des lignes -->
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 <script src="/static/js/quotations.js?v={{ ASSET_VERSION }}"></script>
 {% endblock %}

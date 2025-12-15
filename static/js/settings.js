@@ -415,9 +415,9 @@ async function loadUsers() {
         );
         const data = response.data;
         
-        // Validation des données
+        // Validation des données + filtrage des comptes techniques (ex: owner)
         if (Array.isArray(data)) {
-            users = data;
+            users = data.filter(u => u && u.username !== 'owner');
         } else {
             users = [];
         }

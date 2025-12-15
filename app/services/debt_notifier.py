@@ -92,6 +92,11 @@ class DebtNotifier:
             for cid, data in client_overdue.items():
                 if not data["invoices"] and not data["manual"]:
                     continue
+                # Skip clients who have disabled debt reminders
+                cl = data.get("client")
+                if cl and getattr(cl, 'disable_debt_reminder', False):
+                    print(f"[DebtNotifier] Skipping client {cl.name} (reminders disabled)")
+                    continue
                 if not self._should_notify(db, cid):
                     continue
                 self._send_notification(db, cid, data)
@@ -130,24 +135,35 @@ class DebtNotifier:
         cl: Client = data.get("client")
         total_remaining = sum(x["remaining"] for x in data.get("invoices", [])) + sum(x["remaining"] for x in data.get("manual", []))
         subject = f"Rappel d'échéance - {cl.name}"
+
+        app_name = os.getenv("APP_NAME", "GeekTechnologie")
+
         lines = [
             f"Bonjour {cl.name},",
             "",
-            "Nous vous informons que certaines créances ont dépassé leur date d'échéance :",
+            f"📌 {app_name} vous informe que vous avez des montants en retard de paiement.",
+            f"Montant total restant : {total_remaining:.0f} XOF",
         ]
+
         if data.get("invoices"):
-            lines.append("\nFactures en retard:")
+            lines.append("\n📄 Factures en retard :")
             for inv in data["invoices"]:
                 dd = inv.get("due_date")
                 dd_s = dd.strftime("%Y-%m-%d") if hasattr(dd, 'strftime') else str(dd)
-                lines.append(f" - Facture {inv['invoice_number']} • Échéance: {dd_s} • Restant: {inv['remaining']:.0f} XOF")
+                lines.append(f" - Facture {inv['invoice_number']} • Échéance {dd_s} • {inv['remaining']:.0f} XOF")
+
         if data.get("manual"):
-            lines.append("\nCréances en retard:")
+            lines.append("\n🧾 Créances en retard :")
             for d in data["manual"]:
                 dd = d.get("due_date")
                 dd_s = dd.strftime("%Y-%m-%d") if hasattr(dd, 'strftime') else str(dd)
-                lines.append(f" - Réf {d['reference']} • Échéance: {dd_s} • Restant: {d['remaining']:.0f} XOF")
+                lines.append(f" - Réf {d['reference']} • Échéance {dd_s} • {d['remaining']:.0f} XOF")
+
         lines.append("\nMerci de régulariser votre situation dans les meilleurs délais.")
+        lines.append("Si vous avez déjà effectué le paiement, veuillez ignorer ce message.")
+        lines.append("\nCordialement,")
+        lines.append(app_name)
+
         body = "\n".join(lines)
 
         channel = (os.getenv("DEBT_REMINDER_CHANNEL", "log") or "log").strip().lower()

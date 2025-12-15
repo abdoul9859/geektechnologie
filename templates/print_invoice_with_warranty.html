@@ -262,18 +262,45 @@
         .icon { width: 12px; height: 12px; color: var(--primary-color); }
 
         .warranty-footer {
-            margin-top: auto;
-            padding-top: 6mm;
+            margin-top: 6mm;
+            padding-top: 4mm;
             border-top: 1px solid var(--border-color);
             font-size: 10px;
             color: var(--text-secondary);
             text-align: center;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+        
+        .warranty-signature-block {
+            margin-top: 4mm;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 8mm;
+            page-break-inside: avoid;
+            break-inside: avoid;
+        }
+        
+        .warranty-signature-item {
+            text-align: center;
+            flex: 1;
+            max-width: 60mm;
+        }
+        
+        .warranty-signature-item p {
+            border-top: 1px solid #ccc;
+            padding-top: 3mm;
+            margin: 0;
+            font-size: 9px;
         }
 
         @media print {
-            .warranty-page { padding: 10mm 12mm 10mm 12mm !important; height: 297mm !important; overflow: hidden; }
+            .warranty-page { padding: 10mm 12mm 8mm 12mm !important; height: 297mm !important; overflow: hidden; }
             .warranty-content h3 { page-break-after: avoid; }
             .warranty-content p, .warranty-content ul { page-break-inside: avoid; }
+            .warranty-footer { page-break-inside: avoid; break-inside: avoid; margin-top: 4mm; }
+            .warranty-signature-block { page-break-inside: avoid; break-inside: avoid; }
         }
     </style>
 </head>
@@ -350,14 +377,50 @@
                 </div>
             </div>
 
+            {% set show_prices = invoice.show_item_prices if invoice.show_item_prices is defined else true %}
+            {% set show_section_totals = invoice.show_section_totals if invoice.show_section_totals is defined else true %}
             <div class="products">
                 <div class="products-header">
                     <div>Désignation</div>
+                    {% if show_prices %}
                     <div class="text-end">Qté</div>
                     <div class="text-end">PU</div>
                     <div class="text-end">Montant</div>
+                    {% endif %}
                 </div>
+                {% set ns = namespace(section_total=0, in_section=false, section_name='') %}
                 {% for item in grouped_items %}
+                {% if item.is_section %}
+                {# Afficher le total de la section précédente si elle existe #}
+                {% if ns.in_section and show_section_totals %}
+                <div class="product-row" style="background:#e9ecef; border-top:1px solid #ccc;">
+                    <div class="product-name" style="font-weight:600; font-style:italic; text-align:right; padding-right:10px;">
+                        Total {{ ns.section_name }}
+                    </div>
+                    {% if show_prices %}
+                    <div class="product-qty"></div>
+                    <div class="product-price"></div>
+                    <div class="product-total" style="font-weight:600;">{{ ns.section_total | format_cfa }}</div>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {# Nouvelle section #}
+                {% set ns.section_total = 0 %}
+                {% set ns.in_section = true %}
+                {% set ns.section_name = item.name | replace('\u00a0',' ') %}
+                <div class="product-row" style="background:#f8f9fa; border-top:2px solid #ddd;">
+                    <div class="product-name" style="font-weight:700; text-transform:uppercase;">
+                        {{ ns.section_name }}
+                    </div>
+                    {% if show_prices %}
+                    <div class="product-qty"></div>
+                    <div class="product-price"></div>
+                    <div class="product-total"></div>
+                    {% endif %}
+                </div>
+                {% else %}
+                {# Accumuler le total de la section #}
+                {% set ns.section_total = ns.section_total + (item.total or 0) %}
                 <div class="product-row">
                     <div class="product-name">
                         <div><strong>{{ item.name | replace('\u00a0',' ') | replace(' (IMEI', '<span style="display:none"> (IMEI') | safe }}</strong></div>
@@ -366,6 +429,7 @@
                         {% endif %}
                         
                     </div>
+                    {% if show_prices %}
                     <div class="product-qty">
                         {{ item.qty | format_number }}
                         {% if item.quote_qty is not none %}
@@ -374,8 +438,23 @@
                     </div>
                     <div class="product-price">{{ item.price | format_cfa }}</div>
                     <div class="product-total">{{ item.total | format_cfa }}</div>
+                    {% endif %}
                 </div>
+                {% endif %}
                 {% endfor %}
+                {# Afficher le total de la dernière section si elle existe #}
+                {% if ns.in_section and show_section_totals %}
+                <div class="product-row" style="background:#e9ecef; border-top:1px solid #ccc;">
+                    <div class="product-name" style="font-weight:600; font-style:italic; text-align:right; padding-right:10px;">
+                        Total {{ ns.section_name }}
+                    </div>
+                    {% if show_prices %}
+                    <div class="product-qty"></div>
+                    <div class="product-price"></div>
+                    <div class="product-total" style="font-weight:600;">{{ ns.section_total | format_cfa }}</div>
+                    {% endif %}
+                </div>
+                {% endif %}
                 <!-- Résumé financier directement sous le tableau -->
                 <div class="totals">
                     <div class="totals-card">
@@ -540,21 +619,17 @@
             <!-- Signature & cachet -->
             <div class="warranty-footer">
                 {% set _name = settings.company_name or settings.name %}
-                <p><strong>{{ _name or 'Geek Technologie' }}</strong></p>
-                <p>{{ settings.address or '' }}{% if settings.city %}, {{ settings.city }}{% endif %}</p>
-                {% if settings.phone %}<p>Tél: {{ settings.phone }}</p>{% endif %}
-                {% if settings.email %}<p>Email: {{ settings.email }}</p>{% endif %}
+                <p style="margin:0;"><strong>{{ _name or 'Geek Technologie' }}</strong></p>
+                <p style="margin:0;">{{ settings.address or '' }}{% if settings.city %}, {{ settings.city }}{% endif %}</p>
+                {% if settings.phone %}<p style="margin:0;">Tél: {{ settings.phone }}</p>{% endif %}
+                {% if settings.email %}<p style="margin:0;">Email: {{ settings.email }}</p>{% endif %}
 
-                <div style="margin-top: 6mm; display: flex; justify-content: space-between; align-items: center; gap: 12mm;">
-                    <div style="text-align: center; flex:1;">
-                        <p style="border-top: 1px solid #ccc; width: 60mm; padding-top: 4mm; margin: 0 auto;">
-                            <strong>Signature du Client</strong>
-                        </p>
+                <div class="warranty-signature-block">
+                    <div class="warranty-signature-item">
+                        <p><strong>Signature du Client</strong></p>
                     </div>
-                    <div style="text-align: center; flex:1;">
-                        <p style="border-top: 1px solid #ccc; width: 60mm; padding-top: 4mm; margin: 0 auto;">
-                            <strong>Cachet de l'Entreprise</strong>
-                        </p>
+                    <div class="warranty-signature-item">
+                        <p><strong>Cachet de l'Entreprise</strong></p>
                     </div>
                 </div>
             </div>

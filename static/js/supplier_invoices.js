@@ -19,6 +19,7 @@ function initializeSupplierInvoices() {
     loadSummaryStats();
     setupEventListeners();
     setupFormValidation();
+    populateSupplierPaymentMethods();
     
     // Le formulaire simplifié n'a plus de champs de date
     // Les dates seront gérées automatiquement par le serveur
@@ -94,6 +95,33 @@ async function loadSuppliers() {
     } catch (error) {
         console.error('Erreur lors du chargement des fournisseurs:', error);
         showError('Erreur lors du chargement des fournisseurs');
+    }
+}
+
+// Charger et appliquer les m1thodes de paiement configur2es pour les factures fournisseurs
+async function populateSupplierPaymentMethods(selectFirst = false) {
+    try {
+        let methods = await apiStorage.getInvoicePaymentMethods();
+        if (!Array.isArray(methods)) methods = [];
+        methods = methods.map(v => String(v || '').trim()).filter(v => v.length);
+        if (!methods.length) methods = ["Esp2ces", "Virement bancaire", "Mobile Money", "Ch1que", "Carte bancaire"]; // fallback
+
+        const sel = document.getElementById('paymentMethodSelect');
+        if (!sel) return;
+
+        const opts = [];
+        opts.push('<option value="">S1lectionner</option>');
+        methods.forEach(label => {
+            const value = label;
+            opts.push(`<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`);
+        });
+        sel.innerHTML = opts.join('');
+
+        if (selectFirst && methods.length) {
+            sel.value = methods[0];
+        }
+    } catch (e) {
+        console.warn('Impossible de charger les m1thodes de paiement fournisseurs configur2es:', e);
     }
 }
 
@@ -751,7 +779,11 @@ async function openPaymentModal(invoiceId) {
         });
         
         // Réinitialiser le formulaire
-        document.getElementById('paymentMethodSelect').value = '';
+        const methodSel = document.getElementById('paymentMethodSelect');
+        if (methodSel) {
+            // Recharger les méthodes configurées (liste de chaînes)
+            await populateSupplierPaymentMethods(true);
+        }
         document.getElementById('paymentReference').value = '';
         document.getElementById('paymentNotes').value = '';
         

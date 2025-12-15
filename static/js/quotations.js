@@ -15,7 +15,7 @@ async function loadQuotationDetail(quotationId) {
     `).join('');
     body.innerHTML = `
         <div class="mb-2"><strong>Numéro:</strong> ${escapeHtml(q.quotation_number)}</div>
-        <div class="mb-2"><strong>Client:</strong> ${escapeHtml(cl ? cl.name : (q.client_name || '-'))}</div>
+        <div class="mb-2"><strong>Client:</strong> ${escapeHtml(q.client_name || (q.client ? q.client.name : '') || (cl ? cl.name : '-'))}</div>
         <div class="mb-2"><strong>Date:</strong> ${q.date ? formatDate(q.date) : '-'}</div>
         <div class="mb-2"><strong>Valide jusqu'au:</strong> ${q.expiry_date ? formatDate(q.expiry_date) : '-'}</div>
         <div class="table-responsive"> 
@@ -57,16 +57,38 @@ async function preloadQuotationIntoForm(quotationId) {
     if (taxInput) taxInput.value = Number(q.tax_rate || 18);
     const showTaxSwitch = document.getElementById('showTaxSwitch');
     if (showTaxSwitch) showTaxSwitch.checked = (Number(q.tax_rate || 0) > 0);
-    // Items
-    quotationItems = (q.items || []).map(it => ({
-        id: Date.now() + Math.random(),
-        product_id: it.product_id,
-        product_name: it.product_name,
-        is_custom: !it.product_id,
-        quantity: it.quantity,
-        unit_price: Number(it.price),
-        total: Number(it.total)
-    }));
+    // Restaurer les options d'affichage
+    const showItemPricesSwitch = document.getElementById('showItemPricesSwitch');
+    if (showItemPricesSwitch) showItemPricesSwitch.checked = q.show_item_prices !== false;
+    const showSectionTotalsSwitch = document.getElementById('showSectionTotalsSwitch');
+    if (showSectionTotalsSwitch) showSectionTotalsSwitch.checked = q.show_section_totals !== false;
+    // Items - reconstituer en préservant l'ordre et en détectant les sections
+    quotationItems = (q.items || []).map(it => {
+        const pname = String(it.product_name || '');
+        // Détecter les sections: product_id null et nom commençant par [SECTION]
+        if (!it.product_id && pname.startsWith('[SECTION]')) {
+            const title = pname.replace(/^\[SECTION\]\s*/, '').trim();
+            return {
+                id: Date.now() + Math.random(),
+                is_section: true,
+                section_title: title || 'Section',
+                product_id: null,
+                product_name: '',
+                quantity: 0,
+                unit_price: 0,
+                total: 0
+            };
+        }
+        return {
+            id: Date.now() + Math.random(),
+            product_id: it.product_id,
+            product_name: it.product_name,
+            is_custom: !it.product_id,
+            quantity: it.quantity,
+            unit_price: Number(it.price),
+            total: Number(it.total)
+        };
+    });
     updateQuotationItemsDisplay();
     calculateTotals();
 }
@@ -189,6 +211,8 @@ function setupEventListeners() {
         try {
             const res = await axios.get('/api/products/', { params: { search: query, limit: 20 } });
             const list = res.data?.items || res.data || [];
+            // Conserver la dernière liste de résultats produit (aligné sur factures)
+            try { window._latestProductResults = list; } catch (e) {}
             suggestBox.innerHTML = list.map(p => {
                 const variants = Array.isArray(p.variants) ? p.variants : [];
                 const hasVariants = variants.length > 0;
@@ -220,35 +244,52 @@ function setupEventListeners() {
         }
     }, 250));
 
-    // Sélection d'une suggestion
-    document.getElementById('quotationItemsBody')?.addEventListener('click', (e) => {
+    // Sélection d'une suggestion - utiliser mousedown pour capturer avant blur
+    document.addEventListener('mousedown', (e) => {
         const item = e.target.closest('.list-group-item[data-product-id]');
         if (!item) return;
-        const row = item.closest('tr');
+        // Vérifier qu'on est bien dans le contexte des devis (quotation-suggestions)
+        const suggestBox = item.closest('.quotation-suggestions');
+        if (!suggestBox) return;
+
+        // Empêcher le comportement par défaut et la propagation
+        e.preventDefault();
+        e.stopPropagation();
+
         const productId = item.getAttribute('data-product-id');
-        const input = row.querySelector('.quotation-search-input');
+        if (!productId) return;
+
+        // Trouver le conteneur de la ligne via l'attribut data-item-id
+        const row = suggestBox.closest('[data-item-id]');
+        const input = row?.querySelector('.quotation-search-input');
+
         // Récupérer l'id logique de l'item via structure JS
         let idAttr = null;
         try {
-            // Trouver l'index de la ligne dans le DOM puis mapper au tableau quotationItems si besoin
-            idAttr = row.querySelector('button.btn-outline-danger')?.getAttribute('onclick')?.match(/removeQuotationItem\((\d+)\)/)?.[1] || null;
-        } catch (e) {}
+            idAttr = row?.querySelector('button.btn-outline-danger')?.getAttribute('onclick')?.match(/removeQuotationItem\((\d+)\)/)?.[1] || null;
+        } catch (err) {}
         const explicitId = Number(row?.dataset?.itemId || idAttr || 0);
         const realId = explicitId || (quotationItems.find(it => !it.product_id)?.id);
+
+        console.log('[QuotationProductSelect] click on product', productId, 'row:', row, 'realId:', realId);
+
         if (productId && realId) {
             selectProduct(Number(realId), productId);
-            const box = row.querySelector('.quotation-suggestions');
-            if (box) { box.innerHTML = ''; box.classList.add('d-none'); }
+            if (suggestBox) { suggestBox.innerHTML = ''; suggestBox.classList.add('d-none'); }
             if (input) input.value = '';
         }
-    });
+    }, true);
 
     // Cacher le dropdown si clic en dehors
     document.addEventListener('click', (e) => {
+        // Ne pas fermer si le clic est sur un élément de suggestion (déjà géré ci-dessus)
+        if (e.target.closest('.list-group-item[data-product-id]')) return;
         document.querySelectorAll('.quotation-suggestions').forEach(box => {
-            if (!box.contains(e.target) && !box.previousElementSibling?.contains(e.target)) {
-                box.classList.add('d-none');
-            }
+            // Vérifier si le clic est dans le conteneur parent (input-group ou le box lui-même)
+            const container = box.closest('.position-relative');
+            if (container && container.contains(e.target)) return;
+            if (box.contains(e.target)) return;
+            box.classList.add('d-none');
         });
     });
 }
@@ -574,6 +615,9 @@ function displayQuotations() {
                     <button class="btn btn-sm btn-outline-secondary" onclick="printQuotation(${quotation.quotation_id})" title="Imprimer">
                         <i class="bi bi-printer"></i>
                     </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="duplicateQuotation(${quotation.quotation_id})" title="Dupliquer">
+                        <i class="bi bi-copy"></i>
+                    </button>
                     <button class="btn btn-sm btn-outline-danger" onclick="deleteQuotation(${quotation.quotation_id})" title="Supprimer">
                         <i class="bi bi-trash"></i>
                     </button>
@@ -855,6 +899,33 @@ function addCustomItem() {
     updateQuotationItemsDisplay();
 }
 
+// Ajouter une section (titre uniquement, sans quantité ni prix)
+function addSectionRow() {
+    const newItem = {
+        id: Date.now(),
+        is_section: true,
+        section_title: 'Nouvelle section',
+        product_id: null,
+        product_name: '',
+        quantity: 0,
+        unit_price: 0,
+        total: 0
+    };
+    quotationItems.push(newItem);
+    updateQuotationItemsDisplay();
+}
+
+// Mettre à jour le titre d'une section
+function updateSectionTitle(itemId, title) {
+    const item = quotationItems.find(i => i.id === itemId);
+    if (!item) return;
+    item.section_title = String(title || '').trim();
+}
+
+// Exposer les fonctions pour les attributs onclick en HTML
+window.addSectionRow = addSectionRow;
+window.updateSectionTitle = updateSectionTitle;
+
 function updateQuotationItemsDisplay() {
     const tbody = document.getElementById('quotationItemsBody');
     if (!tbody) return;
@@ -862,7 +933,7 @@ function updateQuotationItemsDisplay() {
     if (quotationItems.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="6" class="text-center text-muted py-3">
+                <td colspan="7" class="text-center text-muted py-3">
                     <i class="bi bi-inbox me-2"></i>Aucun article ajouté
                 </td>
             </tr>
@@ -870,14 +941,40 @@ function updateQuotationItemsDisplay() {
         return;
     }
 
-    tbody.innerHTML = quotationItems.map(item => `
+    tbody.innerHTML = quotationItems.map((item, index) => {
+        // Ligne de section: juste un titre, pas de quantité ni prix
+        if (item.is_section) {
+            const title = escapeHtml(String(item.section_title || 'Nouvelle section').trim());
+            return `
+        <tr data-item-id="${item.id}" class="table-secondary">
+            <td class="text-center align-middle drag-handle" style="cursor:grab;" title="Glisser pour réordonner">
+                <i class="bi bi-grip-vertical text-muted fs-5"></i>
+            </td>
+            <td colspan="5">
+                <input type="text" class="form-control form-control-sm fw-bold" value="${title}"
+                       placeholder="Nom de section (ex: Matériel, Main d'œuvre)"
+                       oninput="updateSectionTitle(${item.id}, this.value)">
+            </td>
+            <td>
+                <button class="btn btn-sm btn-outline-danger" onclick="removeQuotationItem(${item.id})">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
+        </tr>`;
+        }
+        
+        // Ligne standard (produit ou service custom)
+        return `
         <tr data-item-id="${item.id}">
+            <td class="text-center align-middle drag-handle" style="cursor:grab;" title="Glisser pour réordonner">
+                <i class="bi bi-grip-vertical text-muted fs-5"></i>
+            </td>
             <td>
                 ${item.is_custom ? `
                 <input type="text" class="form-control form-control-sm" value="${escapeHtml(item.product_name || '')}" placeholder="Libellé (ex: Installation Windows)" oninput="updateCustomName(${item.id}, this.value)">
                 ` : `
                 <div class="input-group input-group-sm">
-                    <input type="text" class="form-control form-control-sm quotation-search-input" placeholder="Rechercher un produit..." data-item-id="${item.id}" />
+                    <input type="text" class="form-control form-control-sm quotation-search-input" placeholder="Nom, code-barres ou n° série..." data-item-id="${item.id}" />
                     <select class="form-select" onchange="selectProduct(${item.id}, this.value)">
                     <option value="">Sélectionner un produit</option>
                         ${products.map(product => {
@@ -921,8 +1018,42 @@ function updateQuotationItemsDisplay() {
                     <i class="bi bi-trash"></i>
                 </button>
             </td>
-        </tr>
-    `).join('');
+        </tr>`;
+    }).join('');
+    
+    // Initialiser le drag-and-drop si SortableJS est disponible
+    initSortable();
+}
+
+// Initialiser SortableJS pour le drag-and-drop des lignes
+function initSortable() {
+    const tbody = document.getElementById('quotationItemsBody');
+    if (!tbody || typeof Sortable === 'undefined') return;
+    // Détruire l'instance précédente si elle existe
+    if (tbody._sortableInstance) {
+        try { tbody._sortableInstance.destroy(); } catch(e) {}
+    }
+    tbody._sortableInstance = new Sortable(tbody, {
+        animation: 150,
+        handle: '.drag-handle',
+        ghostClass: 'table-primary',
+        chosenClass: 'table-info',
+        onEnd: function(evt) {
+            // Réordonner quotationItems selon le nouvel ordre du DOM
+            const rows = Array.from(tbody.querySelectorAll('tr[data-item-id]'));
+            const newOrder = rows.map(row => Number(row.getAttribute('data-item-id')));
+            const reordered = [];
+            newOrder.forEach(id => {
+                const item = quotationItems.find(i => i.id === id);
+                if (item) reordered.push(item);
+            });
+            // Ajouter les items qui n'auraient pas été trouvés (sécurité)
+            quotationItems.forEach(item => {
+                if (!reordered.includes(item)) reordered.push(item);
+            });
+            quotationItems = reordered;
+        }
+    });
 }
 
 function updateCustomName(itemId, name) {
@@ -932,8 +1063,39 @@ function updateCustomName(itemId, name) {
 
 function selectProduct(itemId, productId, useBulkPrice = false) {
     const item = quotationItems.find(i => i.id === itemId);
-    const product = products.find(p => p.product_id == productId);
-
+    if (!item) return;
+    
+    let product = products.find(p => String(p.product_id) == String(productId));
+    // Fallback: utiliser les derniers résultats de recherche
+    if (!product && Array.isArray(window._latestProductResults)) {
+        product = window._latestProductResults.find(p => String(p.product_id) == String(productId));
+    }
+    // Si toujours pas trouvé, tenter un chargement ponctuel depuis l'API
+    if (!product) {
+        try {
+            axios.get(`/api/products/${encodeURIComponent(productId)}`).then(({ data }) => {
+                if (!data) return;
+                // Mettre en cache local
+                if (!products.some(p => Number(p.product_id) === Number(data.product_id))) {
+                    products.push(data);
+                }
+                try { if (Array.isArray(data.variants)) productVariantsByProductId.set(Number(data.product_id), data.variants); } catch (e) {}
+                // Appliquer la sélection
+                selectProduct(itemId, data.product_id, useBulkPrice);
+            }).catch(() => {
+                // dernier recours: appliquer avec les infos minimales
+                if (item) {
+                    item.product_id = Number(productId);
+                    item.product_name = item.product_name || '';
+                    item.unit_price = Number(item.unit_price) || 0;
+                    item.total = item.quantity * item.unit_price;
+                    updateQuotationItemsDisplay();
+                    calculateTotals();
+                }
+            });
+        } catch (e) {}
+        return;
+    }
     if (item && product) {
         item.product_id = product.product_id;
         item.product_name = product.name;
@@ -946,7 +1108,15 @@ function selectProduct(itemId, productId, useBulkPrice = false) {
             item.quantity = 1;
         }
         item.total = item.quantity * item.unit_price;
-
+        // S'assurer que le produit est présent dans la liste locale pour l'affichage du <select>
+        if (!products.some(p => Number(p.product_id) === Number(product.product_id))) {
+            products.push(product);
+        }
+        // Précharger les variantes pour ce produit si fournies
+        try {
+            const variants = Array.isArray(product.variants) ? product.variants : [];
+            if (variants.length) productVariantsByProductId.set(Number(product.product_id), variants);
+        } catch (e) {}
         updateQuotationItemsDisplay();
         calculateTotals();
     }
@@ -1013,14 +1183,31 @@ async function saveQuotation(status) {
             expiry_date: document.getElementById('validUntil').value || null,
             notes: document.getElementById('quotationNotes').value.trim() || null,
             status: status || 'SENT',
-            // Inclure aussi les lignes personnalisées (product_id null)
-            items: quotationItems.map(item => ({
-                product_id: item.product_id ?? null,
-                product_name: item.product_name,
-                quantity: item.quantity,
-                price: item.unit_price,
-                total: item.total
-            }))
+            show_item_prices: document.getElementById('showItemPricesSwitch')?.checked ?? true,
+            show_section_totals: document.getElementById('showSectionTotalsSwitch')?.checked ?? true,
+            // Inclure aussi les lignes personnalisées et sections (product_id null)
+            items: quotationItems.flatMap(item => {
+                // Ligne de section (aucun montant, juste un titre visuel)
+                if (item.is_section) {
+                    const rawTitle = String(item.section_title || '').trim();
+                    if (!rawTitle) return [];
+                    const label = `[SECTION] ${rawTitle}`;
+                    return [{
+                        product_id: null,
+                        product_name: label,
+                        quantity: 0,
+                        price: 0,
+                        total: 0
+                    }];
+                }
+                return [{
+                    product_id: item.product_id ?? null,
+                    product_name: item.product_name,
+                    quantity: item.quantity,
+                    price: item.unit_price,
+                    total: item.total
+                }];
+            })
         };
 
         if (!quotationData.client_id || !quotationData.date || quotationData.items.length === 0) {
@@ -1135,6 +1322,213 @@ function printQuotation(quotationId) {
         .then(res => res.text())
         .then(html => { w.document.open(); w.document.write(html); w.document.close(); })
         .catch(() => { try { w.close(); } catch(e) {} showError('Impossible de charger la page d\'impression'); });
+}
+
+// Envoyer le devis par WhatsApp via n8n
+async function sendQuotationWhatsApp(quotationId) {
+    if (!quotationId) return;
+    try {
+        // Récupérer les infos du devis pour avoir le numéro du client
+        const { data: quotation } = await axios.get(`/api/quotations/${quotationId}`);
+        let phone = quotation.client?.phone || '';
+        
+        // Vérifier si le numéro est renseigné
+        if (!phone || phone.trim() === '') {
+            phone = prompt('Le numéro de téléphone du client n\'est pas renseigné.\nVeuillez entrer le numéro WhatsApp (ex: +221771234567):');
+            if (!phone || phone.trim() === '') {
+                showError('Numéro de téléphone requis pour l\'envoi WhatsApp');
+                return;
+            }
+        }
+        
+        // Normaliser le numéro (enlever espaces, tirets)
+        phone = phone.replace(/[\s\-\.]/g, '').trim();
+        if (!phone.startsWith('+')) {
+            phone = '+221' + phone.replace(/^0/, ''); // Défaut Sénégal
+        }
+        
+        // Appeler l'API n8n pour envoyer
+        showSuccess('Envoi en cours via WhatsApp...');
+        const response = await axios.post('/api/quotations/send-whatsapp', {
+            quotation_id: parseInt(quotationId),
+            phone: phone
+        });
+        
+        if (response.data?.success) {
+            showSuccess('Devis envoyé par WhatsApp avec succès!');
+        } else {
+            showError(response.data?.message || 'Erreur lors de l\'envoi WhatsApp');
+        }
+    } catch (error) {
+        console.error('Erreur envoi WhatsApp:', error);
+        showError(error.response?.data?.detail || 'Erreur lors de l\'envoi par WhatsApp');
+    }
+}
+
+// Envoyer le devis par Email via n8n
+async function sendQuotationEmail(quotationId) {
+    if (!quotationId) return;
+    try {
+        // Récupérer les infos du devis pour avoir l'email du client
+        const { data: quotation } = await axios.get(`/api/quotations/${quotationId}`);
+        let email = quotation.client?.email || '';
+        
+        // Vérifier si l'email est renseigné
+        if (!email || email.trim() === '') {
+            email = prompt('L\'email du client n\'est pas renseigné.\nVeuillez entrer l\'adresse email:');
+            if (!email || email.trim() === '') {
+                showError('Adresse email requise pour l\'envoi');
+                return;
+            }
+        }
+        
+        // Validation basique de l'email
+        if (!email.includes('@') || !email.includes('.')) {
+            showError('Adresse email invalide');
+            return;
+        }
+        
+        // Appeler l'API n8n pour envoyer
+        showSuccess('Envoi en cours par email...');
+        const response = await axios.post('/api/quotations/send-email', {
+            quotation_id: parseInt(quotationId),
+            email: email.trim()
+        });
+        
+        if (response.data?.success) {
+            showSuccess('Devis envoyé par email avec succès!');
+        } else {
+            showError(response.data?.message || 'Erreur lors de l\'envoi email');
+        }
+    } catch (error) {
+        console.error('Erreur envoi email:', error);
+        showError(error.response?.data?.detail || 'Erreur lors de l\'envoi par email');
+    }
+}
+
+async function duplicateQuotation(quotationId) {
+    try {
+        // Récupérer les données du devis original
+        const response = await axios.get(`/api/quotations/${quotationId}`);
+        const data = response.data;
+        
+        console.log('[DuplicateQuotation] Données récupérées:', data);
+        
+        // Ouvrir le modal manuellement sans passer par openQuotationModal qui réinitialise tout
+        const modalEl = document.getElementById('quotationModal');
+        if (!modalEl) {
+            showError('Erreur: formulaire de devis introuvable');
+            return;
+        }
+        
+        // Reset le formulaire d'abord
+        const formEl = document.getElementById('quotationForm');
+        if (formEl) formEl.reset();
+        
+        // Titre du modal
+        document.getElementById('quotationModalTitle').innerHTML = '<i class="bi bi-copy me-2"></i>Dupliquer le Devis';
+        
+        // Ne pas renseigner l'ID pour créer un nouveau devis
+        document.getElementById('quotationId').value = '';
+        
+        // Dates
+        document.getElementById('quotationDate').value = new Date().toISOString().split('T')[0];
+        document.getElementById('validUntil').value = new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0];
+        
+        // Numéro de devis - récupérer le prochain
+        const numberEl = document.getElementById('quotationNumber');
+        if (numberEl) {
+            numberEl.value = '';
+            numberEl.placeholder = 'Chargement...';
+            axios.get('/api/quotations/next-number').then(({ data: numData }) => {
+                if (numData && numData.quotation_number) {
+                    numberEl.value = numData.quotation_number;
+                    numberEl.placeholder = '';
+                }
+            }).catch(() => {
+                numberEl.placeholder = 'Sera généré automatiquement';
+            });
+        }
+        
+        // Renseigner le client
+        const hidden = document.getElementById('clientSelect');
+        const input = document.getElementById('clientSearch');
+        if (hidden && data.client_id) {
+            hidden.value = data.client_id;
+            console.log('[DuplicateQuotation] Client ID défini:', data.client_id);
+        }
+        // Chercher le nom du client dans la liste des clients
+        if (input && data.client_id) {
+            const cl = (clients || []).find(c => Number(c.client_id) === Number(data.client_id));
+            if (cl) {
+                input.value = cl.name || '';
+                console.log('[DuplicateQuotation] Client name défini:', cl.name);
+            }
+        }
+        
+        // Notes
+        const notesEl = document.getElementById('quotationNotes');
+        if (notesEl) notesEl.value = data.notes || '';
+        
+        // TVA
+        const taxInput = document.getElementById('taxRateInput');
+        if (taxInput) taxInput.value = Number(data.tax_rate || 18);
+        const showTaxSwitch = document.getElementById('showTaxSwitch');
+        if (showTaxSwitch) showTaxSwitch.checked = (Number(data.tax_rate || 0) > 0);
+        
+        // Options d'affichage
+        const showItemPricesSwitch = document.getElementById('showItemPricesSwitch');
+        if (showItemPricesSwitch) showItemPricesSwitch.checked = data.show_item_prices !== false;
+        const showSectionTotalsSwitch = document.getElementById('showSectionTotalsSwitch');
+        if (showSectionTotalsSwitch) showSectionTotalsSwitch.checked = data.show_section_totals !== false;
+        
+        // Copier les articles comme lignes personnalisées
+        const items = data.items || [];
+        console.log('[DuplicateQuotation] Articles à copier:', items);
+        
+        quotationItems = items.map((it, idx) => {
+            const pname = String(it.product_name || '');
+            // Détecter les sections
+            if (!it.product_id && pname.startsWith('[SECTION]')) {
+                const title = pname.replace(/^\[SECTION\]\s*/, '').trim();
+                return {
+                    id: Date.now() + idx + Math.random(),
+                    is_section: true,
+                    section_title: title || 'Section',
+                    product_id: null,
+                    product_name: '',
+                    quantity: 0,
+                    unit_price: 0,
+                    total: 0
+                };
+            }
+            return {
+                id: Date.now() + idx + Math.random(),
+                product_id: it.product_id,
+                product_name: it.product_name || '',
+                variant_id: null,
+                quantity: it.quantity || 1,
+                unit_price: it.price || 0,
+                total: it.total || 0,
+                is_custom: true
+            };
+        });
+        
+        console.log('[DuplicateQuotation] quotationItems après copie:', quotationItems);
+        
+        // Afficher les articles
+        updateQuotationItemsDisplay();
+        calculateQuotationTotals();
+        
+        // Ouvrir le modal
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+        
+        showSuccess('Formulaire pré-rempli avec les données du devis.');
+    } catch (error) {
+        console.error('Erreur lors de la duplication:', error);
+        showError('Erreur lors de la duplication du devis');
+    }
 }
 
 async function deleteQuotation(quotationId) {

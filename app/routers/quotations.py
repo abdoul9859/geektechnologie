@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func, text, and_, or_
 from typing import List, Optional
 from datetime import datetime, date as DateType
 from pydantic import BaseModel
+import httpx
+import os
 from ..database import get_db, Quotation, QuotationItem, Client, Product, Invoice
 from ..schemas import QuotationCreate, QuotationResponse
 from ..services.stats_manager import recompute_quotations_stats
@@ -292,7 +294,7 @@ async def list_quotations_paginated(
 
     return result
 
-@router.get("/{quotation_id}", response_model=QuotationResponse)
+@router.get("/{quotation_id}")
 async def get_quotation(
     quotation_id: int,
     db: Session = Depends(get_db),
@@ -303,14 +305,49 @@ async def get_quotation(
     quotation = db.query(Quotation).filter(Quotation.quotation_id == quotation_id).first()
     if not quotation:
         raise HTTPException(status_code=404, detail="Devis non trouvé")
+    
+    # Récupérer le nom du client
+    client = db.query(Client).filter(Client.client_id == quotation.client_id).first()
+    client_name = client.name if client else None
+    
     # Attacher l'ID de facture liée si présent
+    invoice_id = None
     try:
         inv = db.query(Invoice).filter(Invoice.quotation_id == quotation.quotation_id).first()
         if inv:
-            setattr(quotation, "invoice_id", inv.invoice_id)
+            invoice_id = inv.invoice_id
     except Exception:
         pass
-    return quotation
+    
+    # Construire la réponse avec le nom du client
+    return {
+        "quotation_id": quotation.quotation_id,
+        "quotation_number": quotation.quotation_number,
+        "client_id": quotation.client_id,
+        "client_name": client_name,
+        "client": {"name": client_name, "phone": client.phone if client else None, "email": client.email if client else None} if client else None,
+        "date": quotation.date,
+        "expiry_date": quotation.expiry_date,
+        "status": quotation.status,
+        "is_sent": bool(quotation.is_sent) if hasattr(quotation, 'is_sent') else False,
+        "subtotal": float(quotation.subtotal or 0),
+        "tax_rate": float(quotation.tax_rate or 0),
+        "tax_amount": float(quotation.tax_amount or 0),
+        "total": float(quotation.total or 0),
+        "notes": quotation.notes,
+        "show_item_prices": bool(getattr(quotation, 'show_item_prices', True)),
+        "show_section_totals": bool(getattr(quotation, 'show_section_totals', True)),
+        "created_at": quotation.created_at,
+        "invoice_id": invoice_id,
+        "items": [{
+            "item_id": item.item_id,
+            "product_id": item.product_id,
+            "product_name": item.product_name,
+            "quantity": item.quantity,
+            "price": float(item.price or 0),
+            "total": float(item.total or 0)
+        } for item in quotation.items]
+    }
 
 @router.post("/", response_model=QuotationResponse)
 async def create_quotation(
@@ -346,7 +383,9 @@ async def create_quotation(
             tax_rate=quotation_data.tax_rate,
             tax_amount=quotation_data.tax_amount,
             total=quotation_data.total,
-            notes=quotation_data.notes
+            notes=quotation_data.notes,
+            show_item_prices=getattr(quotation_data, 'show_item_prices', True),
+            show_section_totals=getattr(quotation_data, 'show_section_totals', True)
         )
         
         db.add(db_quotation)
@@ -428,6 +467,8 @@ async def update_quotation(
         quotation.tax_amount = quotation_data.tax_amount
         quotation.total = quotation_data.total
         quotation.notes = quotation_data.notes
+        quotation.show_item_prices = getattr(quotation_data, 'show_item_prices', True)
+        quotation.show_section_totals = getattr(quotation_data, 'show_section_totals', True)
 
         # Normaliser un statut éventuel reçu
         try:
@@ -717,3 +758,199 @@ async def set_quotation_sent(
         db.rollback()
         logging.error(f"Erreur lors de la MAJ is_sent: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
+
+# Configuration n8n
+N8N_BASE_URL = os.getenv("N8N_WEBHOOK_URL", "http://n8n:5678")
+
+class SendQuotationWhatsAppRequest(BaseModel):
+    quotation_id: int
+    phone: str
+
+class SendQuotationEmailRequest(BaseModel):
+    quotation_id: int
+    email: str
+
+@router.post("/send-whatsapp")
+async def send_quotation_whatsapp(
+    request: Request,
+    data: SendQuotationWhatsAppRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Envoyer un devis par WhatsApp via n8n"""
+    try:
+        # Vérifier que le devis existe
+        quotation = db.query(Quotation).filter(Quotation.quotation_id == data.quotation_id).first()
+        if not quotation:
+            raise HTTPException(status_code=404, detail="Devis non trouvé")
+        
+        # Construire l'URL du PDF du devis
+        base_url = str(request.base_url).rstrip('/')
+        pdf_url = f"{base_url}/quotations/print/{data.quotation_id}"
+        
+        # Appeler le webhook n8n pour envoyer via WhatsApp
+        webhook_url = f"{N8N_BASE_URL}/webhook/send-quotation-whatsapp"
+        
+        client_obj = db.query(Client).filter(Client.client_id == quotation.client_id).first()
+        
+        payload = {
+            "quotation_id": data.quotation_id,
+            "quotation_number": quotation.quotation_number,
+            "phone": data.phone,
+            "pdf_url": pdf_url,
+            "client_name": client_obj.name if client_obj else "Client",
+            "total": float(quotation.total or 0)
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload)
+            
+        if response.status_code == 200:
+            # Marquer le devis comme envoyé
+            quotation.is_sent = True
+            db.commit()
+            return {"success": True, "message": "Devis envoyé par WhatsApp"}
+        else:
+            logging.error(f"Erreur n8n WhatsApp: {response.status_code} - {response.text}")
+            return {"success": False, "message": f"Erreur n8n: {response.text}"}
+            
+    except httpx.RequestError as e:
+        logging.error(f"Erreur connexion n8n: {e}")
+        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except Exception as e:
+        logging.error(f"Erreur envoi WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/send-email")
+async def send_quotation_email(
+    request: Request,
+    data: SendQuotationEmailRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Envoyer un devis par Email via n8n"""
+    try:
+        # Vérifier que le devis existe
+        quotation = db.query(Quotation).filter(Quotation.quotation_id == data.quotation_id).first()
+        if not quotation:
+            raise HTTPException(status_code=404, detail="Devis non trouvé")
+        
+        # Construire l'URL du PDF du devis
+        base_url = str(request.base_url).rstrip('/')
+        pdf_url = f"{base_url}/quotations/print/{data.quotation_id}"
+        
+        # Appeler le webhook n8n pour envoyer par email
+        webhook_url = f"{N8N_BASE_URL}/webhook/send-quotation-email"
+        
+        client_obj = db.query(Client).filter(Client.client_id == quotation.client_id).first()
+        
+        payload = {
+            "quotation_id": data.quotation_id,
+            "quotation_number": quotation.quotation_number,
+            "email": data.email,
+            "pdf_url": pdf_url,
+            "client_name": client_obj.name if client_obj else "Client",
+            "total": float(quotation.total or 0)
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload)
+            
+        if response.status_code == 200:
+            # Marquer le devis comme envoyé
+            quotation.is_sent = True
+            db.commit()
+            return {"success": True, "message": "Devis envoyé par email"}
+        else:
+            logging.error(f"Erreur n8n Email: {response.status_code} - {response.text}")
+            return {"success": False, "message": f"Erreur n8n: {response.text}"}
+            
+    except httpx.RequestError as e:
+        logging.error(f"Erreur connexion n8n: {e}")
+        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except Exception as e:
+        logging.error(f"Erreur envoi email: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/{quotation_id}/duplicate", response_model=QuotationResponse)
+async def duplicate_quotation(
+    quotation_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Dupliquer un devis existant avec tous ses articles"""
+    try:
+        original = db.query(Quotation).filter(Quotation.quotation_id == quotation_id).first()
+        if not original:
+            raise HTTPException(status_code=404, detail="Devis non trouvé")
+        
+        # Générer un nouveau numéro de devis
+        new_number = _next_quotation_number(db)
+        
+        # Calculer la date d'expiration (30 jours par défaut)
+        from datetime import timedelta
+        new_date = datetime.now()
+        new_expiry = new_date + timedelta(days=30)
+        
+        # Créer une copie du devis
+        new_quotation = Quotation(
+            quotation_number=new_number,
+            client_id=original.client_id,
+            date=new_date,
+            expiry_date=new_expiry,
+            status="en attente",
+            notes=original.notes,
+            subtotal=original.subtotal,
+            tax_rate=original.tax_rate,
+            tax_amount=original.tax_amount,
+            total=original.total,
+            show_item_prices=original.show_item_prices,
+            show_section_totals=original.show_section_totals,
+            is_sent=False,
+        )
+        
+        db.add(new_quotation)
+        db.flush()  # Pour obtenir l'ID du nouveau devis
+        
+        # Copier les articles
+        original_items = db.query(QuotationItem).filter(QuotationItem.quotation_id == quotation_id).all()
+        for item in original_items:
+            new_item = QuotationItem(
+                quotation_id=new_quotation.quotation_id,
+                product_id=item.product_id,
+                product_name=item.product_name,
+                quantity=item.quantity,
+                price=item.price,
+                total=item.total,
+            )
+            db.add(new_item)
+        
+        db.commit()
+        db.refresh(new_quotation)
+        
+        # Construire la réponse avec tous les champs requis
+        return {
+            "quotation_id": new_quotation.quotation_id,
+            "quotation_number": new_quotation.quotation_number,
+            "client_id": new_quotation.client_id,
+            "date": new_quotation.date,
+            "expiry_date": new_quotation.expiry_date,
+            "status": new_quotation.status,
+            "is_sent": new_quotation.is_sent,
+            "subtotal": new_quotation.subtotal,
+            "tax_rate": new_quotation.tax_rate,
+            "tax_amount": new_quotation.tax_amount,
+            "total": new_quotation.total,
+            "notes": new_quotation.notes,
+            "show_item_prices": new_quotation.show_item_prices,
+            "show_section_totals": new_quotation.show_section_totals,
+            "created_at": new_quotation.created_at,
+            "invoice_id": None,
+            "items": [],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Erreur lors de la duplication du devis: {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de la duplication")

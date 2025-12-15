@@ -238,6 +238,10 @@ def _schema_sync_after_restore(db_path: str):
                     conn.execute("ALTER TABLE invoices ADD COLUMN notes TEXT")
                 if 'show_tax' not in cols:
                     conn.execute("ALTER TABLE invoices ADD COLUMN show_tax INTEGER DEFAULT 1")
+                if 'show_item_prices' not in cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN show_item_prices INTEGER DEFAULT 1")
+                if 'show_section_totals' not in cols:
+                    conn.execute("ALTER TABLE invoices ADD COLUMN show_section_totals INTEGER DEFAULT 1")
                 if 'price_display' not in cols:
                     conn.execute("ALTER TABLE invoices ADD COLUMN price_display TEXT")
                 if 'has_warranty' not in cols:
@@ -264,6 +268,20 @@ def _schema_sync_after_restore(db_path: str):
                     conn.execute("ALTER TABLE quotations ADD COLUMN created_at TEXT")
                 if 'status' not in cols:
                     conn.execute("ALTER TABLE quotations ADD COLUMN status TEXT")
+                if 'show_item_prices' not in cols:
+                    conn.execute("ALTER TABLE quotations ADD COLUMN show_item_prices INTEGER DEFAULT 1")
+                if 'show_section_totals' not in cols:
+                    conn.execute("ALTER TABLE quotations ADD COLUMN show_section_totals INTEGER DEFAULT 1")
+
+            # Clients: disable_debt_reminder
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(clients)").fetchall()}
+            if 'disable_debt_reminder' not in cols:
+                conn.execute("ALTER TABLE clients ADD COLUMN disable_debt_reminder INTEGER DEFAULT 0")
+
+            # Products: is_archived
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(products)").fetchall()}
+            if 'is_archived' not in cols:
+                conn.execute("ALTER TABLE products ADD COLUMN is_archived INTEGER DEFAULT 0")
 
             conn.commit()
         finally:

@@ -183,6 +183,16 @@
                         <label for="clientNotes" class="form-label">Notes</label>
                         <textarea class="form-control" id="clientNotes" rows="3"></textarea>
                     </div>
+
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="clientDisableDebtReminder">
+                            <label class="form-check-label" for="clientDisableDebtReminder">
+                                <i class="bi bi-bell-slash me-1"></i>Désactiver les rappels de dette automatiques
+                            </label>
+                        </div>
+                        <small class="text-muted">Si coché, ce client ne recevra pas de rappels automatiques pour ses dettes impayées.</small>
+                    </div>
                 </form>
             </div>
             <div class="modal-footer">

@@ -295,6 +295,10 @@ function openClientModal() {
     document.getElementById('clientForm').reset();
     document.getElementById('clientId').value = '';
     document.getElementById('clientCountry').value = 'Sénégal';
+    const disableReminderCheckbox = document.getElementById('clientDisableDebtReminder');
+    if (disableReminderCheckbox) {
+        disableReminderCheckbox.checked = false;
+    }
 }
 
 // Modifier un client
@@ -314,6 +318,10 @@ async function editClient(clientId) {
         document.getElementById('clientCountry').value = client.country || 'Sénégal';
         document.getElementById('clientTaxNumber').value = client.tax_number || '';
         document.getElementById('clientNotes').value = client.notes || '';
+        const disableReminderCheckbox = document.getElementById('clientDisableDebtReminder');
+        if (disableReminderCheckbox) {
+            disableReminderCheckbox.checked = !!client.disable_debt_reminder;
+        }
         
         document.getElementById('clientModalTitle').innerHTML = '<i class="bi bi-pencil me-2"></i>Modifier Client';
         
@@ -341,7 +349,8 @@ async function saveClient() {
             postal_code: document.getElementById('clientPostalCode').value.trim() || null,
             country: document.getElementById('clientCountry').value.trim() || null,
             tax_number: document.getElementById('clientTaxNumber').value.trim() || null,
-            notes: document.getElementById('clientNotes').value.trim() || null
+            notes: document.getElementById('clientNotes').value.trim() || null,
+            disable_debt_reminder: document.getElementById('clientDisableDebtReminder')?.checked || false
         };
 
         if (!clientData.name) {

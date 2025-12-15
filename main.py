@@ -677,11 +677,56 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
         product_descriptions = {}
 
     # Group items by product_id + price and attach IMEIs (from notes or inline fallback)
-    grouped = {}
+    # Tout en supportant des "sections" personnalisées encodées comme items sans produit
+    grouped_by_key: dict[str, dict] = {}
+    item_to_key: dict[int, str] = {}
+
     for it in (inv.items or []):
+        name = it.product_name or ""
+
+        # Sections: product_id nul et libellé commençant par [SECTION]
+        if it.product_id is None and isinstance(name, str) and name.strip().startswith("[SECTION]"):
+            key = f"SECTION|{getattr(it, 'item_id', id(it))}"
+            raw = name.strip()
+            # Extraire le titre après le préfixe
+            title = raw[len("[SECTION]"):].strip(" :-") or raw[len("[SECTION]"):].strip()
+            grouped_by_key[key] = {
+                "product_id": None,
+                "name": title or "Section",
+                "description": "",
+                "price": 0.0,
+                "qty": 0,
+                "total": 0.0,
+                "imeis": [],
+                "quote_qty": None,
+                "is_section": True,
+            }
+            if getattr(it, "item_id", None) is not None:
+                item_to_key[it.item_id] = key
+            continue
+
+        # Lignes personnalisées sans produit (services, etc.)
+        if it.product_id is None:
+            key = f"CUSTOM|{getattr(it, 'item_id', id(it))}"
+            grouped_by_key[key] = {
+                "product_id": None,
+                "name": name,
+                "description": "",
+                "price": float(it.price or 0),
+                "qty": int(it.quantity or 0),
+                "total": float(it.total or 0),
+                "imeis": [],
+                "quote_qty": None,
+                "is_section": False,
+            }
+            if getattr(it, "item_id", None) is not None:
+                item_to_key[it.item_id] = key
+            continue
+
+        # Produits classiques: grouper par (product_id, price)
         key = f"{it.product_id}|{float(it.price or 0)}"
-        if key not in grouped:
-            grouped[key] = {
+        if key not in grouped_by_key:
+            grouped_by_key[key] = {
                 "product_id": it.product_id,
                 "name": it.product_name,
                 "description": product_descriptions.get(str(it.product_id)) if it.product_id is not None else "",
@@ -690,10 +735,14 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
                 "total": 0.0,
                 "imeis": [],  # list of IMEIs to render on separate lines
                 "quote_qty": None,
+                "is_section": False,
             }
-        g = grouped[key]
+        g = grouped_by_key[key]
         g["qty"] += int(it.quantity or 0)
         g["total"] += float(it.total or 0)
+        if getattr(it, "item_id", None) is not None:
+            item_to_key[it.item_id] = key
+
         # Fallback: extract inline IMEI from product_name like "(IMEI: 123...)"
         try:
             pname = (it.product_name or "")
@@ -706,7 +755,10 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
             pass
 
     # Replace qty/total with IMEIs count when available (notes meta has priority; fallback to inline parsed)
-    for g in grouped.values():
+    for g in grouped_by_key.values():
+        # Ne pas toucher aux sections
+        if g.get("is_section"):
+            continue
         lst = imeis_by_product_id.get(str(g["product_id"])) or []
         # Attach original quotation quantity if available
         try:
@@ -762,15 +814,28 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
                 "invoice_number": inv.invoice_number,
                 "client_name": (inv.client.name if getattr(inv, "client", None) else ""),
                 "date": inv.date,
-                "products": [item["name"] for item in grouped.values()],
+                "products": [item["name"] for item in grouped_by_key.values() if not item.get("is_section")],
             }
     except Exception:
         warranty_certificate = None
 
+    # Reconstituer la liste ordonnée en respectant l'ordre d'origine des items
+    ordered_items = []
+    seen_keys = set()
+    for it in (inv.items or []):
+        key = item_to_key.get(getattr(it, "item_id", -1))
+        if not key or key in seen_keys:
+            continue
+        g = grouped_by_key.get(key)
+        if not g:
+            continue
+        ordered_items.append(g)
+        seen_keys.add(key)
+
     context = {
         "request": request,
         "invoice": inv,
-        "grouped_items": list(grouped.values()),
+        "grouped_items": ordered_items,
         "signature_data_url": signature_data_url,
         "resolved_payment_method": resolved_payment_method,
         "warranty_certificate": warranty_certificate,

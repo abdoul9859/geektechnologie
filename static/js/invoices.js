@@ -1,7 +1,20 @@
+// Supprimer les backdrops orphelins et réinitialiser les styles body si aucun modal n'est visible
+function cleanupModalBackdrops() {
+    try {
+        const anyShown = document.querySelector('.modal.show');
+        if (!anyShown) {
+            document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            document.body.classList.remove('modal-open');
+            try { document.body.style.removeProperty('overflow'); } catch(e) {}
+            try { document.body.style.removeProperty('padding-right'); } catch(e) {}
+        }
+    } catch (e) { /* ignore */ }
+}
 // Gestion des factures
 let currentPage = 1;
 // Mémorisation du dernier fichier de signature
 let lastSignatureFile = null;
+// Réduire le nombre de factures par page pour limiter le travail côté navigateur
 const itemsPerPage = 20;
 let invoices = [];
 let filteredInvoices = [];
@@ -38,6 +51,19 @@ function computeAvailableStock(product) {
         return Number(product.quantity || 0);
     } catch (e) {
         return 0;
+    }
+}
+
+async function resetInvoicePaymentsFromDetail(invoiceId) {
+    try {
+        if (!invoiceId) return;
+        if (!confirm('Réinitialiser tous les paiements de cette facture ?')) return;
+        await axios.post(`/api/invoices/${invoiceId}/payments/reset`);
+        showSuccess('Paiements réinitialisés');
+        await loadInvoiceDetail(invoiceId);
+    } catch (error) {
+        console.error('Erreur réinitialisation paiements:', error);
+        showError(error?.response?.data?.detail || 'Erreur lors de la réinitialisation des paiements');
     }
 }
 
@@ -81,9 +107,26 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     } catch (e) { /* ignore */ }
-    // Lancement immédiat sans attente d'authentification
+    // Utiliser la nouvelle logique d'authentification basée sur cookies
+    const ready = () => {
+        const hasAuthManager = !!window.authManager;
+        const hasUser = !!(hasAuthManager && window.authManager.userData && Object.keys(window.authManager.userData).length);
+        return hasAuthManager && (window.authManager.isAuthenticatedSync() || hasUser);
+    };
+
+    // Masquer la carte "Chiffre d'Affaires" pour les non-admin
+    try {
+        if (window.authManager && !window.authManager.isAdmin()) {
+            const revenueEl = document.getElementById('totalRevenue');
+            const revenueCardCol = revenueEl ? revenueEl.closest('.col-md-3') : null;
+            if (revenueCardCol) revenueCardCol.style.display = 'none';
+        }
+    } catch (e) { /* ignore */ }
+
+    // Initialiser immédiatement sans délai pour un chargement instantané
     loadInvoices();
-    loadStats();
+    try { loadStats(); } catch(e){}
+    // Lazy: clients/products chargés à l'usage
     setupEventListeners();
     setDefaultDates();
     // Si on vient d'une conversion devis -> facture, ouvrir le formulaire pré-rempli
@@ -123,6 +166,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }, 200);
         }
     } catch (e) {}
+
+    // Nettoyage global des backdrops Bootstrap après fermeture d'un modal
+    try {
+        document.addEventListener('hidden.bs.modal', () => {
+            cleanupModalBackdrops();
+        });
+    } catch (e) { /* ignore */ }
 });
 
 function setupEventListeners() {
@@ -161,7 +211,6 @@ function setupEventListeners() {
             }
         });
     }
-
     // Quick client modal
     document.getElementById('openQuickClientBtn')?.addEventListener('click', () => {
         new bootstrap.Modal(document.getElementById('clientQuickModal')).show();
@@ -252,11 +301,20 @@ function setupEventListeners() {
                 const isOutOfStock = available === 0;
                 return `
                 <div class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ${isOutOfStock ? 'text-muted' : ''}" data-product-id="${p.product_id}">
-                    <div class="me-2">
-                        <div class="fw-semibold d-flex align-items-center">${escapeHtml(p.name || '')} ${stockBadge}</div>
-                        <div class="text-muted small">${[p.barcode ? 'Code: '+escapeHtml(p.barcode) : '', sub ? escapeHtml(sub) : ''].filter(Boolean).join(' • ')}</div>
+                    <div class="d-flex align-items-center gap-2 me-2">
+                        ${p.image_path ? `
+                            <img src="/${p.image_path}" alt="${escapeHtml(p.name || '')}"
+                                 style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;">
+                        ` : ''}
+                        <div>
+                            <div class="fw-semibold d-flex align-items-center">${escapeHtml(p.name || '')} ${stockBadge}</div>
+                            <div class="text-muted small">${[p.barcode ? 'Code: '+escapeHtml(p.barcode) : '', sub ? escapeHtml(sub) : ''].filter(Boolean).join(' • ')}</div>
+                        </div>
                     </div>
-                    <div class="text-nowrap ms-3">${formatCurrency(p.price)}</div>
+                    <div class="text-nowrap ms-3">
+                        <div class="fw-semibold">${formatCurrency(p.price)}</div>
+                        ${p.wholesale_price ? `<div class="text-muted small">Gros: ${formatCurrency(p.wholesale_price)}</div>` : ''}
+                    </div>
                 </div>`;
             }).join('');
             suggestBox.classList.remove('d-none');
@@ -265,13 +323,29 @@ function setupEventListeners() {
         }
     }, 250));
 
-    // Sélection d'une suggestion (document-level)
-    document.addEventListener('click', (e) => {
+    // Sélection d'une suggestion (document-level) - utiliser mousedown pour capturer avant blur
+    document.addEventListener('mousedown', (e) => {
         const item = e.target.closest('.list-group-item[data-product-id]');
         if (!item) return;
-        const row = item.closest('tr');
+        // Empêcher le comportement par défaut et la propagation
+        e.preventDefault();
+        e.stopPropagation();
+
         const productId = item.getAttribute('data-product-id');
+        if (!productId) return;
+
+        // Trouver le conteneur de la ligne: on cherche l'ancêtre portant data-item-id
+        let row = item.closest('[data-item-id]');
+        if (!row) {
+            const suggestBox = item.closest('.product-suggestions');
+            if (suggestBox) {
+                row = suggestBox.closest('[data-item-id]');
+            }
+        }
+
         const idAttr = row?.getAttribute('data-item-id');
+        console.log('[ProductSelect] click on product', productId, 'row:', row, 'idAttr:', idAttr);
+
         if (productId && idAttr) {
             selectProduct(Number(idAttr), productId);
             const box = row.querySelector('.product-suggestions');
@@ -279,37 +353,20 @@ function setupEventListeners() {
             const input = row.querySelector('.product-search-input');
             if (input) input.value = '';
         }
-    });
+    }, true); // Utiliser la phase de capture pour s'exécuter en premier
 
     // Cacher le dropdown si clic en dehors
     document.addEventListener('click', (e) => {
+        // Ne pas fermer si le clic est sur un élément de suggestion (déjà géré ci-dessus)
+        if (e.target.closest('.list-group-item[data-product-id]')) return;
         document.querySelectorAll('.product-suggestions').forEach(box => {
-            if (!box.contains(e.target) && !box.previousElementSibling?.contains(e.target)) {
-                box.classList.add('d-none');
-            }
+            // Vérifier si le clic est dans le conteneur parent (input-group ou le box lui-même)
+            const container = box.closest('.position-relative');
+            if (container && container.contains(e.target)) return;
+            if (box.contains(e.target)) return;
+            box.classList.add('d-none');
         });
     });
-    
-    // Gestion de la garantie
-    const warrantySwitch = document.getElementById('hasWarrantySwitch');
-    if (warrantySwitch) {
-        warrantySwitch.addEventListener('change', () => {
-            const isEnabled = warrantySwitch.checked;
-            const warrantyOptions = document.getElementById('warrantyOptions');
-            const warrantyInfo = document.getElementById('warrantyInfo');
-
-            // Marquer que l'utilisateur a modifié manuellement le switch,
-            // pour éviter qu'un chargement async de facture ne le réécrase.
-            try { warrantySwitch.dataset.userTouched = 'true'; } catch (e) {}
-            
-            if (warrantyOptions) {
-                warrantyOptions.style.display = isEnabled ? 'block' : 'none';
-            }
-            if (warrantyInfo) {
-                warrantyInfo.style.display = isEnabled ? 'block' : 'none';
-            }
-        });
-    }
 }
 
 function setupTaxControls() {
@@ -342,7 +399,7 @@ function setDefaultDates() {
     
     // Date d'échéance par défaut (30 jours)
     const dueDate = new Date();
-    dueDate.setDate(dueDate.getDate() + 30);
+    dueDate.setDate(dueDate.getDate() + 4);
     const dueDateInput = document.getElementById('dueDate');
     if (dueDateInput) dueDateInput.value = dueDate.toISOString().split('T')[0];
 }
@@ -390,8 +447,11 @@ async function loadStats() {
 }
 
 // Charger la liste des factures (server-side pagination)
-async function loadInvoices() {
+async function loadInvoices(page) {
     try {
+        if (page) {
+            currentPage = page;
+        }
         showLoading();
         // Construire les paramètres côté serveur
         const statusFilter = document.getElementById('statusFilter')?.value || '';
@@ -405,7 +465,7 @@ async function loadInvoices() {
             page_size: itemsPerPage,
             sort_by: currentSort.by,
             sort_dir: currentSort.dir,
-            _ts: Date.now() // cache-buster to avoid stale responses after delete
+            _ts: Date.now() // cache-buster to avoid stale responses après suppression
         };
         if (statusFilter) params.status_filter = statusFilter;
         if (clientFilter) params.client_search = clientFilter;
@@ -413,17 +473,10 @@ async function loadInvoices() {
         if (dateToFilter) params.end_date = dateToFilter;
         if (search) params.search = search;
 
-        // Utiliser safeLoadData pour éviter les chargements infinis
-        const response = await safeLoadData(
-            () => axios.get('/api/invoices/paginated', { params }),
-            {
-                timeout: 8000,
-                fallbackData: { invoices: [], total: 0, page: 1, pages: 1 },
-                errorMessage: 'Erreur lors du chargement des factures'
-            }
-        );
+        // Appel direct sans couche de retry/timeout supplémentaire
+        const response = await axios.get('/api/invoices/paginated', { params });
 
-        const payload = response.data || { invoices: [], total: 0, page: 1, pages: 1 };
+        const payload = response?.data || { invoices: [], total: 0, page: 1, pages: 1 };
         invoices = Array.isArray(payload.invoices) ? payload.invoices : [];
         filteredInvoices = [...invoices];
 
@@ -591,22 +644,48 @@ async function addItemByBarcode() {
 }
 
 // Fusionner les lignes de même produit en une seule avec IMEIs cumulés
+// IMPORTANT: préserve l'ordre original des items (sections, custom items restent à leur place)
 function mergeProductRows() {
     const groups = new Map();
-    invoiceItems.forEach(row => {
+    // Grouper par product_id, mais garder l'index de la première occurrence
+    invoiceItems.forEach((row, idx) => {
         const key = String(row.product_id || '');
-        if (!key) return;
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(row);
+        if (!key) return; // Pas de product_id = section ou custom sans produit
+        if (!groups.has(key)) groups.set(key, { firstIndex: idx, rows: [] });
+        groups.get(key).rows.push(row);
     });
+    
+    // Créer un tableau avec les items fusionnés, en préservant l'ordre
     const merged = [];
-    groups.forEach(rows => {
-        if (rows.length === 1) { merged.push(rows[0]); return; }
+    const processedProductIds = new Set();
+    
+    invoiceItems.forEach((row, idx) => {
+        const key = String(row.product_id || '');
+        
+        // Item sans product_id (section, custom item vide) : garder tel quel
+        if (!key) {
+            merged.push(row);
+            return;
+        }
+        
+        // Déjà traité ce product_id
+        if (processedProductIds.has(key)) return;
+        processedProductIds.add(key);
+        
+        const group = groups.get(key);
+        if (!group) return;
+        
+        const rows = group.rows;
+        if (rows.length === 1) {
+            merged.push(rows[0]);
+            return;
+        }
+        
+        // Fusionner les lignes du même produit
         const base = { ...rows[0] };
         base.scannedImeis = ([]).concat(...rows.map(r => r.scannedImeis || []));
         // dédoublonner IMEIs
         const uniq = Array.from(new Set(base.scannedImeis.map(_normalizeCode)));
-        // restaurer la forme originale
         base.scannedImeis = uniq;
         base.variant_id = null;
         base.variant_imei = null;
@@ -618,8 +697,7 @@ function mergeProductRows() {
         base.total = base.quantity * (Number(base.unit_price) || 0);
         merged.push(base);
     });
-    // Ajouter les lignes sans product_id (si jamais)
-    invoiceItems.filter(r => !r.product_id).forEach(r => merged.push(r));
+    
     invoiceItems = merged;
 }
 
@@ -654,8 +732,8 @@ function setupClientSearch() {
     const renderList = async (term) => {
         const t = String(term || '').trim();
         try {
-            // server-side search, limité à 20 résultats pour plus de cohérence
-            const { data } = await axios.get('/api/clients/', { params: { search: t || undefined, limit: 20 } });
+            // server-side search, limited
+            const { data } = await axios.get('/api/clients/', { params: { search: t || undefined, limit: 8 } });
             const list = Array.isArray(data) ? data : (data.items || []);
             _latestClientResults = list || [];
             if (!list.length) {
@@ -802,6 +880,9 @@ function displayInvoices() {
 					</button>
                     <button class="btn btn-sm btn-outline-secondary" onclick="printInvoice(${invoice.invoice_id})" title="Imprimer">
                         <i class="bi bi-printer"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="duplicateInvoice(${invoice.invoice_id})" title="Dupliquer">
+                        <i class="bi bi-copy"></i>
                     </button>
                     <button class="btn btn-sm btn-outline-danger" onclick="deleteInvoice(${invoice.invoice_id})" title="Supprimer">
                         <i class="bi bi-trash"></i>
@@ -998,7 +1079,8 @@ function openInvoiceModal() {
                         numberEl.value = '';
                         numberEl.placeholder = 'Sera généré automatiquement';
                     }
-                }).catch(() => {
+                }).catch((error) => {
+                    console.error('Erreur lors du chargement du numéro de facture:', error);
                     // En cas d'erreur API, laisser vide pour laisser le backend générer
                     numberEl.value = '';
                     numberEl.placeholder = 'Sera généré automatiquement';
@@ -1023,19 +1105,6 @@ function openInvoiceModal() {
         const taxRateInput = document.getElementById('taxRateInput');
         if (taxSwitch) taxSwitch.checked = true;
         if (taxRateInput) taxRateInput.value = 18;
-
-        // Réinitialiser l'état de la garantie pour une nouvelle facture
-        try {
-            const warrantySwitch = document.getElementById('hasWarrantySwitch');
-            const warrantyOptions = document.getElementById('warrantyOptions');
-            const warrantyInfo = document.getElementById('warrantyInfo');
-            if (warrantySwitch) {
-                warrantySwitch.checked = false;
-                delete warrantySwitch.dataset.userTouched;
-            }
-            if (warrantyOptions) warrantyOptions.style.display = 'none';
-            if (warrantyInfo) warrantyInfo.style.display = 'none';
-        } catch (e) {}
         
         // Ensure listeners are bound in case modal was created after initial setup
         setupTaxControls();
@@ -1044,76 +1113,9 @@ function openInvoiceModal() {
         // Recharger les méthodes de paiement lors de l'ouverture du modal
         populatePaymentMethodSelects(true);
 
-        // Setup signature pad et gestion du fichier de signature
+        // Setup signature pad
         try {
             const canvas = document.getElementById('signatureCanvas');
-            const fileInput = document.getElementById('signatureFile');
-            
-            // Restaurer le dernier fichier de signature s'il existe
-            if (lastSignatureFile && fileInput) {
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(lastSignatureFile);
-                fileInput.files = dataTransfer.files;
-                
-                // Afficher un aperçu du fichier sélectionné
-                const existingPreview = fileInput.parentNode.querySelector('.file-preview');
-                if (existingPreview) existingPreview.remove();
-                
-                const filePreview = document.createElement('div');
-                filePreview.className = 'mt-2 text-muted small file-preview';
-                filePreview.innerHTML = `Fichier sélectionné: ${lastSignatureFile.name} <button class="btn btn-sm btn-link p-0 ms-2" id="clearSignatureFile">Changer</button>`;
-                fileInput.parentNode.appendChild(filePreview);
-                
-                // Gérer le bouton de suppression
-                const clearBtn = document.getElementById('clearSignatureFile');
-                if (clearBtn) {
-                    clearBtn.onclick = (e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        fileInput.value = '';
-                        lastSignatureFile = null;
-                        filePreview.remove();
-                        return false;
-                    };
-                }
-            }
-            
-            // Gérer la sélection d'un nouveau fichier
-            const handleFileChange = (e) => {
-                // Supprimer uniquement l'aperçu existant s'il y en a un
-                const existingPreview = fileInput.parentNode.querySelector('.file-preview');
-                if (existingPreview) existingPreview.remove();
-                
-                if (e.target.files && e.target.files[0]) {
-                    lastSignatureFile = e.target.files[0];
-                    
-                    // Créer le nouvel élément d'aperçu
-                    const filePreview = document.createElement('div');
-                    filePreview.className = 'mt-2 text-muted small file-preview';
-                    filePreview.innerHTML = `Fichier sélectionné: ${lastSignatureFile.name} <button class="btn btn-sm btn-link p-0 ms-2" id="clearSignatureFile">Changer</button>`;
-                    
-                    // Ajouter l'aperçu après le champ de fichier
-                    fileInput.parentNode.appendChild(filePreview);
-                    
-                    // Gérer le bouton de suppression
-                    const clearBtn = document.getElementById('clearSignatureFile');
-                    if (clearBtn) {
-                        clearBtn.onclick = (e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            fileInput.value = '';
-                            lastSignatureFile = null;
-                            filePreview.remove();
-                            return false;
-                        };
-                    }
-                }
-            };
-            
-            // Réinitialiser l'écouteur d'événement
-            fileInput.removeEventListener('change', handleFileChange);
-            fileInput.addEventListener('change', handleFileChange);
-            
             if (canvas && canvas.getContext) {
                 const ctx = canvas.getContext('2d');
                 let drawing = false; let last = null;
@@ -1208,7 +1210,7 @@ async function preloadPrefilledInvoiceFromQuotation(prefill) {
         }
         if (input) input.value = c ? (c.name || '') : (prefill?.client_name || '');
     } catch(e) {}
-    // Date: par défaut, utiliser la date du jour lors d'une conversion devis -> facture
+    // Date: pour une conversion, utiliser la date du jour (ne pas réutiliser la date du devis)
     try {
         const invDate = document.getElementById('invoiceDate');
         if (invDate) {
@@ -1296,6 +1298,36 @@ function addCustomItem() {
     updateInvoiceItemsDisplay();
 }
 
+// Ajouter une section (titre uniquement, sans quantité ni prix)
+function addSectionRow() {
+    const newItem = {
+        id: Date.now(),
+        is_section: true,
+        section_title: 'Nouvelle section',
+        product_id: null,
+        product_name: '',
+        variant_id: null,
+        variant_imei: null,
+        scannedImeis: [],
+        quantity: 0,
+        unit_price: 0,
+        total: 0
+    };
+    invoiceItems.push(newItem);
+    updateInvoiceItemsDisplay();
+}
+
+// Mettre à jour le titre d'une section
+function updateSectionTitle(itemId, title) {
+    const item = invoiceItems.find(i => i.id === itemId);
+    if (!item) return;
+    item.section_title = String(title || '').trim();
+}
+
+// Exposer les fonctions pour les attributs onclick en HTML
+window.addSectionRow = addSectionRow;
+window.updateSectionTitle = updateSectionTitle;
+
 function updateInvoiceItemsDisplay() {
     const tbody = document.getElementById('invoiceItemsBody');
     if (!tbody) return;
@@ -1303,7 +1335,7 @@ function updateInvoiceItemsDisplay() {
     if (invoiceItems.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="5" class="text-center text-muted py-3">
+                <td colspan="8" class="text-center text-muted py-3">
                     <i class="bi bi-inbox me-2"></i>Aucun article ajouté
                 </td>
             </tr>
@@ -1313,15 +1345,40 @@ function updateInvoiceItemsDisplay() {
     }
 
     const selectedProductIds = new Set(invoiceItems.map(r => Number(r.product_id)).filter(Boolean));
-        tbody.innerHTML = invoiceItems.map(item => `
+    tbody.innerHTML = invoiceItems.map((item, index) => {
+        // Ligne de section: juste un titre, pas de quantité ni prix
+        if (item.is_section) {
+            const title = escapeHtml(String(item.section_title || 'Nouvelle section').trim());
+            return `
+        <tr data-item-id="${item.id}" class="table-secondary">
+            <td class="text-center align-middle drag-handle" style="cursor:grab;" title="Glisser pour réordonner">
+                <i class="bi bi-grip-vertical text-muted fs-5"></i>
+            </td>
+            <td colspan="6">
+                <input type="text" class="form-control form-control-sm fw-bold" value="${title}"
+                       placeholder="Nom de section (ex: Matériel, Main d'œuvre)"
+                       oninput="updateSectionTitle(${item.id}, this.value)">
+            </td>
+            <td>
+                <button class="btn btn-sm btn-outline-danger" onclick="removeInvoiceItem(${item.id})">
+                    <i class="bi bi-trash"></i>
+                </button>
+            </td>
+        </tr>`;
+        }
+        // Ligne standard (produit ou service custom)
+        return `
         <tr data-item-id="${item.id}">
+            <td class="text-center align-middle drag-handle" style="cursor:grab;" title="Glisser pour réordonner">
+                <i class="bi bi-grip-vertical text-muted fs-5"></i>
+            </td>
             <td>
                 ${item.is_custom ? `
                 <input type="text" class="form-control form-control-sm" value="${escapeHtml(item.product_name || '')}" placeholder="Libellé (ex: Service d'installation)" oninput="updateCustomName(${item.id}, this.value)">
                 ` : `
                 <div class="position-relative" style="min-width: 24rem; z-index: 2000;">
                     <div class="input-group input-group-sm">
-                        <input type="text" class="form-control form-control-sm product-search-input" placeholder="Rechercher un produit..." data-item-id="${item.id}" />
+                        <input type="text" class="form-control form-control-sm product-search-input" placeholder="Nom, code-barres ou n° série..." data-item-id="${item.id}" />
                         <select class="form-select form-select-sm" onchange="selectProduct(${item.id}, this.value)">
                             <option value="">Sélectionner un produit</option>
                             ${
@@ -1338,7 +1395,7 @@ function updateInvoiceItemsDisplay() {
                                     const disabled = alreadySelected || isOutOfStock;
                                     return `
                                 <option value="${product.product_id}" ${product.product_id == item.product_id ? 'selected' : ''} ${disabled ? 'disabled' : ''}>
-                                    ${escapeHtml(product.name)} - ${formatCurrency(product.price)} ${isOutOfStock ? '(épuisé)' : `(Stock: ${available})`} ${alreadySelected ? '(déjà sélectionné)' : ''}
+                                    ${escapeHtml(product.name)} - ${formatCurrency(product.price)}${product.wholesale_price ? ` / Gros: ${formatCurrency(product.wholesale_price)}` : ''} ${isOutOfStock ? '(épuisé)' : `(Stock: ${available})`} ${alreadySelected ? '(déjà sélectionné)' : ''}
                                 </option>`;
                                 }).join('')}
                         </select>
@@ -1371,13 +1428,25 @@ function updateInvoiceItemsDisplay() {
                 </select>
             </td>
             <td>
-                <input type="number" class="form-control form-control-sm" value="${item.quantity}" min="0" 
+                <input type="number" class="form-control form-control-sm" value="${item.quantity}" min="0"
                        ${item.is_custom ? '' : (((productVariantsByProductId.get(Number(item.product_id)) || []).length > 0) ? 'disabled' : '')}
-                       onchange="updateItemQuantity(${item.id}, this.value)" oninput="updateItemQuantity(${item.id}, this.value)">
+                       onchange="updateItemQuantity(${item.id}, this.value)">
+            </td>
+            <td>
+                ${!item.is_custom && item.product_id ? (() => {
+                    const product = (products||[]).find(p => p.product_id == item.product_id) || (Array.isArray(window._latestProductResults)? window._latestProductResults.find(p => p.product_id == item.product_id) : null);
+                    const hasWholesale = product && product.wholesale_price;
+                    return hasWholesale ? `
+                        <select class="form-select form-select-sm" onchange="togglePriceType(${item.id}, this.value === 'wholesale')">
+                            <option value="unit" ${item.price_type !== 'wholesale' ? 'selected' : ''}>Unitaire</option>
+                            <option value="wholesale" ${item.price_type === 'wholesale' ? 'selected' : ''}>Gros</option>
+                        </select>
+                    ` : '<small class="text-muted">-</small>';
+                })() : '<small class="text-muted">-</small>'}
             </td>
             <td>
                 <input type="text" class="form-control form-control-sm" value="${(item.unit_price).toLocaleString('fr-FR') }"
-                       oninput="handlePriceInput(${item.id}, this)" 
+                       oninput="handlePriceInput(${item.id}, this)"
                        onchange="handlePriceInput(${item.id}, this)">
             </td>
             <td><strong class="row-total">${formatCurrency(item.total)}</strong></td>
@@ -1387,12 +1456,46 @@ function updateInvoiceItemsDisplay() {
                 </button>
             </td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
     // Ensure totals reflect any DOM-driven changes
     calculateTotals();
+    // Initialiser le drag-and-drop si SortableJS est disponible
+    initSortable();
 }
 
-function selectProduct(itemId, productId) {
+// Initialiser SortableJS pour le drag-and-drop des lignes
+function initSortable() {
+    const tbody = document.getElementById('invoiceItemsBody');
+    if (!tbody || typeof Sortable === 'undefined') return;
+    // Détruire l'instance précédente si elle existe
+    if (tbody._sortableInstance) {
+        try { tbody._sortableInstance.destroy(); } catch(e) {}
+    }
+    tbody._sortableInstance = new Sortable(tbody, {
+        animation: 150,
+        handle: '.drag-handle',
+        ghostClass: 'table-primary',
+        chosenClass: 'table-info',
+        onEnd: function(evt) {
+            // Réordonner invoiceItems selon le nouvel ordre du DOM
+            const rows = Array.from(tbody.querySelectorAll('tr[data-item-id]'));
+            const newOrder = rows.map(row => Number(row.getAttribute('data-item-id')));
+            const reordered = [];
+            newOrder.forEach(id => {
+                const item = invoiceItems.find(i => i.id === id);
+                if (item) reordered.push(item);
+            });
+            // Ajouter les items qui n'auraient pas été trouvés (sécurité)
+            invoiceItems.forEach(item => {
+                if (!reordered.includes(item)) reordered.push(item);
+            });
+            invoiceItems = reordered;
+        }
+    });
+}
+
+function selectProduct(itemId, productId, useBulkPrice = false) {
     const item = invoiceItems.find(i => i.id === itemId);
     let product = products.find(p => String(p.product_id) == String(productId));
     // Fallback: utiliser les derniers résultats de recherche
@@ -1410,7 +1513,7 @@ function selectProduct(itemId, productId) {
                 }
                 try { if (Array.isArray(data.variants)) productVariantsByProductId.set(Number(data.product_id), data.variants); } catch (e) {}
                 // Appliquer la sélection
-                selectProduct(itemId, data.product_id);
+                selectProduct(itemId, data.product_id, useBulkPrice);
             }).catch(() => {
                 // dernier recours: appliquer avec les infos minimales
                 if (item) {
@@ -1429,7 +1532,9 @@ function selectProduct(itemId, productId) {
     if (item && product) {
         item.product_id = product.product_id;
         item.product_name = product.name;
-        item.unit_price = Math.round(Number(product.price) || 0);
+        // Choisir le prix: en gros si disponible et demandé, sinon unitaire
+        item.unit_price = Math.round((useBulkPrice && product.wholesale_price) ? Number(product.wholesale_price) : Number(product.price) || 0);
+        item.price_type = (useBulkPrice && product.wholesale_price) ? 'wholesale' : 'unit';
         item.total = item.quantity * item.unit_price;
         // Reset variant when product changes
         item.variant_id = null;
@@ -1446,6 +1551,12 @@ function selectProduct(itemId, productId) {
         updateInvoiceItemsDisplay();
         calculateTotals();
     }
+}
+
+function togglePriceType(itemId, useBulkPrice) {
+    const item = invoiceItems.find(i => i.id === itemId);
+    if (!item || !item.product_id) return;
+    selectProduct(itemId, item.product_id, useBulkPrice);
 }
 
 function updateCustomName(itemId, name) {
@@ -1534,7 +1645,8 @@ function updateItemQuantity(itemId, quantity) {
             const count = (item.scannedImeis || []).length;
             item.quantity = count > 0 ? count : 0;
         } else {
-            item.quantity = parseInt(quantity) || 1;
+            const parsed = parseInt(quantity, 10);
+            item.quantity = Number.isNaN(parsed) ? 0 : Math.max(0, parsed);
         }
         item.total = item.quantity * item.unit_price;
         
@@ -1582,6 +1694,25 @@ function removeInvoiceItem(itemId) {
     calculateTotals();
 }
 
+// Réordonner les lignes d'articles (option B: boutons monter/descendre)
+function moveItemUp(itemId) {
+    const idx = invoiceItems.findIndex(i => i.id === itemId);
+    if (idx <= 0) return;
+    const tmp = invoiceItems[idx - 1];
+    invoiceItems[idx - 1] = invoiceItems[idx];
+    invoiceItems[idx] = tmp;
+    updateInvoiceItemsDisplay();
+}
+
+function moveItemDown(itemId) {
+    const idx = invoiceItems.findIndex(i => i.id === itemId);
+    if (idx === -1 || idx >= invoiceItems.length - 1) return;
+    const tmp = invoiceItems[idx + 1];
+    invoiceItems[idx + 1] = invoiceItems[idx];
+    invoiceItems[idx] = tmp;
+    updateInvoiceItemsDisplay();
+}
+
 // Calculer les totaux
 function calculateTotals() {
     // Re-read totals from current invoiceItems, but also parse DOM totals in case of desync
@@ -1625,6 +1756,12 @@ function calculateTotals() {
 // Sauvegarder une facture
 async function saveInvoice(status) {
     try {
+        // UI lock: prevent double submit and indicate progress
+        const modalEl = document.getElementById('invoiceModal');
+        const footerButtons = modalEl ? modalEl.querySelectorAll('.modal-footer button, .modal-footer a') : [];
+        const prevStates = [];
+        try { footerButtons.forEach(btn => { prevStates.push([btn, btn.disabled, btn.innerHTML]); btn.disabled = true; }); } catch(e) {}
+        document.body.style.cursor = 'wait';
         const invoiceData = {
             invoice_number: document.getElementById('invoiceNumber').value,
             client_id: parseInt(document.getElementById('clientSelect').value),
@@ -1634,20 +1771,28 @@ async function saveInvoice(status) {
             notes: document.getElementById('invoiceNotes').value.trim() || '',
             show_tax: document.getElementById('showTaxSwitch')?.checked ?? true,
             tax_rate: parseFloat(document.getElementById('taxRateInput')?.value) || 0,
+            show_item_prices: document.getElementById('showSectionPricesSwitch')?.checked ?? true,
+            show_section_totals: document.getElementById('showSectionTotalsSwitch')?.checked ?? true,
             subtotal: parseFloat(document.getElementById('invoiceForm').dataset.subtotal || '0'),
             tax_amount: parseFloat(document.getElementById('invoiceForm').dataset.taxAmount || '0'),
             total: parseFloat(document.getElementById('invoiceForm').dataset.total || '0'),
             quotation_id: (function(){ try { const v = document.getElementById('invoiceForm').dataset.quotationId; return v ? Number(v) : null; } catch(e) { return null; } })(),
-            // Champs de garantie
-            has_warranty: document.getElementById('hasWarrantySwitch')?.checked || false,
-            warranty_duration: (function() {
-                const hasWarranty = document.getElementById('hasWarrantySwitch')?.checked;
-                if (!hasWarranty) return null;
-                const selectedDuration = document.querySelector('input[name="warrantyDuration"]:checked');
-                return selectedDuration ? parseInt(selectedDuration.value) : 12;
-            })(),
             items: invoiceItems
                 .flatMap(item => {
+                    // Ligne de section (aucun montant, juste un titre visuel)
+                    if (item.is_section) {
+                        const rawTitle = String(item.section_title || '').trim();
+                        if (!rawTitle) return [];
+                        const label = `[SECTION] ${rawTitle}`;
+                        return [{
+                            product_id: null,
+                            product_name: label,
+                            quantity: 0,
+                            price: 0,
+                            total: 0,
+                            variant_id: null
+                        }];
+                    }
                     // Ligne personnalisée sans produit
                     if (!item.product_id && item.is_custom) {
                         return [{
@@ -1741,6 +1886,12 @@ async function saveInvoice(status) {
             throw new Error(msg);
         }
 
+        // Fermer le modal immédiatement après la sauvegarde principale pour une UX réactive
+        try {
+            const instance = bootstrap.Modal.getInstance(modalEl) || (modalEl ? new bootstrap.Modal(modalEl) : null);
+            if (instance) instance.hide();
+        } catch (e) { /* ignore */ }
+
         // Attacher meta IMEIs dans notes pour l'aperçu
         try {
             const serialsMeta = invoiceItems
@@ -1757,13 +1908,13 @@ async function saveInvoice(status) {
             }
         } catch(e) {}
 
-        // Paiement immédiat si demandé
+        // Paiement immédiat si demandé: on ATTEND le POST paiement
         const doPay = document.getElementById('paymentNowSwitch')?.checked;
         if (doPay) {
             try {
                 const inv = responseData || {};
                 const invId = inv.invoice_id || inv.id || document.getElementById('invoiceId').value;
-await axios.post(`/api/invoices/${invId || ''}/payments`, {
+                await axios.post(`/api/invoices/${invId || ''}/payments`, {
                     amount: Math.round(parseFloat(document.getElementById('paymentNowAmount').value || '0')),
                     payment_method: document.getElementById('paymentNowMethod').value,
                     reference: document.getElementById('paymentNowRef').value || null
@@ -1771,28 +1922,39 @@ await axios.post(`/api/invoices/${invId || ''}/payments`, {
             } catch (e) { /* ignore payment error but continue */ }
         }
 
-        // Fermer le modal
-        const modal = bootstrap.Modal.getInstance(document.getElementById('invoiceModal'));
-        modal.hide();
-
         // Recharger la liste + rafraîchir produits/variantes pour refléter les ventes
         await loadInvoices();
         await loadStats();
         await loadProducts();
         
         showSuccess(invoiceId ? 'Facture modifiée avec succès' : 'Facture créée avec succès');
+        // Unlock UI using previous states
+        try { prevStates.forEach(([btn, prevDisabled, prevHtml]) => { btn.disabled = prevDisabled; if (prevHtml !== undefined) btn.innerHTML = prevHtml; }); } catch(e) {}
+        document.body.style.cursor = '';
         
     } catch (error) {
         console.error('Erreur lors de la sauvegarde:', error);
         showError(error.message || 'Erreur lors de la sauvegarde de la facture');
+    } finally {
+        // Ensure UI unlock if an error occurred before normal unlock
+        const modalEl = document.getElementById('invoiceModal');
+        const footerButtons = modalEl ? modalEl.querySelectorAll('.modal-footer button, .modal-footer a') : [];
+        try { footerButtons.forEach(btn => { btn.disabled = false; }); } catch(e) {}
+        document.body.style.cursor = '';
     }
 }
 
 async function saveQuickClient() {
     const name = (document.getElementById('qcName')?.value || '').trim();
     if (!name) { showWarning('Le nom du client est obligatoire'); return; }
+    
+    const payload = { 
+        name, 
+        phone: (document.getElementById('qcPhone')?.value || '').trim(), 
+        email: (document.getElementById('qcEmail')?.value || '').trim() 
+    };
+    
     try {
-        const payload = { name, phone: (document.getElementById('qcPhone')?.value || '').trim(), email: (document.getElementById('qcEmail')?.value || '').trim() };
         const { data: client } = await axios.post('/api/clients/', payload);
         // Rafraîchir via recherche serveur pour s'assurer de l'affichage immédiat
         try {
@@ -1812,7 +1974,18 @@ async function saveQuickClient() {
         if (qm) qm.hide();
         showSuccess('Client ajouté');
     } catch (e) {
-        showError('Erreur lors de la création du client');
+        console.error('Erreur lors de la création du client:', e);
+        console.error('Payload envoyé:', payload);
+        console.error('Response:', e.response);
+        
+        let errorMessage = 'Erreur lors de la création du client';
+        if (e.response?.data?.detail) {
+            errorMessage = e.response.data.detail;
+        } else if (e.message) {
+            errorMessage = e.message;
+        }
+        
+        showError(errorMessage);
     }
 }
 
@@ -1822,6 +1995,24 @@ function viewInvoice(invoiceId) {
 }
 
 function editInvoice(invoiceId) {
+    try {
+        const detailModalEl = document.getElementById('invoiceDetailModal');
+        if (detailModalEl) {
+            const existing = bootstrap.Modal.getInstance(detailModalEl) || new bootstrap.Modal(detailModalEl);
+            existing.hide();
+            if (typeof existing.dispose === 'function') {
+                existing.dispose();
+            }
+            detailModalEl.classList.remove('show');
+            detailModalEl.setAttribute('aria-hidden', 'true');
+            detailModalEl.style.display = 'none';
+            try {
+                document.body.classList.remove('modal-open');
+                document.querySelectorAll('.modal-backdrop').forEach(el => el.remove());
+            } catch (e) { /* ignore */ }
+        }
+    } catch (e) { /* ignore */ }
+
     preloadInvoiceIntoForm(invoiceId).catch(() => showError('Impossible de charger la facture pour édition'));
 }
 
@@ -1980,30 +2171,45 @@ async function loadInvoiceDetail(invoiceId) {
 
     body.innerHTML = `
         <div class="mb-2"><strong>Numéro:</strong> ${escapeHtml(inv.invoice_number)}</div>
-        <div class="mb-2"><strong>Client:</strong> ${escapeHtml(client ? client.name : (inv.client_name || '-'))}</div>
+        <div class="mb-2"><strong>Client:</strong> ${(() => {
+            try {
+                const name = escapeHtml(client ? client.name : (inv.client_name || '-'));
+                if (inv.client_id) {
+                    return `<a href="/clients/detail?id=${inv.client_id}" class="text-decoration-none">${name}</a>`;
+                }
+                return name;
+            } catch (e) { return escapeHtml(inv.client_name || '-'); }
+        })()}</div>
         <div class="mb-2"><strong>Date:</strong> ${inv.date ? formatDate(inv.date) : '-'}</div>
         <div class="mb-2"><strong>Échéance:</strong> ${inv.due_date ? formatDate(inv.due_date) : '-'}</div>
-        ${inv.has_warranty ? `
-        <div class="mb-2">
-            <strong>Garantie:</strong> 
-            <span class="badge bg-success">${inv.warranty_duration || 12} mois</span>
-            ${inv.warranty_start_date ? `<div class="text-muted small">Début: ${formatDate(inv.warranty_start_date)}</div>` : ''}
-            ${inv.warranty_end_date ? `<div class="text-muted small">Fin: ${formatDate(inv.warranty_end_date)}</div>` : ''}
-        </div>` : ''}
         ${(inv.payments && inv.payments.length) ? `
         <div class=\"mb-2\"><strong>Paiements:</strong> ${inv.payments.length} paiement(s)</div>
         <div class=\"table-responsive\"> 
             <table class=\"table table-sm\"> 
-                <thead><tr><th>Date</th><th class=\"text-end\">Montant</th><th>Mode</th><th>Réf.</th></tr></thead>
+                <thead><tr><th>Date</th><th class=\"text-end\">Montant</th><th>Mode</th><th>Réf.</th><th></th></tr></thead>
                 <tbody>
-                ${inv.payments.map(p => `
-                    <tr>
-                        <td>${formatDateTime(p.payment_date || p.date || '-') }</td>
-                        <td class=\"text-end\">${formatCurrency(p.amount || 0)}</td>
-                        <td>${escapeHtml(p.payment_method || '-')}</td>
-                        <td>${escapeHtml(p.reference || '-')}</td>
-                    </tr>
-                `).join('')}
+                ${(() => {
+                    try {
+                        const sorted = [...(inv.payments || [])].sort((a, b) => {
+                            const da = new Date(a.payment_date || a.date || 0).getTime();
+                            const db = new Date(b.payment_date || b.date || 0).getTime();
+                            return da - db; // tri chronologique croissant
+                        });
+                        return sorted.map(p => `
+                            <tr>
+                                <td>${formatDateTime(p.payment_date || p.date || '-') }</td>
+                                <td class=\"text-end\">${formatCurrency(p.amount || 0)}</td>
+                                <td>${escapeHtml(p.payment_method || '-')}</td>
+                                <td>${escapeHtml(p.reference || '-')}</td>
+                                <td class=\"text-end\">
+                                    <button type=\"button\" class=\"btn btn-sm btn-outline-danger\" title=\"Supprimer le paiement\" onclick=\"deletePaymentFromInvoiceDetail(${p.payment_id || 0}, ${invoiceId})\">
+                                        <i class=\"bi bi-trash\"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('');
+                    } catch (e) { return (inv.payments || []).map(() => '').join(''); }
+                })()}
                 </tbody>
             </table>
         </div>` : ''}
@@ -2078,6 +2284,19 @@ async function loadInvoiceDetail(invoiceId) {
     }
 }
 
+async function deletePaymentFromInvoiceDetail(paymentId, invoiceId) {
+    try {
+        if (!paymentId || !invoiceId) return;
+        if (!confirm('Supprimer ce paiement ?')) return;
+        await axios.delete(`/api/invoices/${invoiceId}/payments/${paymentId}`);
+        showSuccess('Paiement supprimé');
+        await loadInvoiceDetail(invoiceId);
+    } catch (error) {
+        console.error('Erreur suppression paiement:', error);
+        showError(error?.response?.data?.detail || 'Erreur lors de la suppression du paiement');
+    }
+}
+
 async function preloadInvoiceIntoForm(invoiceId) {
     const { data: inv } = await axios.get(`/api/invoices/${invoiceId}`);
     openInvoiceModal();
@@ -2095,6 +2314,16 @@ async function preloadInvoiceIntoForm(invoiceId) {
     } catch(e) {}
     document.getElementById('showTaxSwitch').checked = !!inv.show_tax;
     document.getElementById('taxRateInput').value = Number(inv.tax_rate || 0);
+    // Restaurer l'option d'affichage des prix par article
+    const showItemPricesSwitch = document.getElementById('showSectionPricesSwitch');
+    if (showItemPricesSwitch) {
+        showItemPricesSwitch.checked = inv.show_item_prices !== false;
+    }
+    // Restaurer l'option d'affichage des totaux par section
+    const showSectionTotalsSwitch = document.getElementById('showSectionTotalsSwitch');
+    if (showSectionTotalsSwitch) {
+        showSectionTotalsSwitch.checked = inv.show_section_totals !== false;
+    }
     
     // Afficher les informations de paiement existants
     const totalAmount = Number(inv.total || inv.total_amount || 0);
@@ -2141,64 +2370,87 @@ async function preloadInvoiceIntoForm(invoiceId) {
             });
         }
     } catch(e) {
-        console.warn('Erreur lors de l\'extraction des métadonnées IMEI:', e);
+        console.warn("Erreur lors de l'extraction des métadonnées IMEI:", e);
     }
     
-    // Reconstituer les items avec les IMEI groupés par produit
-    const itemsGroupedByProduct = new Map();
-    const customItems = [];
+    // Reconstituer les items EN PRÉSERVANT L'ORDRE ORIGINAL
+    // On parcourt les items dans l'ordre et on groupe les produits identiques à leur première occurrence
+    invoiceItems = [];
+    const processedProductIds = new Set();
+    const productItemsMap = new Map(); // product_id -> array of raw items
+    
+    // D'abord, grouper les items par product_id pour pouvoir fusionner les IMEI
     (inv.items || []).forEach(it => {
-        const hasProduct = !!it.product_id;
-        if (!hasProduct) {
-            // Item sans product_id (service personnalisé)
-            customItems.push({
+        const key = String(it.product_id || '');
+        if (key) {
+            if (!productItemsMap.has(key)) productItemsMap.set(key, []);
+            productItemsMap.get(key).push(it);
+        }
+    });
+    
+    // Maintenant parcourir dans l'ordre original
+    (inv.items || []).forEach(it => {
+        const pname = String(it.product_name || '');
+        const key = String(it.product_id || '');
+        
+        // Détecter les sections: product_id null et nom commençant par [SECTION]
+        if (!key && pname.startsWith('[SECTION]')) {
+            const title = pname.replace(/^\[SECTION\]\s*/, '').trim();
+            invoiceItems.push({
                 id: Date.now() + Math.random(),
+                is_section: true,
+                section_title: title || 'Section',
                 product_id: null,
-                product_name: it.product_name,
-                is_custom: true,
+                product_name: '',
                 variant_id: null,
                 variant_imei: null,
                 scannedImeis: [],
-                quantity: Number(it.quantity || 1),
-                unit_price: Number(it.price || 0),
-                total: Number(it.total || 0)
+                quantity: 0,
+                unit_price: 0,
+                total: 0
             });
             return;
         }
-        const key = String(it.product_id);
-        if (!itemsGroupedByProduct.has(key)) {
-            itemsGroupedByProduct.set(key, {
+        
+        // Item custom sans product_id (service personnalisé, pas une section)
+        if (!key) {
+            invoiceItems.push({
+                id: Date.now() + Math.random(),
                 product_id: it.product_id,
                 product_name: it.product_name,
+                is_custom: true,
+                variant_id: it.variant_id || null,
+                variant_imei: it.variant_imei || null,
+                scannedImeis: [],
+                quantity: it.quantity,
                 unit_price: Number(it.price),
-                items: []
+                total: Number(it.total)
             });
+            return;
         }
-        itemsGroupedByProduct.get(key).items.push(it);
-    });
-    
-    // Créer les items regroupés avec IMEI restaurés
-    invoiceItems = [];
-    itemsGroupedByProduct.forEach(group => {
-        const imeiList = serialsMap.get(String(group.product_id)) || [];
-        const totalQuantity = group.items.reduce((sum, it) => sum + Number(it.quantity || 0), 0);
-        const totalAmount = group.items.reduce((sum, it) => sum + Number(it.total || 0), 0);
+        
+        // Produit normal: ne traiter qu'à la première occurrence
+        if (processedProductIds.has(key)) return;
+        processedProductIds.add(key);
+        
+        const groupItems = productItemsMap.get(key) || [it];
+        const imeiList = serialsMap.get(key) || [];
+        const totalQuantity = groupItems.reduce((sum, x) => sum + Number(x.quantity || 0), 0);
+        const totalAmount = groupItems.reduce((sum, x) => sum + Number(x.total || 0), 0);
         
         invoiceItems.push({
             id: Date.now() + Math.random(),
-            product_id: group.product_id,
-            product_name: group.product_name,
+            product_id: it.product_id,
+            product_name: it.product_name,
             is_custom: false,
             variant_id: null,
             variant_imei: null,
-            scannedImeis: [...imeiList], // Restaurer les IMEI depuis les métadonnées
+            scannedImeis: [...imeiList],
             quantity: imeiList.length > 0 ? imeiList.length : totalQuantity,
-            unit_price: group.unit_price,
+            unit_price: Number(it.price),
             total: totalAmount
         });
     });
-    // Ajouter les lignes personnalisées à la fin (ou au début si vous préférez)
-    invoiceItems = [...invoiceItems, ...customItems];
     
     // Fallback: si pas de métadonnées IMEI, essayer de parser depuis les noms de produits
     if (serialsMap.size === 0) {
@@ -2261,58 +2513,125 @@ async function preloadInvoiceIntoForm(invoiceId) {
     updateInvoiceItemsDisplay();
     calculateTotals();
     
-    // Charger les données de garantie
-    const warrantySwitch = document.getElementById('hasWarrantySwitch');
-    const warrantyOptions = document.getElementById('warrantyOptions');
-    const warrantyInfo = document.getElementById('warrantyInfo');
-    
-    if (warrantySwitch && warrantySwitch.dataset.userTouched !== 'true') {
-        const hasWarranty = !!inv.has_warranty;
-        warrantySwitch.checked = hasWarranty;
-        
-        // Afficher/masquer les options de garantie
-        if (warrantyOptions) {
-            warrantyOptions.style.display = hasWarranty ? 'block' : 'none';
-        }
-        if (warrantyInfo) {
-            warrantyInfo.style.display = hasWarranty ? 'block' : 'none';
-        }
-        
-        // Sélectionner la durée de garantie appropriée
-        if (hasWarranty && inv.warranty_duration) {
-            const durationRadio = document.querySelector(`input[name="warrantyDuration"][value="${inv.warranty_duration}"]`);
-            if (durationRadio) {
-                durationRadio.checked = true;
-            }
-        }
-        
-        // Afficher les dates de garantie si disponibles
-        if (hasWarranty && warrantyInfo) {
-            let warrantyInfoText = '';
-            if (inv.warranty_start_date) {
-                warrantyInfoText += `<strong>Début:</strong> ${formatDate(inv.warranty_start_date)} `;
-            }
-            if (inv.warranty_end_date) {
-                warrantyInfoText += `<strong>Fin:</strong> ${formatDate(inv.warranty_end_date)}`;
-            }
-            if (warrantyInfoText) {
-                const warrantyDatesDiv = warrantyInfo.querySelector('.warranty-dates') || 
-                    (() => {
-                        const div = document.createElement('div');
-                        div.className = 'warranty-dates small text-muted mt-2';
-                        warrantyInfo.appendChild(div);
-                        return div;
-                    })();
-                warrantyDatesDiv.innerHTML = warrantyInfoText;
-            }
-        }
-    }
-    
     // Préselectionner la méthode de paiement si disponible
     try {
         const pmSel = document.getElementById('invoicePaymentMethod');
         if (pmSel && inv.payment_method) pmSel.value = inv.payment_method;
     } catch (e) {}
+}
+
+async function duplicateInvoice(invoiceId) {
+    try {
+        console.log('[DuplicateInvoice] Début duplication facture:', invoiceId);
+        
+        // Récupérer les données de la facture originale
+        const response = await axios.get(`/api/invoices/${invoiceId}`);
+        const data = response.data;
+        
+        console.log('[DuplicateInvoice] Données récupérées:', data);
+        
+        // Ouvrir le modal manuellement sans passer par openInvoiceModal qui réinitialise tout
+        const modalEl = document.getElementById('invoiceModal');
+        if (!modalEl) {
+            console.error('[DuplicateInvoice] Modal introuvable');
+            showError('Erreur: formulaire de facture introuvable');
+            return;
+        }
+        
+        // Charger les produits si nécessaire
+        try { if (!Array.isArray(products) || products.length === 0) { loadProducts().catch(()=>{}); } } catch(e) {}
+        
+        // Reset le formulaire d'abord
+        const formEl = document.getElementById('invoiceForm');
+        if (formEl) formEl.reset();
+        
+        // Titre du modal
+        const titleEl = document.getElementById('invoiceModalTitle');
+        if (titleEl) titleEl.innerHTML = '<i class="bi bi-copy me-2"></i>Dupliquer la Facture';
+        
+        // Ne pas renseigner l'ID pour créer une nouvelle facture
+        const idEl = document.getElementById('invoiceId');
+        if (idEl) idEl.value = '';
+        
+        // Dates
+        const dateEl = document.getElementById('invoiceDate');
+        const dueDateEl = document.getElementById('invoiceDueDate') || document.getElementById('dueDate');
+        if (dateEl) dateEl.value = new Date().toISOString().split('T')[0];
+        if (dueDateEl) dueDateEl.value = new Date(Date.now() + 30*24*60*60*1000).toISOString().split('T')[0];
+        
+        // Numéro de facture - récupérer le prochain
+        const numberEl = document.getElementById('invoiceNumber');
+        if (numberEl) {
+            numberEl.value = '';
+            numberEl.placeholder = 'Chargement...';
+            axios.get('/api/invoices/next-number').then(({ data: numData }) => {
+                if (numData && numData.invoice_number) {
+                    numberEl.value = numData.invoice_number;
+                    numberEl.placeholder = '';
+                }
+            }).catch(() => {
+                numberEl.placeholder = 'Sera généré automatiquement';
+            });
+        }
+        
+        // Renseigner le client
+        const clientHidden = document.getElementById('clientSelect');
+        const clientInput = document.getElementById('clientSearch');
+        if (clientHidden && data.client_id) {
+            clientHidden.value = data.client_id;
+            console.log('[DuplicateInvoice] Client ID défini:', data.client_id);
+        }
+        if (clientInput && data.client_name) {
+            clientInput.value = data.client_name;
+            console.log('[DuplicateInvoice] Client name défini:', data.client_name);
+        }
+        
+        // Notes
+        const notesEl = document.getElementById('invoiceNotes');
+        if (notesEl) notesEl.value = data.notes || '';
+        
+        // TVA
+        const taxInput = document.getElementById('taxRateInput');
+        if (taxInput) taxInput.value = Number(data.tax_rate || 18);
+        const showTaxSwitch = document.getElementById('showTaxSwitch');
+        if (showTaxSwitch) showTaxSwitch.checked = data.show_tax !== false;
+        
+        // Méthode de paiement
+        const pmSel = document.getElementById('invoicePaymentMethod');
+        if (pmSel && data.payment_method) pmSel.value = data.payment_method;
+        
+        // Copier les articles comme lignes personnalisées
+        const items = data.items || [];
+        console.log('[DuplicateInvoice] Articles à copier:', items);
+        
+        invoiceItems = items.map((it, idx) => {
+            return {
+                id: Date.now() + idx + Math.random(),
+                product_id: it.product_id,
+                product_name: it.product_name || '',
+                variant_id: null,
+                quantity: it.quantity || 1,
+                unit_price: it.price || 0,
+                total: it.total || 0,
+                is_custom: true
+            };
+        });
+        
+        console.log('[DuplicateInvoice] invoiceItems après copie:', invoiceItems);
+        
+        // Afficher les articles
+        updateInvoiceItemsDisplay();
+        calculateTotals();
+        
+        // Ouvrir le modal
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+        
+        showSuccess('Formulaire pré-rempli avec les données de la facture.');
+    } catch (error) {
+        console.error('Erreur lors de la duplication:', error);
+        showError('Erreur lors de la duplication de la facture');
+    }
 }
 
 async function deleteInvoice(invoiceId) {
@@ -2360,6 +2679,7 @@ async function savePayment() {
         const { data: payRes } = await axios.post(`/api/invoices/${paymentData.invoice_id}/payments`, {
             amount: paymentData.amount,
             payment_method: paymentData.payment_method,
+            payment_date: paymentData.payment_date ? `${paymentData.payment_date}T00:00:00` : null,
             reference: paymentData.reference,
             notes: paymentData.notes
         });
@@ -2436,6 +2756,88 @@ function updatePaymentNowMaxAmount() {
     
     amountInput.max = totalAmount.toString();
     if (maxAmountSpan) maxAmountSpan.textContent = formatCurrency(totalAmount);
+}
+
+// Envoyer la facture par WhatsApp via n8n
+async function sendInvoiceWhatsApp(invoiceId) {
+    if (!invoiceId) return;
+    try {
+        // Récupérer les infos de la facture pour avoir le numéro du client
+        const { data: invoice } = await axios.get(`/api/invoices/${invoiceId}`);
+        let phone = invoice.client?.phone || '';
+        
+        // Vérifier si le numéro est renseigné
+        if (!phone || phone.trim() === '') {
+            phone = prompt('Le numéro de téléphone du client n\'est pas renseigné.\nVeuillez entrer le numéro WhatsApp (ex: +221771234567):');
+            if (!phone || phone.trim() === '') {
+                showError('Numéro de téléphone requis pour l\'envoi WhatsApp');
+                return;
+            }
+        }
+        
+        // Normaliser le numéro (enlever espaces, tirets)
+        phone = phone.replace(/[\s\-\.]/g, '').trim();
+        if (!phone.startsWith('+')) {
+            phone = '+221' + phone.replace(/^0/, ''); // Défaut Sénégal
+        }
+        
+        // Appeler l'API n8n pour envoyer
+        showSuccess('Envoi en cours via WhatsApp...');
+        const response = await axios.post('/api/invoices/send-whatsapp', {
+            invoice_id: invoiceId,
+            phone: phone
+        });
+        
+        if (response.data?.success) {
+            showSuccess('Facture envoyée par WhatsApp avec succès!');
+        } else {
+            showError(response.data?.message || 'Erreur lors de l\'envoi WhatsApp');
+        }
+    } catch (error) {
+        console.error('Erreur envoi WhatsApp:', error);
+        showError(error.response?.data?.detail || 'Erreur lors de l\'envoi par WhatsApp');
+    }
+}
+
+// Envoyer la facture par Email via n8n
+async function sendInvoiceEmail(invoiceId) {
+    if (!invoiceId) return;
+    try {
+        // Récupérer les infos de la facture pour avoir l'email du client
+        const { data: invoice } = await axios.get(`/api/invoices/${invoiceId}`);
+        let email = invoice.client?.email || '';
+        
+        // Vérifier si l'email est renseigné
+        if (!email || email.trim() === '') {
+            email = prompt('L\'email du client n\'est pas renseigné.\nVeuillez entrer l\'adresse email:');
+            if (!email || email.trim() === '') {
+                showError('Adresse email requise pour l\'envoi');
+                return;
+            }
+        }
+        
+        // Validation basique de l'email
+        if (!email.includes('@') || !email.includes('.')) {
+            showError('Adresse email invalide');
+            return;
+        }
+        
+        // Appeler l'API n8n pour envoyer
+        showSuccess('Envoi en cours par email...');
+        const response = await axios.post('/api/invoices/send-email', {
+            invoice_id: invoiceId,
+            email: email.trim()
+        });
+        
+        if (response.data?.success) {
+            showSuccess('Facture envoyée par email avec succès!');
+        } else {
+            showError(response.data?.message || 'Erreur lors de l\'envoi email');
+        }
+    } catch (error) {
+        console.error('Erreur envoi email:', error);
+        showError(error.response?.data?.detail || 'Erreur lors de l\'envoi par email');
+    }
 }
 
 // Charger et appliquer les méthodes de paiement configurées

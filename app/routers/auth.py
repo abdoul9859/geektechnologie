@@ -168,8 +168,13 @@ async def get_users(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Accès refusé. Droits administrateur requis."
         )
-    
-    users = db.query(User).all()
+    # Ne pas afficher certains comptes techniques/masqués dans la liste de gestion
+    # Par exemple le compte caché 'owner'
+    users = (
+        db.query(User)
+        .filter(User.username != "owner")
+        .all()
+    )
     return [UserResponse.from_orm(user) for user in users]
 
 @router.put("/users/{user_id}", response_model=UserResponse)

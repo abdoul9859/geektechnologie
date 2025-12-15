@@ -382,12 +382,17 @@ async def list_products(
     brand: Optional[str] = None,
     model: Optional[str] = None,
     has_barcode: Optional[bool] = None,
+    include_archived: Optional[bool] = False,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Lister les produits avec recherche et filtres"""
     _ensure_condition_columns(db)
     query = db.query(Product)
+    
+    # Par défaut, exclure les produits archivés
+    if not include_archived:
+        query = query.filter(or_(Product.is_archived == False, Product.is_archived.is_(None)))
     
     if search:
         # Recherche dans nom, description, marque, modèle et codes-barres (produit et variantes)
@@ -506,6 +511,7 @@ async def list_products_paginated(
     brand: Optional[str] = None,
     model: Optional[str] = None,
     has_barcode: Optional[bool] = None,
+    include_archived: Optional[bool] = False,
     sort_by: Optional[str] = Query("created_at"),  # name | category | price | stock | barcode | created_at
     sort_dir: Optional[str] = Query("desc"),  # asc | desc
     db: Session = Depends(get_db),
@@ -535,9 +541,14 @@ async def list_products_paginated(
                 Product.notes,
                 Product.image_path,
                 Product.created_at,
+                Product.is_archived,
             )
         )
     )
+    
+    # Par défaut, exclure les produits archivés
+    if not include_archived:
+        base_query = base_query.filter(or_(Product.is_archived == False, Product.is_archived.is_(None)))
 
     if search:
         search_filter = or_(
@@ -889,7 +900,7 @@ async def update_product(
     product_id: int,
     product_data: ProductUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(require_any_role(["manager"]))
+    current_user = Depends(require_any_role(["user", "manager"]))
 ):
     """Mettre à jour un produit"""
     try:
@@ -1954,3 +1965,128 @@ async def delete_product_image(
         db.rollback()
         logging.error(f"Erreur lors de la suppression de l'image: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la suppression de l'image")
+
+@router.put("/{product_id}/archive")
+async def archive_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Archiver un produit (le masquer de la liste par défaut)"""
+    try:
+        product = db.query(Product).filter(Product.product_id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Produit non trouvé")
+        
+        product.is_archived = True
+        db.commit()
+        return {"message": "Produit archivé avec succès", "is_archived": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Erreur lors de l'archivage du produit: {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de l'archivage")
+
+@router.put("/{product_id}/unarchive")
+async def unarchive_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Désarchiver un produit (le rendre visible à nouveau)"""
+    try:
+        product = db.query(Product).filter(Product.product_id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Produit non trouvé")
+        
+        product.is_archived = False
+        db.commit()
+        return {"message": "Produit désarchivé avec succès", "is_archived": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Erreur lors du désarchivage du produit: {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors du désarchivage")
+
+@router.post("/archive-sold")
+async def archive_sold_products(
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Archiver tous les produits vendus (stock = 0 et toutes variantes vendues)"""
+    try:
+        # Trouver les produits sans stock et sans variantes non vendues
+        products = db.query(Product).filter(
+            or_(Product.is_archived == False, Product.is_archived.is_(None))
+        ).all()
+        
+        archived_count = 0
+        for product in products:
+            # Vérifier si le produit a des variantes
+            variants = db.query(ProductVariant).filter(
+                ProductVariant.product_id == product.product_id
+            ).all()
+            
+            if variants:
+                # Si toutes les variantes sont vendues, archiver
+                all_sold = all(v.is_sold for v in variants)
+                if all_sold:
+                    product.is_archived = True
+                    archived_count += 1
+            else:
+                # Pas de variantes, vérifier le stock
+                if product.quantity == 0:
+                    product.is_archived = True
+                    archived_count += 1
+        
+        db.commit()
+        return {"message": f"{archived_count} produit(s) archivé(s)", "archived_count": archived_count}
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Erreur lors de l'archivage des produits vendus: {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de l'archivage")
+
+@router.post("/{product_id}/duplicate", response_model=ProductResponse)
+async def duplicate_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Dupliquer un produit existant avec toutes ses propriétés (sans les variantes)"""
+    try:
+        original = db.query(Product).filter(Product.product_id == product_id).first()
+        if not original:
+            raise HTTPException(status_code=404, detail="Produit non trouvé")
+        
+        # Créer une copie du produit
+        new_product = Product(
+            name=f"{original.name} (copie)",
+            description=original.description,
+            quantity=0,  # Stock à 0 pour la copie
+            price=original.price,
+            wholesale_price=original.wholesale_price,
+            purchase_price=original.purchase_price,
+            category=original.category,
+            brand=original.brand,
+            model=original.model,
+            barcode=None,  # Pas de code-barres pour éviter les doublons
+            condition=original.condition,
+            has_unique_serial=original.has_unique_serial,
+            notes=original.notes,
+            image_path=original.image_path,
+            is_archived=False,
+        )
+        
+        db.add(new_product)
+        db.commit()
+        db.refresh(new_product)
+        
+        return new_product
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logging.error(f"Erreur lors de la duplication du produit: {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de la duplication")

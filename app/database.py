@@ -11,8 +11,8 @@ load_dotenv()
 # Source de vérité de la connexion DB
 _RAW_DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    # Valeur par défaut: la base PostgreSQL fournie
-    "postgres://koyeb-adm:npg_a3qrJm2QLwSI@ep-young-sunset-a2ijj2cv.eu-central-1.pg.koyeb.app/testgeek",
+    # Valeur par défaut: SQLite local
+    "sqlite:///./data/geektech.db",
 )
 
 # Normalisation pour SQLAlchemy
@@ -101,6 +101,7 @@ class Client(Base):
     country = Column(String(50), default="Sénégal")
     tax_number = Column(String(50))
     notes = Column(Text)
+    disable_debt_reminder = Column(Boolean, default=False)
 
 # Créances clients (dettes clients manuelles)
 class ClientDebt(Base):
@@ -230,6 +231,7 @@ class Product(Base):
     notes = Column(Text)
     image_path = Column(String(500), nullable=True)  # Chemin vers l'image du produit
     created_at = Column(DateTime, default=func.now())
+    is_archived = Column(Boolean, default=False, index=True)  # Produit archivé (masqué par défaut)
 
     # Relations
     serial_numbers = relationship("ProductSerialNumber", back_populates="product", cascade="all, delete-orphan")
@@ -435,6 +437,8 @@ class Quotation(Base):
     tax_amount = Column(Numeric(12, 2), nullable=False)
     total = Column(Numeric(12, 2), nullable=False)
     notes = Column(Text)
+    show_item_prices = Column(Boolean, default=True)  # Afficher prix par article
+    show_section_totals = Column(Boolean, default=True)  # Afficher total par section
     created_at = Column(DateTime, default=func.now())
     
     # Relations
@@ -475,6 +479,8 @@ class Invoice(Base):
     remaining_amount = Column(Numeric(12, 2), nullable=False)
     notes = Column(Text)
     show_tax = Column(Boolean, default=True)
+    show_item_prices = Column(Boolean, default=True)  # Afficher prix par article
+    show_section_totals = Column(Boolean, default=True)  # Afficher total par section
     price_display = Column(String(10), default="TTC")  # HT, TTC
     # Champs de garantie
     has_warranty = Column(Boolean, default=False)

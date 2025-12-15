@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connexion WhatsApp - GeekTechnologie</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+            text-align: center;
+        }
+        h1 { color: #1a1a2e; margin-bottom: 10px; font-size: 24px; }
+        .subtitle { color: #666; margin-bottom: 30px; }
+        .qr-container {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 30px;
+            margin: 20px 0;
+            min-height: 300px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #qrcode img { max-width: 280px; border-radius: 10px; }
+        .status {
+            padding: 15px 25px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-weight: 500;
+        }
+        .status.connecting { background: #fff3cd; color: #856404; }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(102,126,234,0.4); }
+        .instructions {
+            background: #e8f4fd;
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+            text-align: left;
+        }
+        .instructions h3 { color: #0056b3; margin-bottom: 10px; }
+        .instructions ol { margin-left: 20px; color: #333; }
+        .instructions li { margin: 8px 0; }
+        .phone-info { margin-top: 15px; padding: 10px; background: #e8f5e9; border-radius: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔗 Connexion WhatsApp</h1>
+        <p class="subtitle">GeekTechnologie - Rappels de dette automatiques</p>
+        
+        <div id="status" class="status connecting">⏳ Chargement...</div>
+        
+        <div class="qr-container">
+            <div id="qrcode">
+                <p>Chargement du QR Code...</p>
+            </div>
+        </div>
+        
+        <div id="phone-info" class="phone-info" style="display:none;">
+            <strong>✅ Connecté:</strong> <span id="phone-number"></span>
+        </div>
+        
+        <button class="btn" onclick="refreshQR()">🔄 Rafraîchir QR Code</button>
+        <button class="btn" onclick="checkStatus()">📊 Vérifier Statut</button>
+        
+        <div class="instructions">
+            <h3>📱 Instructions</h3>
+            <ol>
+                <li>Ouvrez WhatsApp sur votre téléphone</li>
+                <li>Allez dans <strong>Paramètres → Appareils liés</strong></li>
+                <li>Appuyez sur <strong>Lier un appareil</strong></li>
+                <li>Scannez le QR code ci-dessus</li>
+            </ol>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = '/waha/api';
+        const API_KEY = 'GeekTech-Waha-2024';
+        const SESSION = 'default';
+        
+        async function checkStatus() {
+            const statusEl = document.getElementById('status');
+            const phoneInfo = document.getElementById('phone-info');
+            const phoneNumber = document.getElementById('phone-number');
+            
+            try {
+                const res = await fetch(`${API_URL}/sessions/${SESSION}`, {
+                    headers: { 'X-Api-Key': API_KEY }
+                });
+                const data = await res.json();
+                
+                if (data.status === 'WORKING') {
+                    statusEl.className = 'status connected';
+                    statusEl.innerHTML = '✅ WhatsApp connecté!';
+                    phoneInfo.style.display = 'block';
+                    phoneNumber.textContent = data.me?.id || 'Connecté';
+                    document.getElementById('qrcode').innerHTML = '<p style="font-size:48px;">✅</p><p>WhatsApp est connecté!</p>';
+                } else if (data.status === 'SCAN_QR_CODE') {
+                    statusEl.className = 'status connecting';
+                    statusEl.innerHTML = '📱 Scannez le QR code avec WhatsApp';
+                    phoneInfo.style.display = 'none';
+                    refreshQR();
+                } else if (data.status === 'STOPPED') {
+                    statusEl.className = 'status connecting';
+                    statusEl.innerHTML = '⏳ Démarrage de la session...';
+                    await startSession();
+                } else {
+                    statusEl.className = 'status connecting';
+                    statusEl.innerHTML = '⏳ Statut: ' + data.status;
+                    setTimeout(checkStatus, 3000);
+                }
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.innerHTML = '❌ Erreur: ' + e.message;
+            }
+        }
+        
+        async function startSession() {
+            try {
+                await fetch(`${API_URL}/sessions/${SESSION}/start`, {
+                    method: 'POST',
+                    headers: { 'X-Api-Key': API_KEY }
+                });
+                setTimeout(checkStatus, 5000);
+            } catch (e) {
+                console.error('Erreur démarrage:', e);
+            }
+        }
+        
+        async function refreshQR() {
+            const qrEl = document.getElementById('qrcode');
+            const statusEl = document.getElementById('status');
+            
+            try {
+                // Récupérer le QR comme blob avec l'API key
+                const res = await fetch(`${API_URL}/${SESSION}/auth/qr`, {
+                    headers: { 'X-Api-Key': API_KEY }
+                });
+                
+                if (res.ok && res.headers.get('content-type')?.includes('image')) {
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    qrEl.innerHTML = `<img src="${url}" alt="QR Code WhatsApp">`;
+                    statusEl.className = 'status connecting';
+                    statusEl.innerHTML = '📱 Scannez ce QR code avec WhatsApp';
+                } else {
+                    const data = await res.json().catch(() => ({}));
+                    if (data.status === 'WORKING') {
+                        qrEl.innerHTML = '<p style="font-size:48px;">✅</p><p>Déjà connecté!</p>';
+                        statusEl.className = 'status connected';
+                        statusEl.innerHTML = '✅ WhatsApp est connecté!';
+                    } else {
+                        qrEl.innerHTML = '<p>QR non disponible. Cliquez sur Rafraîchir.</p>';
+                        statusEl.innerHTML = '⚠️ ' + (data.error || 'Réessayez');
+                    }
+                }
+            } catch (e) {
+                statusEl.className = 'status error';
+                statusEl.innerHTML = '❌ Erreur: ' + e.message;
+                qrEl.innerHTML = '<p>Erreur de chargement</p>';
+            }
+        }
+        
+        // Vérifier le statut au chargement
+        checkStatus();
+        
+        // Rafraîchir automatiquement toutes les 20 secondes
+        setInterval(checkStatus, 20000);
+    </script>
+</body>
+</html>
