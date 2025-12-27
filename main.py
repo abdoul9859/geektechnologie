@@ -1,8 +1,9 @@
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
+from io import BytesIO
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
@@ -59,7 +60,7 @@ try:
     from app.models.models import Settings as LegacySettings  # type: ignore
 except Exception:
     LegacySettings = None  # type: ignore
-from app.routers import auth, products, clients, stock_movements, invoices, quotations, suppliers, debts, delivery_notes, bank_transactions, reports, user_settings, migrations, cache, dashboard, supplier_invoices, daily_recap, daily_purchases, daily_requests, daily_sales, google_sheets, client_debts, backup
+from app.routers import auth, products, clients, stock_movements, invoices, quotations, suppliers, debts, delivery_notes, bank_transactions, reports, user_settings, migrations, cache, dashboard, supplier_invoices, daily_recap, daily_purchases, daily_requests, daily_sales, google_sheets, client_debts, backup, maintenances
 from app.init_db import init_database
 from app.auth import get_current_user
 from app.services.migration_processor import migration_processor
@@ -67,6 +68,14 @@ try:
     from app.services.debt_notifier import debt_notifier
 except Exception:
     debt_notifier = None  # type: ignore
+try:
+    from app.services.warranty_notifier import warranty_notifier
+except Exception:
+    warranty_notifier = None  # type: ignore
+try:
+    from app.services.maintenance_notifier import maintenance_notifier
+except Exception:
+    maintenance_notifier = None  # type: ignore
 
 # Créer l'application FastAPI
 app = FastAPI(
@@ -137,6 +146,16 @@ async def startup_event():
             if debt_notifier is not None:
                 debt_notifier.start_background()
                 print("✅ Notificateur de créances démarré")
+        # Démarrer le notificateur de garanties si activé
+        if os.getenv("ENABLE_WARRANTY_REMINDERS", "false").lower() == "true":
+            if warranty_notifier is not None:
+                warranty_notifier.start_background()
+                print("✅ Notificateur de garanties démarré")
+        # Démarrer le notificateur de maintenances si activé
+        if os.getenv("ENABLE_MAINTENANCE_REMINDERS", "false").lower() == "true":
+            if maintenance_notifier is not None:
+                maintenance_notifier.start_background()
+                print("✅ Notificateur de maintenances démarré")
         print("✅ Application démarrée avec succès")
     except Exception as e:
         print(f"❌ Erreur lors du démarrage: {e}")
@@ -150,6 +169,10 @@ async def shutdown_event():
             migration_processor.stop_background_processor()
         if os.getenv("ENABLE_DEBT_REMINDERS", "false").lower() == "true" and debt_notifier is not None:
             debt_notifier.stop_background()
+        if os.getenv("ENABLE_WARRANTY_REMINDERS", "false").lower() == "true" and warranty_notifier is not None:
+            warranty_notifier.stop_background()
+        if os.getenv("ENABLE_MAINTENANCE_REMINDERS", "false").lower() == "true" and maintenance_notifier is not None:
+            maintenance_notifier.stop_background()
         print("✅ Application arrêtée proprement")
     except Exception as e:
         print(f"❌ Erreur lors de l'arrêt: {e}")
@@ -243,6 +266,7 @@ app.include_router(daily_purchases.router)
 app.include_router(daily_requests.router)
 app.include_router(daily_sales.router)
 app.include_router(google_sheets.router)
+app.include_router(maintenances.router)
 
 # Inclure les routers API de la boutique en ligne (API publique)
 # TODO: Activer quand le module boutique sera disponible
@@ -440,6 +464,11 @@ async def invoices_page(request: Request, db: Session = Depends(get_db)):
 async def quotations_page(request: Request, db: Session = Depends(get_db)):
     """Page de gestion des devis"""
     return templates.TemplateResponse("quotations.html", {"request": request, "global_settings": _load_company_settings(db)})
+
+@app.get("/maintenances", response_class=HTMLResponse)
+async def maintenances_page(request: Request, db: Session = Depends(get_db)):
+    """Page de gestion des maintenances"""
+    return templates.TemplateResponse("maintenances.html", {"request": request, "global_settings": _load_company_settings(db)})
 
 @app.get("/scan", response_class=HTMLResponse)
 async def scan_page(request: Request, db: Session = Depends(get_db)):
@@ -863,6 +892,164 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
     if warranty_certificate:
         return templates.TemplateResponse("print_invoice_with_warranty.html", context)
     return templates.TemplateResponse("print_invoice.html", context)
+
+
+@app.get("/invoices/pdf/{invoice_id}")
+async def get_invoice_pdf(request: Request, invoice_id: int, db: Session = Depends(get_db)):
+    """Génère et retourne le PDF de la facture"""
+    try:
+        import pdfkit
+    except ImportError:
+        raise HTTPException(status_code=500, detail="pdfkit non installé")
+    
+    # Récupérer le HTML de la facture en réutilisant la logique existante
+    inv = (
+        db.query(Invoice)
+        .options(joinedload(Invoice.items), joinedload(Invoice.client), joinedload(Invoice.payments))
+        .filter(Invoice.invoice_id == invoice_id)
+        .first()
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Facture non trouvée")
+    
+    # Générer le HTML via le template
+    template_name = "print_invoice.html"
+    if getattr(inv, "has_warranty", False) and getattr(inv, "warranty_duration", None):
+        template_name = "print_invoice_with_warranty.html"
+    
+    # Construire le contexte (simplifié - réutiliser la logique de print_invoice_page)
+    company_settings = _load_company_settings(db)
+    
+    # Grouper les items
+    grouped_items = []
+    for it in (inv.items or []):
+        grouped_items.append({
+            "product_id": it.product_id,
+            "name": it.product_name,
+            "description": "",
+            "price": float(it.price or 0),
+            "qty": int(it.quantity or 0),
+            "total": float(it.total or 0),
+            "imeis": [],
+            "is_section": False,
+        })
+    
+    context = {
+        "request": request,
+        "invoice": inv,
+        "grouped_items": grouped_items,
+        "signature_data_url": None,
+        "resolved_payment_method": getattr(inv, "payment_method", None),
+        "warranty_certificate": None,
+        "settings": {
+            "company_name": company_settings.get("name"),
+            "address": company_settings.get("address"),
+            "city": company_settings.get("city"),
+            "email": company_settings.get("email"),
+            "phone": company_settings.get("phone"),
+            "phone2": company_settings.get("phone2"),
+            "whatsapp": company_settings.get("whatsapp"),
+            "instagram": company_settings.get("instagram"),
+            "website": company_settings.get("website"),
+            "logo": _normalize_logo(company_settings.get("logo") or company_settings.get("logo_path")),
+            "logo_path": company_settings.get("logo_path"),
+            "footer_text": company_settings.get("footer_text"),
+            "rc_number": company_settings.get("rc_number"),
+            "ninea_number": company_settings.get("ninea_number"),
+        },
+    }
+    
+    # Rendre le HTML
+    html_content = templates.get_template(template_name).render(context)
+    
+    # Convertir en PDF avec pdfkit
+    options = {
+        'page-size': 'A4',
+        'encoding': 'UTF-8',
+        'enable-local-file-access': None,
+        'no-stop-slow-scripts': None,
+    }
+    pdf_bytes = pdfkit.from_string(html_content, False, options=options)
+    
+    # Retourner le PDF
+    filename = f"Facture_{inv.invoice_number}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.get("/quotations/pdf/{quotation_id}")
+async def get_quotation_pdf(request: Request, quotation_id: int, db: Session = Depends(get_db)):
+    """Génère et retourne le PDF du devis"""
+    try:
+        import pdfkit
+    except ImportError:
+        raise HTTPException(status_code=500, detail="pdfkit non installé")
+    
+    from app.database import Quotation
+    
+    q = (
+        db.query(Quotation)
+        .options(joinedload(Quotation.items), joinedload(Quotation.client))
+        .filter(Quotation.quotation_id == quotation_id)
+        .first()
+    )
+    if not q:
+        raise HTTPException(status_code=404, detail="Devis non trouvé")
+    
+    company_settings = _load_company_settings(db)
+    
+    context = {
+        "request": request,
+        "quotation": q,
+        "signature_data_url": None,
+        "settings": {
+            "company_name": company_settings.get("name"),
+            "address": company_settings.get("address"),
+            "city": company_settings.get("city"),
+            "email": company_settings.get("email"),
+            "phone": company_settings.get("phone"),
+            "phone2": company_settings.get("phone2"),
+            "whatsapp": company_settings.get("whatsapp"),
+            "instagram": company_settings.get("instagram"),
+            "website": company_settings.get("website"),
+            "logo": _normalize_logo(company_settings.get("logo") or company_settings.get("logo_path")),
+            "logo_path": company_settings.get("logo_path"),
+            "footer_text": company_settings.get("footer_text"),
+            "rc_number": company_settings.get("rc_number"),
+            "ninea_number": company_settings.get("ninea_number"),
+        },
+        "product_descriptions": {},
+    }
+    
+    # Rendre le HTML
+    html_content = templates.get_template("print_quotation.html").render(context)
+    
+    # Convertir en PDF avec pdfkit
+    options = {
+        'page-size': 'A4',
+        'encoding': 'UTF-8',
+        'enable-local-file-access': None,
+        'no-stop-slow-scripts': None,
+        'disable-javascript': None,
+        'print-media-type': None,
+        'no-outline': None,
+        'margin-top': '10mm',
+        'margin-bottom': '10mm',
+        'margin-left': '10mm',
+        'margin-right': '10mm',
+    }
+    pdf_bytes = pdfkit.from_string(html_content, False, options=options)
+    
+    # Retourner le PDF
+    filename = f"Devis_{q.quotation_number}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @app.get("/quotations/print/{quotation_id}", response_class=HTMLResponse)

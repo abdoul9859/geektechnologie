@@ -389,6 +389,28 @@ function setupTaxControls() {
     }
 }
 
+function setupWarrantyControls() {
+    const warrantySwitch = document.getElementById('hasWarrantySwitch');
+    if (warrantySwitch) {
+        warrantySwitch.removeEventListener('change', handleWarrantyChange);
+        warrantySwitch.addEventListener('change', handleWarrantyChange);
+    }
+}
+
+function handleWarrantyChange() {
+    const warrantySwitch = document.getElementById('hasWarrantySwitch');
+    const warrantyOptions = document.getElementById('warrantyOptions');
+    const warrantyInfo = document.getElementById('warrantyInfo');
+    const isEnabled = warrantySwitch?.checked || false;
+    
+    if (warrantyOptions) {
+        warrantyOptions.style.display = isEnabled ? 'block' : 'none';
+    }
+    if (warrantyInfo) {
+        warrantyInfo.style.display = isEnabled ? 'block' : 'none';
+    }
+}
+
 function setDefaultDates() {
     const today = new Date().toISOString().split('T')[0];
     const invoiceDate = document.getElementById('invoiceDate');
@@ -1106,8 +1128,20 @@ function openInvoiceModal() {
         if (taxSwitch) taxSwitch.checked = true;
         if (taxRateInput) taxRateInput.value = 18;
         
+        // Reset garantie
+        const warrantySwitch = document.getElementById('hasWarrantySwitch');
+        const warrantyOptions = document.getElementById('warrantyOptions');
+        const warrantyInfo = document.getElementById('warrantyInfo');
+        if (warrantySwitch) warrantySwitch.checked = false;
+        if (warrantyOptions) warrantyOptions.style.display = 'none';
+        if (warrantyInfo) warrantyInfo.style.display = 'none';
+        // Sélectionner 12 mois par défaut
+        const warranty12 = document.getElementById('warranty12months');
+        if (warranty12) warranty12.checked = true;
+        
         // Ensure listeners are bound in case modal was created after initial setup
         setupTaxControls();
+        setupWarrantyControls();
         calculateTotals();
 
         // Recharger les méthodes de paiement lors de l'ouverture du modal
@@ -1381,13 +1415,17 @@ function updateInvoiceItemsDisplay() {
                         <input type="text" class="form-control form-control-sm product-search-input" placeholder="Nom, code-barres ou n° série..." data-item-id="${item.id}" />
                         <select class="form-select form-select-sm" onchange="selectProduct(${item.id}, this.value)">
                             <option value="">Sélectionner un produit</option>
-                            ${
-                                // Si la liste globale est vide, essayer d'utiliser les derniers résultats de recherche
-                                (Array.isArray(products) && products.length
+                            ${(() => {
+                                const productList = Array.isArray(products) && products.length
                                     ? products
-                                    : (Array.isArray(window._latestProductResults) ? window._latestProductResults : [])
-                                )
-                                .map(product => {
+                                    : (Array.isArray(window._latestProductResults) ? window._latestProductResults : []);
+                                // Si le produit actuel n'est pas dans la liste, l'ajouter en premier
+                                const currentProductInList = item.product_id && productList.some(p => p.product_id == item.product_id);
+                                let options = '';
+                                if (item.product_id && !currentProductInList) {
+                                    options += `<option value="${item.product_id}" selected>${escapeHtml(item.product_name || 'Produit #' + item.product_id)} - ${formatCurrency(item.unit_price)}</option>`;
+                                }
+                                options += productList.map(product => {
                                     const variants = productVariantsByProductId.get(Number(product.product_id)) || [];
                                     const available = variants.length > 0 ? variants.filter(v => !v.is_sold).length : Number(product.quantity || 0);
                                     const alreadySelected = selectedProductIds.has(Number(product.product_id)) && Number(product.product_id) !== Number(item.product_id);
@@ -1397,7 +1435,9 @@ function updateInvoiceItemsDisplay() {
                                 <option value="${product.product_id}" ${product.product_id == item.product_id ? 'selected' : ''} ${disabled ? 'disabled' : ''}>
                                     ${escapeHtml(product.name)} - ${formatCurrency(product.price)}${product.wholesale_price ? ` / Gros: ${formatCurrency(product.wholesale_price)}` : ''} ${isOutOfStock ? '(épuisé)' : `(Stock: ${available})`} ${alreadySelected ? '(déjà sélectionné)' : ''}
                                 </option>`;
-                                }).join('')}
+                                }).join('');
+                                return options;
+                            })()}
                         </select>
                     </div>
                     <div class="product-suggestions list-group d-none" style="position:absolute; left:0; right:0; top:100%; z-index:3000; max-height:240px; overflow:auto; width:100%; background:#fff; border:1px solid rgba(0,0,0,.125); border-radius:.25rem; box-shadow:0 2px 6px rgba(0,0,0,.15);"></div>
@@ -1777,6 +1817,14 @@ async function saveInvoice(status) {
             tax_amount: parseFloat(document.getElementById('invoiceForm').dataset.taxAmount || '0'),
             total: parseFloat(document.getElementById('invoiceForm').dataset.total || '0'),
             quotation_id: (function(){ try { const v = document.getElementById('invoiceForm').dataset.quotationId; return v ? Number(v) : null; } catch(e) { return null; } })(),
+            // Champs de garantie
+            has_warranty: document.getElementById('hasWarrantySwitch')?.checked || false,
+            warranty_duration: (function() {
+                const hasWarranty = document.getElementById('hasWarrantySwitch')?.checked;
+                if (!hasWarranty) return null;
+                const selectedDuration = document.querySelector('input[name="warrantyDuration"]:checked');
+                return selectedDuration ? parseInt(selectedDuration.value) : 12;
+            })(),
             items: invoiceItems
                 .flatMap(item => {
                     // Ligne de section (aucun montant, juste un titre visuel)
@@ -2298,6 +2346,15 @@ async function deletePaymentFromInvoiceDetail(paymentId, invoiceId) {
 }
 
 async function preloadInvoiceIntoForm(invoiceId) {
+    // Charger les produits si pas encore chargés
+    if (!products || products.length === 0) {
+        try {
+            const { data } = await axios.get('/api/products');
+            products = data.items || data || [];
+        } catch(e) {
+            console.warn('Erreur chargement produits:', e);
+        }
+    }
     const { data: inv } = await axios.get(`/api/invoices/${invoiceId}`);
     openInvoiceModal();
     document.getElementById('invoiceModalTitle').innerHTML = '<i class="bi bi-pencil me-2"></i>Modifier la Facture';
@@ -2518,6 +2575,52 @@ async function preloadInvoiceIntoForm(invoiceId) {
         const pmSel = document.getElementById('invoicePaymentMethod');
         if (pmSel && inv.payment_method) pmSel.value = inv.payment_method;
     } catch (e) {}
+    
+    // Charger les données de garantie
+    const warrantySwitch = document.getElementById('hasWarrantySwitch');
+    const warrantyOptions = document.getElementById('warrantyOptions');
+    const warrantyInfo = document.getElementById('warrantyInfo');
+    
+    if (warrantySwitch) {
+        warrantySwitch.checked = !!inv.has_warranty;
+        
+        // Afficher/masquer les options de garantie
+        if (warrantyOptions) {
+            warrantyOptions.style.display = inv.has_warranty ? 'block' : 'none';
+        }
+        if (warrantyInfo) {
+            warrantyInfo.style.display = inv.has_warranty ? 'block' : 'none';
+        }
+        
+        // Sélectionner la durée de garantie appropriée
+        if (inv.has_warranty && inv.warranty_duration) {
+            const durationRadio = document.querySelector(`input[name="warrantyDuration"][value="${inv.warranty_duration}"]`);
+            if (durationRadio) {
+                durationRadio.checked = true;
+            }
+        }
+        
+        // Afficher les dates de garantie si disponibles
+        if (inv.has_warranty && warrantyInfo) {
+            let warrantyInfoText = '';
+            if (inv.warranty_start_date) {
+                warrantyInfoText += `<strong>Début:</strong> ${formatDate(inv.warranty_start_date)} `;
+            }
+            if (inv.warranty_end_date) {
+                warrantyInfoText += `<strong>Fin:</strong> ${formatDate(inv.warranty_end_date)}`;
+            }
+            if (warrantyInfoText) {
+                const warrantyDatesDiv = warrantyInfo.querySelector('.warranty-dates') || 
+                    (() => {
+                        const div = document.createElement('div');
+                        div.className = 'warranty-dates small text-muted mt-2';
+                        warrantyInfo.appendChild(div);
+                        return div;
+                    })();
+                warrantyDatesDiv.innerHTML = warrantyInfoText;
+            }
+        }
+    }
 }
 
 async function duplicateInvoice(invoiceId) {

@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+
+{% block title %}Gestion des Maintenances - GEEK TECHNOLOGIE{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="h3 mb-0">
+                <i class="bi bi-tools me-2"></i>Gestion des Maintenances
+            </h1>
+            <button class="btn btn-primary" onclick="openMaintenanceModal()">
+                <i class="bi bi-plus-circle me-2"></i>Nouvelle Maintenance
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Statistiques -->
+<div class="row mb-4">
+    <div class="col-md-2">
+        <div class="card border-left-info shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">Reçues</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="statReceived">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-inbox fs-2 text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card border-left-warning shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">En cours</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="statInProgress">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-gear fs-2 text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card border-left-success shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">Prêtes</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="statReady">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-check-circle fs-2 text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card border-left-danger shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-danger text-uppercase mb-1">En retard</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="statOverdue">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-exclamation-triangle fs-2 text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Récupérées</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="statPickedUp">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-box-arrow-up-right fs-2 text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-2">
+        <div class="card border-left-secondary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-secondary text-uppercase mb-1">Urgentes</div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800" id="statUrgent">0</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="bi bi-lightning fs-2 text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filtres -->
+<div class="card mb-4">
+    <div class="card-body">
+        <div class="row g-3">
+            <div class="col-md-4">
+                <div class="input-group">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="searchInput" placeholder="Rechercher (client, n° fiche, appareil...)">
+                </div>
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" id="statusFilter">
+                    <option value="">Tous les statuts</option>
+                    <option value="received">Reçue</option>
+                    <option value="in_progress">En cours</option>
+                    <option value="completed">Terminée</option>
+                    <option value="ready">Prête</option>
+                    <option value="picked_up">Récupérée</option>
+                    <option value="abandoned">Abandonnée</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" id="priorityFilter">
+                    <option value="">Toutes priorités</option>
+                    <option value="low">Basse</option>
+                    <option value="normal">Normale</option>
+                    <option value="high">Haute</option>
+                    <option value="urgent">Urgente</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <div class="form-check form-switch mt-2">
+                    <input class="form-check-input" type="checkbox" id="overdueFilter">
+                    <label class="form-check-label" for="overdueFilter">En retard uniquement</label>
+                </div>
+            </div>
+            <div class="col-md-2 text-end">
+                <button class="btn btn-outline-secondary" onclick="resetFilters()">
+                    <i class="bi bi-x-circle me-1"></i>Réinitialiser
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Liste des maintenances -->
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>N° Fiche</th>
+                        <th>Client</th>
+                        <th>Appareil</th>
+                        <th>Problème</th>
+                        <th>Réception</th>
+                        <th>Limite récup.</th>
+                        <th>Statut</th>
+                        <th>Priorité</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="maintenancesTableBody">
+                    <tr>
+                        <td colspan="9" class="text-center text-muted py-4">
+                            <i class="bi bi-hourglass-split me-2"></i>Chargement...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <!-- Pagination -->
+        <nav aria-label="Pagination" class="mt-3">
+            <ul class="pagination justify-content-center" id="pagination"></ul>
+        </nav>
+    </div>
+</div>
+
+<!-- Modal Création/Modification -->
+<div class="modal fade" id="maintenanceModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title" id="maintenanceModalTitle">
+                    <i class="bi bi-plus-circle me-2"></i>Nouvelle Maintenance
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="maintenanceForm">
+                    <input type="hidden" id="maintenanceId">
+                    
+                    <!-- Client -->
+                    <div class="card mb-3" style="overflow: visible;">
+                        <div class="card-header"><i class="bi bi-person me-2"></i>Informations Client</div>
+                        <div class="card-body" style="overflow: visible;">
+                            <div class="row g-3">
+                                <div class="col-md-6" style="position: relative; z-index: 100;">
+                                    <label class="form-label">Rechercher un client</label>
+                                    <div class="position-relative">
+                                        <input type="text" class="form-control" id="clientSearchInput" 
+                                               placeholder="Tapez pour rechercher un client..." 
+                                               autocomplete="off">
+                                        <input type="hidden" id="clientSelect" value="">
+                                        <div id="clientSearchResults" class="shadow bg-white" style="max-height: 420px; overflow-y: auto; position: fixed; z-index: 2000; display: none; border: 1px solid #dee2e6; border-radius: 0.375rem;"></div>
+                                    </div>
+                                    <small class="text-muted">Laissez vide pour créer un nouveau client</small>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Nom du client *</label>
+                                    <input type="text" class="form-control" id="clientName" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Téléphone</label>
+                                    <input type="text" class="form-control" id="clientPhone">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Email</label>
+                                    <input type="email" class="form-control" id="clientEmail">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Appareil -->
+                    <div class="card mb-3">
+                        <div class="card-header"><i class="bi bi-laptop me-2"></i>Informations Appareil</div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Type d'appareil *</label>
+                                    <select class="form-select" id="deviceType" required>
+                                        <option value="">Sélectionner...</option>
+                                        <option value="Ordinateur portable">Ordinateur portable</option>
+                                        <option value="PC fixe">PC fixe</option>
+                                        <option value="Smartphone">Smartphone</option>
+                                        <option value="Tablette">Tablette</option>
+                                        <option value="Imprimante">Imprimante</option>
+                                        <option value="Écran">Écran</option>
+                                        <option value="Console de jeux">Console de jeux</option>
+                                        <option value="Autre">Autre</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Marque</label>
+                                    <input type="text" class="form-control" id="deviceBrand" placeholder="Ex: HP, Dell, Apple...">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Modèle</label>
+                                    <input type="text" class="form-control" id="deviceModel">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">N° de série</label>
+                                    <input type="text" class="form-control" id="deviceSerial">
+                                </div>
+                                <div class="col-md-8">
+                                    <label class="form-label">Description de l'appareil</label>
+                                    <input type="text" class="form-control" id="deviceDescription" placeholder="Ex: Couleur noire, 15 pouces...">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Accessoires laissés</label>
+                                    <textarea class="form-control" id="deviceAccessories" rows="2" placeholder="Ex: Chargeur, souris, sacoche..."></textarea>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">État à la réception</label>
+                                    <textarea class="form-control" id="deviceCondition" rows="2" placeholder="Ex: Rayures sur le capot, écran fissuré..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Problème et diagnostic -->
+                    <div class="card mb-3">
+                        <div class="card-header"><i class="bi bi-bug me-2"></i>Problème et Diagnostic</div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-12">
+                                    <label class="form-label">Description du problème *</label>
+                                    <textarea class="form-control" id="problemDescription" rows="3" required placeholder="Décrivez le problème signalé par le client..."></textarea>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Diagnostic (technicien)</label>
+                                    <textarea class="form-control" id="diagnosis" rows="2" placeholder="Diagnostic technique..."></textarea>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label">Travaux effectués</label>
+                                    <textarea class="form-control" id="workDone" rows="2" placeholder="Travaux réalisés..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Dates et statut -->
+                    <div class="card mb-3">
+                        <div class="card-header"><i class="bi bi-calendar me-2"></i>Dates et Statut</div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-3">
+                                    <label class="form-label">Date de réception</label>
+                                    <input type="datetime-local" class="form-control" id="receptionDate">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Fin estimée</label>
+                                    <input type="date" class="form-control" id="estimatedCompletionDate">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Limite récupération</label>
+                                    <input type="date" class="form-control" id="pickupDeadline">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Garantie (jours)</label>
+                                    <input type="number" class="form-control" id="warrantyDays" value="30" min="0">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Statut</label>
+                                    <select class="form-select" id="status">
+                                        <option value="received">Reçue</option>
+                                        <option value="in_progress">En cours</option>
+                                        <option value="completed">Terminée</option>
+                                        <option value="ready">Prête à récupérer</option>
+                                        <option value="picked_up">Récupérée</option>
+                                        <option value="abandoned">Abandonnée</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">Priorité</label>
+                                    <select class="form-select" id="priority">
+                                        <option value="low">Basse</option>
+                                        <option value="normal" selected>Normale</option>
+                                        <option value="high">Haute</option>
+                                        <option value="urgent">Urgente</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Technicien</label>
+                                    <select class="form-select" id="technicianId">
+                                        <option value="">Non assigné</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Coûts -->
+                    <div class="card mb-3">
+                        <div class="card-header"><i class="bi bi-currency-exchange me-2"></i>Coûts</div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">Coût estimé (FCFA)</label>
+                                    <input type="number" class="form-control" id="estimatedCost" min="0">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Coût final (FCFA)</label>
+                                    <input type="number" class="form-control" id="finalCost" min="0">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">Avance payée (FCFA)</label>
+                                    <input type="number" class="form-control" id="advancePaid" value="0" min="0">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Notes -->
+                    <div class="card mb-3">
+                        <div class="card-header"><i class="bi bi-sticky me-2"></i>Notes</div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Notes (visibles sur la fiche)</label>
+                                    <textarea class="form-control" id="notes" rows="2"></textarea>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Notes internes (non imprimées)</label>
+                                    <textarea class="form-control" id="internalNotes" rows="2"></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-primary" onclick="saveMaintenance()">
+                    <i class="bi bi-check-circle me-2"></i>Enregistrer
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Détail -->
+<div class="modal fade" id="maintenanceDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title" id="maintenanceDetailTitle">
+                    <i class="bi bi-info-circle me-2"></i>Détail Maintenance
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="maintenanceDetailContent">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                <button type="button" class="btn btn-warning" id="btnSendReminder" onclick="sendReminder()">
+                    <i class="bi bi-whatsapp me-2"></i>Envoyer rappel
+                </button>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-info" onclick="printMaintenanceSheet()">
+                        <i class="bi bi-printer me-2"></i>Imprimer
+                    </button>
+                    <button type="button" class="btn btn-info dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+                        <span class="visually-hidden">Toggle Dropdown</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><button class="dropdown-item" type="button" onclick="printMaintenanceSheet()">Fiche technicien</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="printMaintenanceClientReceipt()">Reçu client (dépôt)</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="printMaintenanceLabel()">Étiquette machine</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="printMaintenanceTicket()">Ticket client (numéro)</button></li>
+                    </ul>
+                </div>
+                <button type="button" class="btn btn-primary" id="btnEditMaintenance">
+                    <i class="bi bi-pencil me-2"></i>Modifier
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="/static/js/maintenances.js"></script>
+{% endblock %}

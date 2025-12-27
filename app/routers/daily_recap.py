@@ -36,7 +36,10 @@ async def get_daily_recap_stats(
             try:
                 recap_date = datetime.strptime(target_date, "%Y-%m-%d").date()
             except ValueError:
-                recap_date = date.today()
+                try:
+                    recap_date = datetime.strptime(target_date, "%d/%m/%Y").date()
+                except ValueError:
+                    recap_date = date.today()
         else:
             recap_date = date.today()
         
@@ -48,7 +51,7 @@ async def get_daily_recap_stats(
                 joinedload(Invoice.client),
                 joinedload(Invoice.payments)
             ).filter(
-                func.date(Invoice.created_at) == recap_date
+                func.date(Invoice.date) == recap_date
             ).all()
         except Exception as e:
             logging.error(f"Erreur lors du chargement des factures: {e}")
@@ -71,7 +74,7 @@ async def get_daily_recap_stats(
             quotations_created = db.query(Quotation).options(
                 joinedload(Quotation.client)
             ).filter(
-                func.date(Quotation.created_at) == recap_date
+                func.date(Quotation.date) == recap_date
             ).all()
         except Exception as e:
             logging.error(f"Erreur lors du chargement des devis créés: {e}")
@@ -82,7 +85,7 @@ async def get_daily_recap_stats(
             quotations_accepted = db.query(Quotation).options(
                 joinedload(Quotation.client)
             ).filter(
-                func.date(Quotation.created_at) == recap_date,
+                func.date(Quotation.date) == recap_date,
                 Quotation.status == "accepté"
             ).all()
         except Exception as e:
@@ -145,6 +148,49 @@ async def get_daily_recap_stats(
             daily_purchases = []
 
         total_daily_purchases = sum(float(p.amount or 0) for p in daily_purchases)
+        
+        # === STATISTIQUES PAR UTILISATEUR ===
+        # Factures créées par l'utilisateur connecté
+        try:
+            user_invoices = [inv for inv in invoices_created if inv.created_by == current_user.user_id]
+            user_invoices_total = sum(float(inv.total or 0) for inv in user_invoices)
+        except Exception as e:
+            logging.error(f"Erreur calcul factures utilisateur: {e}")
+            user_invoices = []
+            user_invoices_total = 0
+        
+        # Devis créés par l'utilisateur connecté
+        try:
+            user_quotations = [q for q in quotations_created if q.created_by == current_user.user_id]
+            user_quotations_total = sum(float(q.total or 0) for q in user_quotations)
+        except Exception as e:
+            logging.error(f"Erreur calcul devis utilisateur: {e}")
+            user_quotations = []
+            user_quotations_total = 0
+        
+        # Achats quotidiens créés par l'utilisateur connecté
+        try:
+            user_purchases = [dp for dp in daily_purchases if dp.created_by == current_user.user_id]
+            user_purchases_total = sum(float(dp.amount or 0) for dp in user_purchases)
+        except Exception as e:
+            logging.error(f"Erreur calcul achats utilisateur: {e}")
+            user_purchases = []
+            user_purchases_total = 0
+        
+        # Paiements reçus par l'utilisateur (via les factures qu'il a créées)
+        try:
+            # IMPORTANT: On veut les paiements du jour sur les factures de l'utilisateur,
+            # même si ces factures ont été créées un autre jour.
+            user_payments = [
+                p for p in payments_received
+                if p.invoice and getattr(p.invoice, 'created_by', None) == current_user.user_id
+            ]
+            user_payments_total = sum(float(p.amount or 0) for p in user_payments)
+        except Exception as e:
+            logging.error(f"Erreur calcul paiements utilisateur: {e}")
+            user_payments = []
+            user_payments_total = 0
+        
         # Répartition par catégorie
         try:
             by_cat_rows = (
@@ -377,7 +423,66 @@ async def get_daily_recap_stats(
             # Dettes (clients et fournisseurs)
             "debts": debts_stats or {},
             # Stats avancées / Dashboard global
-            "dashboard": dashboard_stats or {}
+            "dashboard": dashboard_stats or {},
+            
+            # Statistiques de l'utilisateur connecté
+            "user_stats": {
+                "user_id": current_user.user_id,
+                "username": current_user.username,
+                "invoices": {
+                    "count": len(user_invoices),
+                    "total": user_invoices_total,
+                    "list": [
+                        {
+                            "id": inv.invoice_id,
+                            "number": inv.invoice_number,
+                            "client_name": inv.client.name if inv.client else "Client inconnu",
+                            "total": float(inv.total or 0),
+                            "status": (
+                                "payée" if sum(float(p.amount or 0) for p in (inv.payments or [])) >= float(inv.total or 0) else
+                                ("partiellement payée" if sum(float(p.amount or 0) for p in (inv.payments or [])) > 0 else "en attente")
+                            ),
+                            "time": inv.created_at.strftime("%H:%M") if inv.created_at else ""
+                        }
+                        for inv in user_invoices
+                    ]
+                },
+                "quotations": {
+                    "count": len(user_quotations),
+                    "total": user_quotations_total,
+                    "list": [
+                        {
+                            "id": q.quotation_id,
+                            "number": q.quotation_number,
+                            "client_name": q.client.name if q.client else "Client inconnu",
+                            "total": float(q.total or 0),
+                            "status": q.status,
+                            "time": q.created_at.strftime("%H:%M") if q.created_at else ""
+                        }
+                        for q in user_quotations
+                    ]
+                },
+                "payments": {
+                    "count": len(user_payments),
+                    "total": user_payments_total
+                },
+                "daily_purchases": {
+                    "count": len(user_purchases),
+                    "total": user_purchases_total,
+                    "list": [
+                        {
+                            "id": dp.id,
+                            "time": (dp.created_at.strftime("%H:%M") if getattr(dp, 'created_at', None) else ""),
+                            "category": dp.category,
+                            "description": dp.description,
+                            "amount": float(dp.amount or 0),
+                            "method": dp.payment_method,
+                        }
+                        for dp in user_purchases
+                    ]
+                },
+                "net_balance": user_payments_total - user_purchases_total
+            }
         }
         
     except Exception as e:

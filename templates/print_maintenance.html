@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fiche de Maintenance - {{ maintenance.maintenance_number }}</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            font-size: 11pt;
+            line-height: 1.5;
+            color: #333;
+            background: #f5f5f5;
+        }
+        
+        .page-controls {
+            position: fixed;
+            top: 20px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            z-index: 1000;
+        }
+        
+        .page-controls button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-print { background: #2c3e50; color: white; }
+        .btn-return { background: #7f8c8d; color: white; }
+        
+        @media print {
+            @page { size: A4; margin: 10mm; }
+            .page-controls { display: none !important; }
+            body { background: white; font-size: 10pt; line-height: 1.35; }
+            .sheet { box-shadow: none !important; margin: 0 !important; padding: 0 !important; width: auto !important; min-height: auto !important; }
+        }
+        
+        .sheet {
+            width: 210mm;
+            min-height: 297mm;
+            margin: 80px auto 40px;
+            padding: 20mm;
+            background: white;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+        }
+
+        @media print {
+            .sheet { padding: 0 !important; }
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 3px solid #2c3e50;
+            padding-bottom: 10px;
+            margin-bottom: 12px;
+        }
+        
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        .logo {
+            max-width: 80px;
+            max-height: 80px;
+            object-fit: contain;
+        }
+        
+        .company-info h1 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2c3e50;
+            margin: 0;
+        }
+        
+        .company-info p {
+            font-size: 10px;
+            color: #7f8c8d;
+            margin: 2px 0;
+        }
+        
+        .doc-info {
+            text-align: right;
+        }
+        
+        .doc-title {
+            font-size: 20px;
+            font-weight: 300;
+            color: #2c3e50;
+            margin: 0;
+        }
+        
+        .doc-number {
+            font-size: 16px;
+            font-weight: 700;
+            color: #3498db;
+            margin: 5px 0;
+        }
+        
+        .doc-date {
+            font-size: 11px;
+            color: #7f8c8d;
+        }
+        
+        .section {
+            margin-bottom: 12px;
+        }
+        
+        .section-title {
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 4px;
+            margin-bottom: 8px;
+            display: inline-block;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        .info-box {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            border-left: 4px solid #3498db;
+        }
+        
+        .info-box h4 {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+        }
+        
+        .info-box p {
+            font-size: 12px;
+            color: #333;
+            margin: 3px 0;
+        }
+        
+        .info-box strong {
+            font-weight: 600;
+        }
+        
+        .device-info {
+            background: #e8f4f8;
+            border-left-color: #2980b9;
+        }
+        
+        .problem-box {
+            background: #fff3cd;
+            border-left-color: #f39c12;
+            padding: 10px;
+        }
+        
+        .problem-box h4 {
+            color: #856404;
+        }
+        
+        .diagnosis-box {
+            background: #d4edda;
+            border-left-color: #27ae60;
+            padding: 10px;
+        }
+        
+        .diagnosis-box h4 {
+            color: #155724;
+        }
+        
+        .dates-costs {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .date-item, .cost-item {
+            text-align: center;
+            padding: 8px;
+            background: #f8f9fa;
+            border-radius: 6px;
+        }
+        
+        .date-item label, .cost-item label {
+            display: block;
+            font-size: 9px;
+            text-transform: uppercase;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+        }
+        
+        .date-item span, .cost-item span {
+            font-size: 12px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        
+        .warning-box {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 6px;
+            padding: 10px;
+            margin-top: 12px;
+        }
+        
+        .warning-box h4 {
+            color: #721c24;
+            font-size: 12px;
+            margin-bottom: 6px;
+        }
+        
+        .warning-box p {
+            font-size: 9px;
+            color: #721c24;
+            margin: 3px 0;
+        }
+        
+        .signatures {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            margin-top: 18px;
+            padding-top: 10px;
+            border-top: 1px solid #ddd;
+        }
+        
+        .signature-box {
+            text-align: center;
+        }
+        
+        .signature-box label {
+            display: block;
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #7f8c8d;
+            margin-bottom: 26px;
+        }
+        
+        .signature-line {
+            border-top: 1px solid #333;
+            width: 80%;
+            margin: 0 auto;
+        }
+        
+        .footer {
+            margin-top: 14px;
+            padding-top: 8px;
+            border-top: 1px solid #ddd;
+            text-align: center;
+            font-size: 9px;
+            color: #7f8c8d;
+        }
+        
+        .accessories-list {
+            background: #e9ecef;
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        
+        .accessories-list h4 {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #495057;
+            margin-bottom: 5px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .status-received { background: #17a2b8; color: white; }
+        .status-in_progress { background: #ffc107; color: #333; }
+        .status-completed { background: #007bff; color: white; }
+        .status-ready { background: #28a745; color: white; }
+        .status-picked_up { background: #6c757d; color: white; }
+        .status-abandoned { background: #343a40; color: white; }
+        
+        .priority-urgent { color: #dc3545; font-weight: 700; }
+        .priority-high { color: #fd7e14; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <div class="page-controls">
+        <button class="btn-print" onclick="window.print()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M2 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3h-2v-2H4v2H2V7z"/>
+                <path d="M11 2H5v3h6V2z"/>
+                <path d="M4 12h8v2H4z"/>
+            </svg>
+            Imprimer
+        </button>
+        <button class="btn-return" onclick="window.close()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M15 8a.75.75 0 0 1-.75.75H4.56l3.22 3.22a.75.75 0 0 1-1.06 1.06L2.72 8.81a1 1 0 0 1 0-1.62l4-4a.75.75 0 0 1 1.06 1.06L4.56 7.25h9.69A.75.75 0 0 1 15 8z"/>
+            </svg>
+            Fermer
+        </button>
+    </div>
+
+    <div class="sheet">
+        <div class="header">
+            <div class="logo-section">
+                {% if settings.logo %}
+                <img src="{{ settings.logo }}" alt="Logo" class="logo">
+                {% endif %}
+                <div class="company-info">
+                    <h1>{{ settings.company_name or 'Geek Technologie' }}</h1>
+                    <p>{{ settings.address or '' }}{% if settings.city %}, {{ settings.city }}{% endif %}</p>
+                    {% if settings.phone %}<p>Tél: {{ settings.phone }}{% if settings.phone2 %} / {{ settings.phone2 }}{% endif %}</p>{% endif %}
+                    {% if settings.email %}<p>{{ settings.email }}</p>{% endif %}
+                </div>
+            </div>
+            <div class="doc-info">
+                <h2 class="doc-title">FICHE DE MAINTENANCE</h2>
+                <p class="doc-number">{{ maintenance.maintenance_number }}</p>
+                <p class="doc-date">Date: {{ maintenance.reception_date.strftime('%d/%m/%Y %H:%M') if maintenance.reception_date else '-' }}</p>
+                <span class="status-badge status-{{ maintenance.status }}">
+                    {% if maintenance.status == 'received' %}Reçue
+                    {% elif maintenance.status == 'in_progress' %}En cours
+                    {% elif maintenance.status == 'completed' %}Terminée
+                    {% elif maintenance.status == 'ready' %}Prête
+                    {% elif maintenance.status == 'picked_up' %}Récupérée
+                    {% elif maintenance.status == 'abandoned' %}Abandonnée
+                    {% else %}{{ maintenance.status }}{% endif %}
+                </span>
+                {% if maintenance.priority == 'urgent' %}
+                <span class="priority-urgent">⚡ URGENT</span>
+                {% elif maintenance.priority == 'high' %}
+                <span class="priority-high">↑ Priorité haute</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="info-grid">
+            <div class="section">
+                <div class="section-title">Informations Client</div>
+                <div class="info-box">
+                    <p><strong>{{ maintenance.client_name }}</strong></p>
+                    {% if maintenance.client_phone %}<p>📞 {{ maintenance.client_phone }}</p>{% endif %}
+                    {% if maintenance.client_email %}<p>✉️ {{ maintenance.client_email }}</p>{% endif %}
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">Appareil</div>
+                <div class="info-box device-info">
+                    <p><strong>{{ maintenance.device_type }}</strong></p>
+                    {% if maintenance.device_brand or maintenance.device_model %}
+                    <p>{{ maintenance.device_brand or '' }} {{ maintenance.device_model or '' }}</p>
+                    {% endif %}
+                    {% if maintenance.device_serial %}
+                    <p>S/N: {{ maintenance.device_serial }}</p>
+                    {% endif %}
+                    {% if maintenance.device_description %}
+                    <p><small>{{ maintenance.device_description }}</small></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        {% if maintenance.device_accessories %}
+        <div class="accessories-list">
+            <h4>Accessoires laissés</h4>
+            <p>{{ maintenance.device_accessories }}</p>
+        </div>
+        {% endif %}
+
+        {% if maintenance.device_condition %}
+        <div class="accessories-list" style="background: #fff3cd;">
+            <h4>État à la réception</h4>
+            <p>{{ maintenance.device_condition }}</p>
+        </div>
+        {% endif %}
+
+        <div class="section" style="margin-top: 20px;">
+            <div class="section-title">Problème signalé</div>
+            <div class="info-box problem-box">
+                <p>{{ maintenance.problem_description }}</p>
+            </div>
+        </div>
+
+        {% if maintenance.diagnosis %}
+        <div class="section">
+            <div class="section-title">Diagnostic</div>
+            <div class="info-box diagnosis-box">
+                <p>{{ maintenance.diagnosis }}</p>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if maintenance.work_done %}
+        <div class="section">
+            <div class="section-title">Travaux effectués</div>
+            <div class="info-box diagnosis-box">
+                <p>{{ maintenance.work_done }}</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="dates-costs">
+            <div class="date-item">
+                <label>Date de réception</label>
+                <span>{{ maintenance.reception_date.strftime('%d/%m/%Y') if maintenance.reception_date else '-' }}</span>
+            </div>
+            <div class="date-item">
+                <label>Fin estimée</label>
+                <span>{{ maintenance.estimated_completion_date.strftime('%d/%m/%Y') if maintenance.estimated_completion_date else '-' }}</span>
+            </div>
+            <div class="date-item">
+                <label>Limite récupération</label>
+                <span>{{ maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else '-' }}</span>
+            </div>
+            <div class="date-item">
+                <label>Garantie réparation</label>
+                <span>{{ maintenance.warranty_days or 30 }} jours</span>
+            </div>
+        </div>
+
+        <div class="dates-costs" style="margin-top: 10px;">
+            <div class="cost-item">
+                <label>Coût estimé</label>
+                <span>{{ '{:,.0f}'.format(maintenance.estimated_cost or 0).replace(',', ' ') }} FCFA</span>
+            </div>
+            <div class="cost-item">
+                <label>Coût final</label>
+                <span>{{ '{:,.0f}'.format(maintenance.final_cost or 0).replace(',', ' ') }} FCFA</span>
+            </div>
+            <div class="cost-item">
+                <label>Avance payée</label>
+                <span>{{ '{:,.0f}'.format(maintenance.advance_paid or 0).replace(',', ' ') }} FCFA</span>
+            </div>
+            <div class="cost-item">
+                <label>Reste à payer</label>
+                <span>{{ '{:,.0f}'.format((maintenance.final_cost or maintenance.estimated_cost or 0) - (maintenance.advance_paid or 0)).replace(',', ' ') }} FCFA</span>
+            </div>
+        </div>
+
+        {% if maintenance.notes %}
+        <div class="section" style="margin-top: 20px;">
+            <div class="section-title">Notes</div>
+            <div class="info-box">
+                <p>{{ maintenance.notes }}</p>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="warning-box">
+            <h4>⚠️ CONDITIONS DE DÉPÔT ET RÉCUPÉRATION</h4>
+            <p>1. L'appareil doit être récupéré avant la date limite indiquée ci-dessus.</p>
+            <p>2. Passé ce délai, {{ settings.company_name or 'Geek Technologie' }} décline toute responsabilité concernant l'appareil.</p>
+            <p>3. Les appareils non récupérés après 60 jours pourront être considérés comme abandonnés.</p>
+            <p>4. La garantie sur la réparation est de {{ maintenance.warranty_days or 30 }} jours à compter de la récupération.</p>
+            <p>5. La garantie ne couvre pas les dommages causés par une mauvaise utilisation ou des facteurs externes.</p>
+        </div>
+
+        <div class="signatures">
+            <div class="signature-box">
+                <label>Signature du client (dépôt)</label>
+                <div class="signature-line"></div>
+            </div>
+            <div class="signature-box">
+                <label>Signature du technicien</label>
+                <div class="signature-line"></div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>{{ settings.company_name or 'Geek Technologie' }} - {{ settings.address or '' }}{% if settings.city %}, {{ settings.city }}{% endif %}</p>
+            {% if settings.phone %}<p>Tél: {{ settings.phone }}{% if settings.phone2 %} / {{ settings.phone2 }}{% endif %}</p>{% endif %}
+            {% if settings.footer_text %}<p>{{ settings.footer_text }}</p>{% endif %}
+        </div>
+    </div>
+</body>
+</html>

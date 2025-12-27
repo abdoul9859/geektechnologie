@@ -385,7 +385,8 @@ async def create_quotation(
             total=quotation_data.total,
             notes=quotation_data.notes,
             show_item_prices=getattr(quotation_data, 'show_item_prices', True),
-            show_section_totals=getattr(quotation_data, 'show_section_totals', True)
+            show_section_totals=getattr(quotation_data, 'show_section_totals', True),
+            created_by=current_user.user_id
         )
         
         db.add(db_quotation)
@@ -835,9 +836,9 @@ async def send_quotation_email(
         if not quotation:
             raise HTTPException(status_code=404, detail="Devis non trouvé")
         
-        # Construire l'URL du PDF du devis
-        base_url = str(request.base_url).rstrip('/')
-        pdf_url = f"{base_url}/quotations/print/{data.quotation_id}"
+        # Construire l'URL HTML du devis (même URL que WhatsApp)
+        app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
+        pdf_url = f"{app_public_url}/quotations/print/{data.quotation_id}"
         
         # Appeler le webhook n8n pour envoyer par email
         webhook_url = f"{N8N_BASE_URL}/webhook/send-quotation-email"
@@ -954,3 +955,56 @@ async def duplicate_quotation(
         db.rollback()
         logging.error(f"Erreur lors de la duplication du devis: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la duplication")
+
+# Configuration n8n
+N8N_BASE_URL = os.getenv("N8N_BASE_URL", "http://n8n:5678")
+
+class SendQuotationWhatsAppRequest(BaseModel):
+    quotation_id: int
+    phone: str
+
+@router.post("/send-whatsapp")
+async def send_quotation_whatsapp(
+    request: Request,
+    data: SendQuotationWhatsAppRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Envoyer un devis par WhatsApp via n8n"""
+    try:
+        # Vérifier que le devis existe
+        quotation = db.query(Quotation).filter(Quotation.quotation_id == data.quotation_id).first()
+        if not quotation:
+            raise HTTPException(status_code=404, detail="Devis non trouvé")
+        
+        # Construire l'URL du PDF du devis (accessible depuis n8n via réseau Docker)
+        app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
+        pdf_url = f"{app_public_url}/quotations/print/{data.quotation_id}"
+        
+        # Appeler le webhook n8n pour envoyer via WhatsApp
+        webhook_url = f"{N8N_BASE_URL}/webhook/send-quotation-whatsapp"
+        
+        payload = {
+            "quotation_id": data.quotation_id,
+            "quotation_number": quotation.quotation_number,
+            "phone": data.phone,
+            "pdf_url": pdf_url,
+            "client_name": quotation.client.name if quotation.client else "Client",
+            "total": float(quotation.total or 0)
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload)
+            
+        if response.status_code == 200:
+            return {"success": True, "message": "Devis envoyé par WhatsApp"}
+        else:
+            logging.error(f"Erreur n8n WhatsApp: {response.status_code} - {response.text}")
+            return {"success": False, "message": f"Erreur n8n: {response.text}"}
+            
+    except httpx.RequestError as e:
+        logging.error(f"Erreur connexion n8n: {e}")
+        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except Exception as e:
+        logging.error(f"Erreur envoi WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

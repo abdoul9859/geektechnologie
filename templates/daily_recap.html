@@ -197,6 +197,91 @@
     </div>
 </div>
 
+<!-- Mes Statistiques (Utilisateur connecté) -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-primary">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-person-badge me-2"></i>Mes Statistiques du Jour
+                    <small class="ms-2 opacity-75" id="userStatsUsername"></small>
+                </h5>
+            </div>
+            <div class="card-body">
+                <!-- KPIs utilisateur -->
+                <div class="row mb-4">
+                    <div class="col-md-3 col-6">
+                        <div class="text-center p-3 border rounded bg-light">
+                            <div class="h4 text-primary mb-1" id="userInvoicesCount">0</div>
+                            <small class="text-muted">Factures créées</small>
+                            <div class="small text-success" id="userInvoicesTotal">0 F CFA</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-6">
+                        <div class="text-center p-3 border rounded bg-light">
+                            <div class="h4 text-warning mb-1" id="userQuotationsCount">0</div>
+                            <small class="text-muted">Devis créés</small>
+                            <div class="small text-success" id="userQuotationsTotal">0 F CFA</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-6">
+                        <div class="text-center p-3 border rounded bg-light">
+                            <div class="h4 text-success mb-1" id="userPaymentsTotal">0 F CFA</div>
+                            <small class="text-muted">Paiements encaissés</small>
+                            <div class="small text-muted" id="userPaymentsCount">0 paiements</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-6">
+                        <div class="text-center p-3 border rounded bg-light">
+                            <div class="h4 text-danger mb-1" id="userPurchasesTotal">0 F CFA</div>
+                            <small class="text-muted">Mes dépenses</small>
+                            <div class="small text-muted" id="userPurchasesCount">0 achats</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Solde net utilisateur -->
+                <div class="row">
+                    <div class="col-12">
+                        <div class="text-center p-3 border rounded" id="userNetBalanceBox">
+                            <div class="h3 mb-1" id="userNetBalance">0 F CFA</div>
+                            <small class="text-muted"><strong>Mon Solde Net</strong> (Paiements encaissés - Mes dépenses)</small>
+                        </div>
+                    </div>
+                </div>
+                <!-- Détails des factures utilisateur -->
+                <div class="row mt-4">
+                    <div class="col-md-6">
+                        <h6 class="text-primary"><i class="bi bi-receipt me-1"></i>Mes Factures</h6>
+                        <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr><th>Heure</th><th>N°</th><th>Client</th><th>Montant</th><th>Statut</th></tr>
+                                </thead>
+                                <tbody id="userInvoicesTable">
+                                    <tr><td colspan="5" class="text-center text-muted">Aucune facture</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6 class="text-warning"><i class="bi bi-file-text me-1"></i>Mes Devis</h6>
+                        <div class="table-responsive" style="max-height: 200px; overflow-y: auto;">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr><th>Heure</th><th>N°</th><th>Client</th><th>Montant</th><th>Statut</th></tr>
+                                </thead>
+                                <tbody id="userQuotationsTable">
+                                    <tr><td colspan="5" class="text-center text-muted">Aucun devis</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Achats quotidiens -->
 <div class="row mb-4">
   <div class="col-12">

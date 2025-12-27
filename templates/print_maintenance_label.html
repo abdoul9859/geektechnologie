@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Étiquette - {{ maintenance.maintenance_number }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; color: #000; background: #fff; }
+        .label {
+            width: var(--paper-width, 80mm);
+            padding: 3mm 2.5mm;
+            border: 1px solid #000;
+            border-radius: 4px;
+        }
+        .num { font-size: 20pt; font-weight: 800; letter-spacing: 0.5px; }
+        .sub { font-size: 11pt; margin-top: 3px; }
+        .muted { color: #000; font-size: 9.5pt; }
+        .sep { border-top: 1px dashed #999; margin: 6px 0; }
+        .row { display: flex; justify-content: space-between; gap: 10px; }
+
+        @media print {
+            body { margin: 0; }
+            .sep { border-top-color: #000; }
+        }
+    </style>
+</head>
+<body>
+    <div class="label">
+        <div class="num">{{ maintenance.maintenance_number }}</div>
+        <div class="muted">{{ settings.company_name or 'Geek Technologie' }}</div>
+        <div class="sep"></div>
+        <div class="sub"><strong>{{ maintenance.client_name }}</strong></div>
+        <div class="muted">{{ maintenance.device_type }}{% if maintenance.device_brand or maintenance.device_model %} - {{ maintenance.device_brand or '' }} {{ maintenance.device_model or '' }}{% endif %}</div>
+        {% if maintenance.device_serial %}<div class="muted">S/N: {{ maintenance.device_serial }}</div>{% endif %}
+        <div class="sep"></div>
+        <div class="row">
+            <div class="muted">Dépot</div>
+            <div class="muted">{{ maintenance.reception_date.strftime('%d/%m/%Y') if maintenance.reception_date else '-' }}</div>
+        </div>
+        <div class="row">
+            <div class="muted">Limite</div>
+            <div class="muted">{{ maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else '-' }}</div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                const paper = (params.get('paper') || '80').trim();
+                const w = (paper === '58' ? '58mm' : '80mm');
+                document.documentElement.style.setProperty('--paper-width', w);
+                const style = document.createElement('style');
+                style.textContent = `@media print { @page { size: ${w} auto; margin: 0; } }`;
+                document.head.appendChild(style);
+            } catch(e) {}
+        })();
+        window.addEventListener('load', () => {
+            try { window.print(); } catch(e) {}
+        });
+    </script>
+</body>
+</html>

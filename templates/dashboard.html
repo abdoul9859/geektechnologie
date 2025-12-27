@@ -226,6 +226,90 @@
     </div>
 </div>
 
+<!-- Mes Statistiques du Jour (visible pour tous les utilisateurs) -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-primary shadow">
+            <div class="card-header bg-primary text-white py-3 d-flex justify-content-between align-items-center">
+                <h6 class="m-0 font-weight-bold">
+                    <i class="bi bi-person-badge me-2"></i>Mes Statistiques
+                    <small class="ms-2 opacity-75" id="dashboardUserStatsUsername"></small>
+                </h6>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-sm btn-light" id="btnUserStatsPrev" title="Jour précédent">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
+                    <input type="date" id="userStatsDate" class="form-control form-control-sm" style="width: 150px;">
+                    <button type="button" class="btn btn-sm btn-light" id="btnUserStatsNext" title="Jour suivant">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-light" id="btnUserStatsToday" title="Aujourd'hui">
+                        <i class="bi bi-calendar-check"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- KPIs utilisateur -->
+                <div class="row mb-3">
+                    <div class="col-md-3 col-6 mb-2">
+                        <div class="text-center p-3 border rounded bg-light">
+                            <div class="h4 text-primary mb-1" id="dashboardUserInvoicesCount">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                            <small class="text-muted">Factures créées</small>
+                            <div class="small text-success" id="dashboardUserInvoicesTotal">0 F CFA</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-2">
+                        <div class="text-center p-3 border rounded bg-light">
+                            <div class="h4 text-warning mb-1" id="dashboardUserQuotationsCount">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                            <small class="text-muted">Devis créés</small>
+                            <div class="small text-success" id="dashboardUserQuotationsTotal">0 F CFA</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-2">
+                        <div class="text-center p-3 border rounded bg-light">
+                            <div class="h4 text-success mb-1" id="dashboardUserPaymentsTotal">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                            <small class="text-muted">Paiements encaissés</small>
+                            <div class="small text-muted" id="dashboardUserPaymentsCount">0 paiements</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-6 mb-2">
+                        <div class="text-center p-3 border rounded bg-light">
+                            <div class="h4 text-danger mb-1" id="dashboardUserPurchasesTotal">
+                                <div class="spinner-border spinner-border-sm" role="status"></div>
+                            </div>
+                            <small class="text-muted">Mes dépenses</small>
+                            <div class="small text-muted" id="dashboardUserPurchasesCount">0 achats</div>
+                        </div>
+                    </div>
+                </div>
+                <!-- Solde net utilisateur -->
+                <div class="row">
+                    <div class="col-12">
+                        <div class="text-center p-3 border rounded" id="dashboardUserNetBalanceBox">
+                            <div class="h3 mb-1" id="dashboardUserNetBalance">0 F CFA</div>
+                            <small class="text-muted"><strong>Mon Solde Net du Jour</strong> (Paiements encaissés - Mes dépenses)</small>
+                        </div>
+                    </div>
+                </div>
+                <!-- Lien vers le récap quotidien (admin only) -->
+                <div class="row mt-3 admin-only" style="display: none;">
+                    <div class="col-12 text-center">
+                        <a href="/daily-recap" class="btn btn-outline-primary">
+                            <i class="bi bi-calendar-check me-1"></i>Voir le récap quotidien complet
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Actions rapides -->
 <div class="row mb-4">
     <div class="col-12">
@@ -416,6 +500,7 @@ let salesTrendChart = null;
 let categoryChart = null;
 
 document.addEventListener('DOMContentLoaded', function() {
+    initUserStatsDateControls();
     loadDashboardData();
 });
 
@@ -466,7 +551,10 @@ async function loadDashboardData() {
             topContainer.innerHTML = '<span class="text-muted">Aucune donnée</span>';
         }
 
-        // 2) Charger les listes récentes en parallèle avec les nouveaux endpoints optimisés
+        // 2) Charger les statistiques utilisateur du jour
+        await loadUserDailyStats();
+
+        // 3) Charger les listes récentes en parallèle avec les nouveaux endpoints optimisés
         await Promise.all([
             loadRecentMovements(),
             loadRecentInvoices()
@@ -757,6 +845,148 @@ async function loadCategoryChart() {
         if (ctx) {
             ctx.parentElement.innerHTML = '<p class="text-danger text-center py-3">Erreur lors du chargement</p>';
         }
+    }
+}
+
+// Charger les statistiques utilisateur du jour
+async function loadUserDailyStats() {
+    try {
+        // Utiliser la date sélectionnée ou aujourd'hui par défaut
+        const dateInput = document.getElementById('userStatsDate');
+        let selectedDate = dateInput?.value;
+        if (!selectedDate) {
+            selectedDate = new Date().toISOString().split('T')[0];
+            if (dateInput) dateInput.value = selectedDate;
+        }
+        const response = await apiRequest(`/api/daily-recap/stats?target_date=${encodeURIComponent(selectedDate)}&_=${Date.now()}`);
+        const data = response.data || {};
+        const userStats = data.user_stats || {};
+        
+        // Nom d'utilisateur
+        const usernameEl = document.getElementById('dashboardUserStatsUsername');
+        if (usernameEl) usernameEl.textContent = userStats.username ? `(${userStats.username})` : '';
+        
+        // Factures
+        const userInvoicesCount = document.getElementById('dashboardUserInvoicesCount');
+        const userInvoicesTotal = document.getElementById('dashboardUserInvoicesTotal');
+        if (userInvoicesCount) userInvoicesCount.textContent = userStats.invoices?.count || 0;
+        if (userInvoicesTotal) userInvoicesTotal.textContent = formatCurrency(userStats.invoices?.total || 0);
+        
+        // Devis
+        const userQuotationsCount = document.getElementById('dashboardUserQuotationsCount');
+        const userQuotationsTotal = document.getElementById('dashboardUserQuotationsTotal');
+        if (userQuotationsCount) userQuotationsCount.textContent = userStats.quotations?.count || 0;
+        if (userQuotationsTotal) userQuotationsTotal.textContent = formatCurrency(userStats.quotations?.total || 0);
+        
+        // Paiements
+        const userPaymentsTotal = document.getElementById('dashboardUserPaymentsTotal');
+        const userPaymentsCount = document.getElementById('dashboardUserPaymentsCount');
+        if (userPaymentsTotal) userPaymentsTotal.textContent = formatCurrency(userStats.payments?.total || 0);
+        if (userPaymentsCount) userPaymentsCount.textContent = `${userStats.payments?.count || 0} paiements`;
+        
+        // Dépenses
+        const userPurchasesTotal = document.getElementById('dashboardUserPurchasesTotal');
+        const userPurchasesCount = document.getElementById('dashboardUserPurchasesCount');
+        if (userPurchasesTotal) userPurchasesTotal.textContent = formatCurrency(userStats.daily_purchases?.total || 0);
+        if (userPurchasesCount) userPurchasesCount.textContent = `${userStats.daily_purchases?.count || 0} achats`;
+        
+        // Solde net
+        const userNetBalance = document.getElementById('dashboardUserNetBalance');
+        const userNetBalanceBox = document.getElementById('dashboardUserNetBalanceBox');
+        const netBalance = userStats.net_balance || 0;
+        if (userNetBalance) userNetBalance.textContent = formatCurrency(netBalance);
+        if (userNetBalanceBox) {
+            userNetBalanceBox.classList.remove('bg-success', 'bg-danger', 'bg-light', 'text-white');
+            if (netBalance > 0) {
+                userNetBalanceBox.classList.add('bg-success', 'text-white');
+            } else if (netBalance < 0) {
+                userNetBalanceBox.classList.add('bg-danger', 'text-white');
+            } else {
+                userNetBalanceBox.classList.add('bg-light');
+            }
+        }
+    } catch (error) {
+        console.error('Erreur chargement stats utilisateur:', error);
+        // Afficher des valeurs par défaut
+        document.getElementById('dashboardUserInvoicesCount').textContent = '0';
+        document.getElementById('dashboardUserInvoicesTotal').textContent = '0 F CFA';
+        document.getElementById('dashboardUserQuotationsCount').textContent = '0';
+        document.getElementById('dashboardUserQuotationsTotal').textContent = '0 F CFA';
+        document.getElementById('dashboardUserPaymentsTotal').textContent = '0 F CFA';
+        document.getElementById('dashboardUserPaymentsCount').textContent = '0 paiements';
+        document.getElementById('dashboardUserPurchasesTotal').textContent = '0 F CFA';
+        document.getElementById('dashboardUserPurchasesCount').textContent = '0 achats';
+        document.getElementById('dashboardUserNetBalance').textContent = '0 F CFA';
+    }
+}
+
+function formatCurrency(amount) {
+    return new Intl.NumberFormat('fr-FR', {
+        style: 'currency',
+        currency: 'XOF',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+    }).format(amount || 0);
+}
+
+// Navigation de date pour les stats utilisateur
+function changeUserStatsDate(days) {
+    const dateInput = document.getElementById('userStatsDate');
+    if (!dateInput) return;
+    
+    const currentDate = dateInput.value ? new Date(dateInput.value) : new Date();
+    currentDate.setDate(currentDate.getDate() + days);
+    
+    // Ne pas dépasser aujourd'hui
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (currentDate > today) {
+        dateInput.value = today.toISOString().split('T')[0];
+    } else {
+        dateInput.value = currentDate.toISOString().split('T')[0];
+    }
+    
+    loadUserDailyStats();
+}
+
+function setUserStatsToday() {
+    const dateInput = document.getElementById('userStatsDate');
+    if (!dateInput) return;
+    dateInput.value = new Date().toISOString().split('T')[0];
+    loadUserDailyStats();
+}
+
+// Initialiser les event listeners pour la navigation de date
+function initUserStatsDateControls() {
+    const dateInput = document.getElementById('userStatsDate');
+    const btnPrev = document.getElementById('btnUserStatsPrev');
+    const btnNext = document.getElementById('btnUserStatsNext');
+    const btnToday = document.getElementById('btnUserStatsToday');
+    
+    if (dateInput) {
+        // Initialiser avec la date d'aujourd'hui
+        dateInput.value = new Date().toISOString().split('T')[0];
+        dateInput.addEventListener('change', function() {
+            loadUserDailyStats();
+        });
+    }
+    
+    if (btnPrev) {
+        btnPrev.addEventListener('click', function() {
+            changeUserStatsDate(-1);
+        });
+    }
+    
+    if (btnNext) {
+        btnNext.addEventListener('click', function() {
+            changeUserStatsDate(1);
+        });
+    }
+    
+    if (btnToday) {
+        btnToday.addEventListener('click', function() {
+            setUserStatsToday();
+        });
     }
 }
 

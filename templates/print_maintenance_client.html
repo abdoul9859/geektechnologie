@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reçu Maintenance - {{ maintenance.maintenance_number }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; background: #fff; }
+        .wrap { width: var(--paper-width, 80mm); margin: 0 auto; padding: 4mm 3mm; }
+        .center { text-align: center; }
+        .title { font-size: 14pt; font-weight: 700; margin-bottom: 6px; }
+        .muted { color: #000; font-size: 9pt; }
+        .sep { border-top: 1px dashed #999; margin: 8px 0; }
+        .row { display: flex; justify-content: space-between; gap: 10px; }
+        .k { font-weight: 700; }
+        .v { text-align: right; }
+        .block { margin-top: 6px; }
+        .small { font-size: 9pt; }
+
+        @media print {
+            body { margin: 0; }
+            .wrap { padding: 3mm 2.5mm; }
+            .sep { border-top-color: #000; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="center">
+            <div class="title">{{ settings.company_name or 'Geek Technologie' }}</div>
+            <div class="muted">
+                {% if settings.address %}{{ settings.address }}{% endif %}{% if settings.city %} - {{ settings.city }}{% endif %}
+            </div>
+            <div class="muted">
+                {% if settings.phone %}Tél: {{ settings.phone }}{% if settings.phone2 %} / {{ settings.phone2 }}{% endif %}{% endif %}
+            </div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="center" style="margin-bottom: 6px;">
+            <div class="k">RÉCÉPISSÉ DÉPÔT</div>
+            <div class="muted">N°: {{ maintenance.maintenance_number }}</div>
+            <div class="muted">Date: {{ maintenance.reception_date.strftime('%d/%m/%Y %H:%M') if maintenance.reception_date else '-' }}</div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="block">
+            <div class="k">Client</div>
+            <div class="small">{{ maintenance.client_name }}</div>
+            {% if maintenance.client_phone %}<div class="small">{{ maintenance.client_phone }}</div>{% endif %}
+        </div>
+
+        <div class="block">
+            <div class="k">Appareil</div>
+            <div class="small">{{ maintenance.device_type }}{% if maintenance.device_brand or maintenance.device_model %} - {{ maintenance.device_brand or '' }} {{ maintenance.device_model or '' }}{% endif %}</div>
+            {% if maintenance.device_serial %}<div class="small">S/N: {{ maintenance.device_serial }}</div>{% endif %}
+        </div>
+
+        <div class="block">
+            <div class="k">Problème (déclaré)</div>
+            <div class="small">{{ maintenance.problem_description }}</div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="block">
+            <div class="row"><div class="k">Avance</div><div class="v">{{ '{:,.0f}'.format(maintenance.advance_paid or 0).replace(',', ' ') }} FCFA</div></div>
+            <div class="row"><div class="k">Coût estimé</div><div class="v">{{ '{:,.0f}'.format(maintenance.estimated_cost or 0).replace(',', ' ') }} FCFA</div></div>
+            <div class="row"><div class="k">Limite récupération</div><div class="v">{{ maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else '-' }}</div></div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="block small">
+            <div class="k">À présenter lors de la récupération</div>
+            <div>Merci de conserver ce ticket. Pour le suivi, communiquez le numéro: <strong>{{ maintenance.maintenance_number }}</strong></div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="block small muted">
+            <div>Passé la date limite, la responsabilité peut être dégagée.</div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                const paper = (params.get('paper') || '80').trim();
+                const w = (paper === '58' ? '58mm' : '80mm');
+                document.documentElement.style.setProperty('--paper-width', w);
+                const style = document.createElement('style');
+                style.textContent = `@media print { @page { size: ${w} auto; margin: 0; } }`;
+                document.head.appendChild(style);
+            } catch(e) {}
+        })();
+        window.addEventListener('load', () => {
+            try { window.print(); } catch(e) {}
+        });
+    </script>
+</body>
+</html>

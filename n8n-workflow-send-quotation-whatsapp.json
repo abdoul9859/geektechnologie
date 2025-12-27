@@ -1,0 +1,101 @@
+{
+  "name": "Send Quotation WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "send-quotation-whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "send-quotation-whatsapp"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire et formater les données du webhook\nconst data = $input.first().json.body || $input.first().json;\n\nconsole.log('Données reçues:', JSON.stringify(data));\n\n// Formater le total\nconst total = Number(data.total || 0);\nconst totalFormatted = total.toLocaleString('fr-FR');\n\n// URL du devis HTML (accessible via réseau Docker)\nconst htmlUrl = `http://nitek_app:8000/quotations/print/${data.quotation_id}`;\n\n// Construire le message caption\nconst caption = `Bonjour ${data.client_name || 'Client'},\n\n📋 *DEVIS N° ${data.quotation_number}*\n💰 Montant total: ${totalFormatted} F CFA\n\nMerci pour votre confiance.\nPour toute question, n'hésitez pas à nous contacter.\n\nCordialement,\nGeekTechnologie`;\n\nreturn [{\n  json: {\n    phone: data.phone,\n    htmlUrl: htmlUrl,\n    filename: `Devis-${data.quotation_number}.pdf`,\n    caption: caption\n  }\n}];"
+      },
+      "id": "extract-data-node",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://72.62.22.52:3001/api/sendPdf",
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "send-pdf-node",
+      "name": "Send PDF WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"success\": true, \"message\": \"Devis envoyé par WhatsApp\"} }}"
+      },
+      "id": "respond-success-node",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Send PDF WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send PDF WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "geektechnologie"
+  },
+  "tags": []
+}

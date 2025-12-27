@@ -43,6 +43,19 @@ services:
       timeout: 10s
       retries: 3
 
+  whatsapp:
+    build:
+      context: ./whatsapp-service
+      dockerfile: Dockerfile
+    container_name: whatsapp_service
+    ports:
+      - "0.0.0.0:3001:3001"
+    volumes:
+      - ./whatsapp-service/whatsapp-session:/app/whatsapp-session
+    restart: unless-stopped
+    environment:
+      PORT: "3001"
+
   # PostgreSQL désactivé - conservé en commentaire pour référence
   # db:
   #   image: postgres:16

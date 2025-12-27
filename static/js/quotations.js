@@ -36,6 +36,15 @@ async function loadQuotationDetail(quotationId) {
 }
 
 async function preloadQuotationIntoForm(quotationId) {
+    // Charger les produits si pas encore chargés
+    if (!products || products.length === 0) {
+        try {
+            const { data } = await axios.get('/api/products');
+            products = data.items || data || [];
+        } catch(e) {
+            console.warn('Erreur chargement produits:', e);
+        }
+    }
     const { data: q } = await axios.get(`/api/quotations/${quotationId}`);
     openQuotationModal(true);
     document.getElementById('quotationModalTitle').innerHTML = '<i class=\"bi bi-pencil me-2\"></i>Modifier le Devis';
@@ -615,6 +624,9 @@ function displayQuotations() {
                     <button class="btn btn-sm btn-outline-secondary" onclick="printQuotation(${quotation.quotation_id})" title="Imprimer">
                         <i class="bi bi-printer"></i>
                     </button>
+                    <button class="btn btn-sm btn-outline-success" onclick="sendQuotationWhatsApp(${quotation.quotation_id})" title="Envoyer par WhatsApp">
+                        <i class="bi bi-whatsapp"></i>
+                    </button>
                     <button class="btn btn-sm btn-outline-secondary" onclick="duplicateQuotation(${quotation.quotation_id})" title="Dupliquer">
                         <i class="bi bi-copy"></i>
                     </button>
@@ -977,16 +989,26 @@ function updateQuotationItemsDisplay() {
                     <input type="text" class="form-control form-control-sm quotation-search-input" placeholder="Nom, code-barres ou n° série..." data-item-id="${item.id}" />
                     <select class="form-select" onchange="selectProduct(${item.id}, this.value)">
                     <option value="">Sélectionner un produit</option>
-                        ${products.map(product => {
-                            const variants = productVariantsByProductId.get(Number(product.product_id)) || [];
-                            const available = variants.filter(v => !v.is_sold).length;
-                            const disabled = variants.length > 0 && available === 0;
-                            const stock = productIdToStock.get(product.product_id) ?? 0;
-                            return `
-                            <option value="${product.product_id}" ${product.product_id == item.product_id ? 'selected' : ''} ${disabled ? 'disabled' : ''}>
-                                ${escapeHtml(product.name)} - ${formatCurrency(product.price)}${product.wholesale_price ? ` / Gros: ${formatCurrency(product.wholesale_price)}` : ''} ${disabled ? '(épuisé)' : `(stock: ${stock})`}
-                            </option>`;
-                        }).join('')}
+                        ${(() => {
+                            const productList = Array.isArray(products) ? products : [];
+                            // Si le produit actuel n'est pas dans la liste, l'ajouter en premier
+                            const currentProductInList = item.product_id && productList.some(p => p.product_id == item.product_id);
+                            let options = '';
+                            if (item.product_id && !currentProductInList) {
+                                options += `<option value="${item.product_id}" selected>${escapeHtml(item.product_name || 'Produit #' + item.product_id)} - ${formatCurrency(item.unit_price)}</option>`;
+                            }
+                            options += productList.map(product => {
+                                const variants = productVariantsByProductId.get(Number(product.product_id)) || [];
+                                const available = variants.filter(v => !v.is_sold).length;
+                                const disabled = variants.length > 0 && available === 0;
+                                const stock = productIdToStock.get(product.product_id) ?? 0;
+                                return `
+                                <option value="${product.product_id}" ${product.product_id == item.product_id ? 'selected' : ''} ${disabled ? 'disabled' : ''}>
+                                    ${escapeHtml(product.name)} - ${formatCurrency(product.price)}${product.wholesale_price ? ` / Gros: ${formatCurrency(product.wholesale_price)}` : ''} ${disabled ? '(épuisé)' : `(stock: ${stock})`}
+                                </option>`;
+                            }).join('');
+                            return options;
+                        })()}
                 </select>
                     <span class="input-group-text bg-light text-muted">${item.product_id ? `(stock: ${productIdToStock.get(Number(item.product_id)) ?? 0})` : ''}</span>
                 </div>
@@ -1546,5 +1568,46 @@ async function deleteQuotation(quotationId) {
     } catch (error) {
         console.error('Erreur lors de la suppression:', error);
         showError(error.response?.data?.detail || error.message || 'Erreur lors de la suppression du devis');
+    }
+}
+
+// Envoyer le devis par WhatsApp via n8n
+async function sendQuotationWhatsApp(quotationId) {
+    if (!quotationId) return;
+    try {
+        // Récupérer les infos du devis depuis l'API pour avoir le client complet
+        const { data: quotation } = await axios.get(`/api/quotations/${quotationId}`);
+        let phone = quotation.client?.phone || '';
+        
+        // Vérifier si le numéro est renseigné
+        if (!phone || phone.trim() === '') {
+            phone = prompt('Le numéro de téléphone du client n\'est pas renseigné.\nVeuillez entrer le numéro WhatsApp (ex: +221771234567):');
+            if (!phone || phone.trim() === '') {
+                showError('Numéro de téléphone requis pour l\'envoi WhatsApp');
+                return;
+            }
+        }
+        
+        // Normaliser le numéro (enlever espaces, tirets)
+        phone = phone.replace(/[\s\-\.]/g, '').trim();
+        if (!phone.startsWith('+')) {
+            phone = '+221' + phone.replace(/^0/, ''); // Défaut Sénégal
+        }
+        
+        // Appeler l'API n8n pour envoyer
+        showSuccess('Envoi en cours via WhatsApp...');
+        const response = await axios.post('/api/quotations/send-whatsapp', {
+            quotation_id: quotationId,
+            phone: phone
+        });
+        
+        if (response.data?.success) {
+            showSuccess('Devis envoyé par WhatsApp avec succès!');
+        } else {
+            showError(response.data?.message || 'Erreur lors de l\'envoi WhatsApp');
+        }
+    } catch (error) {
+        console.error('Erreur envoi WhatsApp:', error);
+        showError(error.response?.data?.detail || 'Erreur lors de l\'envoi par WhatsApp');
     }
 }

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ticket - {{ maintenance.maintenance_number }}</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; font-size: 10pt; color: #000; background: #fff; }
+        .wrap { width: var(--paper-width, 80mm); margin: 0 auto; padding: 4mm 3mm; }
+        .center { text-align: center; }
+        .num { font-size: 22pt; font-weight: 900; letter-spacing: 0.8px; margin: 6px 0; }
+        .muted { color: #000; font-size: 9pt; }
+        .sep { border-top: 1px dashed #999; margin: 8px 0; }
+        .small { font-size: 9pt; }
+
+        @media print {
+            body { margin: 0; }
+            .wrap { padding: 3mm 2.5mm; }
+            .sep { border-top-color: #000; }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="center">
+            <div style="font-weight:700;">{{ settings.company_name or 'Geek Technologie' }}</div>
+            <div class="muted">Ticket de suivi</div>
+            <div class="num">{{ maintenance.maintenance_number }}</div>
+            <div class="muted">Présentez ce numéro pour le suivi</div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="small">
+            <div><strong>Client:</strong> {{ maintenance.client_name }}</div>
+            <div><strong>Appareil:</strong> {{ maintenance.device_type }}{% if maintenance.device_brand or maintenance.device_model %} - {{ maintenance.device_brand or '' }} {{ maintenance.device_model or '' }}{% endif %}</div>
+            <div><strong>Date dépôt:</strong> {{ maintenance.reception_date.strftime('%d/%m/%Y') if maintenance.reception_date else '-' }}</div>
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="small muted">
+            <div>Gardez ce ticket. Sans numéro, le suivi peut être plus long.</div>
+        </div>
+    </div>
+
+    <script>
+        (function() {
+            try {
+                const params = new URLSearchParams(window.location.search || '');
+                const paper = (params.get('paper') || '80').trim();
+                const w = (paper === '58' ? '58mm' : '80mm');
+                document.documentElement.style.setProperty('--paper-width', w);
+                const style = document.createElement('style');
+                style.textContent = `@media print { @page { size: ${w} auto; margin: 0; } }`;
+                document.head.appendChild(style);
+            } catch(e) {}
+        })();
+        window.addEventListener('load', () => {
+            try { window.print(); } catch(e) {}
+        });
+    </script>
+</body>
+</html>

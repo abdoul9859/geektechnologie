@@ -155,6 +155,10 @@ class DailyPurchase(Base):
     # Référence/Justif optionnelle
     reference = Column(String(100))
     created_at = Column(DateTime, default=func.now())
+    created_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    
+    # Relations
+    creator = relationship("User", foreign_keys=[created_by])
 
     __table_args__ = (
         Index('ix_daily_purchases_date_category', 'date', 'category'),
@@ -440,10 +444,12 @@ class Quotation(Base):
     show_item_prices = Column(Boolean, default=True)  # Afficher prix par article
     show_section_totals = Column(Boolean, default=True)  # Afficher total par section
     created_at = Column(DateTime, default=func.now())
+    created_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
     
     # Relations
     client = relationship("Client")
     items = relationship("QuotationItem", back_populates="quotation", cascade="all, delete-orphan")
+    creator = relationship("User", foreign_keys=[created_by])
 
 class QuotationItem(Base):
     __tablename__ = "quotation_items"
@@ -488,12 +494,14 @@ class Invoice(Base):
     warranty_start_date = Column(Date)
     warranty_end_date = Column(Date)
     created_at = Column(DateTime, default=func.now())
+    created_by = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
     
     # Relations
     client = relationship("Client")
     quotation = relationship("Quotation")
     items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan")
     payments = relationship("InvoicePayment", back_populates="invoice", cascade="all, delete-orphan")
+    creator = relationship("User", foreign_keys=[created_by])
 
 class InvoiceItem(Base):
     __tablename__ = "invoice_items"
@@ -716,6 +724,79 @@ def get_db():
                 db.rollback()
             except Exception:
                 pass
+
+
+# ==================== MODÈLE MAINTENANCE ====================
+
+class Maintenance(Base):
+    __tablename__ = "maintenances"
+    
+    maintenance_id = Column(Integer, primary_key=True, index=True)
+    maintenance_number = Column(String(50), unique=True, nullable=False, index=True)  # Ex: MAINT-0001
+    
+    # Client
+    client_id = Column(Integer, ForeignKey("clients.client_id", ondelete="SET NULL"), nullable=True)
+    client_name = Column(String(100), nullable=False)
+    client_phone = Column(String(20))
+    client_email = Column(String(100))
+    
+    # Machine/Appareil
+    device_type = Column(String(100), nullable=False)  # Ordinateur portable, PC fixe, Imprimante, etc.
+    device_brand = Column(String(100))  # Marque
+    device_model = Column(String(100))  # Modèle
+    device_serial = Column(String(100))  # Numéro de série
+    device_description = Column(Text)  # Description détaillée de l'appareil
+    device_accessories = Column(Text)  # Accessoires laissés (chargeur, souris, etc.)
+    device_condition = Column(Text)  # État à la réception (rayures, dommages, etc.)
+    
+    # Problème et diagnostic
+    problem_description = Column(Text, nullable=False)  # Description du problème par le client
+    diagnosis = Column(Text)  # Diagnostic du technicien
+    work_done = Column(Text)  # Travaux effectués
+    
+    # Dates
+    reception_date = Column(DateTime, nullable=False, default=func.now())  # Date de réception
+    estimated_completion_date = Column(Date)  # Date estimée de fin
+    actual_completion_date = Column(Date)  # Date réelle de fin
+    pickup_deadline = Column(Date)  # Date limite de récupération
+    pickup_date = Column(Date)  # Date de récupération effective
+    
+    # Statut
+    status = Column(String(30), default="received")  # received, in_progress, completed, ready, picked_up, abandoned
+    priority = Column(String(20), default="normal")  # low, normal, high, urgent
+    
+    # Coûts
+    estimated_cost = Column(Numeric(12, 2))  # Coût estimé
+    final_cost = Column(Numeric(12, 2))  # Coût final
+    advance_paid = Column(Numeric(12, 2), default=0)  # Avance payée
+    
+    # Garantie et responsabilité
+    warranty_days = Column(Integer, default=30)  # Jours de garantie sur la réparation
+    liability_waived = Column(Boolean, default=False)  # Responsabilité dégagée après délai
+    liability_waived_date = Column(Date)  # Date de dégagement de responsabilité
+    
+    # Rappels
+    reminder_sent = Column(Boolean, default=False)  # Rappel envoyé
+    reminder_sent_date = Column(DateTime)  # Date d'envoi du rappel
+    
+    # Technicien
+    technician_id = Column(Integer, ForeignKey("users.user_id", ondelete="SET NULL"), nullable=True)
+    
+    # Notes
+    notes = Column(Text)
+    internal_notes = Column(Text)  # Notes internes (non visibles sur la fiche)
+    
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    # Relations
+    client = relationship("Client")
+    technician = relationship("User")
+    
+    __table_args__ = (
+        Index('ix_maintenances_status', 'status'),
+        Index('ix_maintenances_pickup_deadline', 'pickup_deadline'),
+    )
 
 
 # ==================== MODÈLES BOUTIQUE EN LIGNE ====================

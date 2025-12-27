@@ -371,6 +371,44 @@
                         </div>
                     </div>
 
+                    <!-- Garantie -->
+                    <div class="card mb-3">
+                        <div class="card-header">
+                            <h6 class="mb-0"><i class="bi bi-shield-check me-2"></i>Garantie</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="hasWarrantySwitch">
+                                        <label class="form-check-label" for="hasWarrantySwitch">
+                                            <strong>Inclure une garantie avec cette facture</strong>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6" id="warrantyOptions" style="display: none;">
+                                    <label class="form-label">Durée de la garantie</label>
+                                    <div class="btn-group w-100" role="group" aria-label="Durée garantie">
+                                        <input type="radio" class="btn-check" name="warrantyDuration" id="warranty3months" value="3">
+                                        <label class="btn btn-outline-primary" for="warranty3months">3 mois</label>
+
+                                        <input type="radio" class="btn-check" name="warrantyDuration" id="warranty6months" value="6">
+                                        <label class="btn btn-outline-primary" for="warranty6months">6 mois</label>
+                                        
+                                        <input type="radio" class="btn-check" name="warrantyDuration" id="warranty12months" value="12" checked>
+                                        <label class="btn btn-outline-primary" for="warranty12months">12 mois</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div id="warrantyInfo" class="mt-3" style="display: none;">
+                                <div class="alert alert-info py-2">
+                                    <i class="bi bi-info-circle me-2"></i>
+                                    <strong>La garantie/décharge sera automatiquement ajoutée en dernière page lors de l'impression de la facture.</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <label for="invoiceNotes" class="form-label">Notes</label>
                         <textarea class="form-control" id="invoiceNotes" rows="3" placeholder="Notes sur cette facture..."></textarea>

@@ -266,11 +266,10 @@ class DebtNotifier:
 
 
     def _send_whatsapp_n8n(self, to_phone: str, body: str, client_id: int = None) -> bool:
-        """Send WhatsApp message via n8n webhook. Returns True if successful."""
-        webhook_url = os.getenv("N8N_WEBHOOK_URL")
-        if not webhook_url:
-            print("[DebtNotifier] N8N_WEBHOOK_URL not configured")
-            return False
+        """Send WhatsApp message via n8n webhook (using WhatsApp JS service). Returns True if successful."""
+        # Utiliser le webhook n8n pour les rappels de dette
+        n8n_base = os.getenv("N8N_BASE_URL", "http://n8n:5678")
+        webhook_url = f"{n8n_base}/webhook/send-debt-reminder-whatsapp"
         
         to_norm = self._normalize_phone(to_phone)
         if not to_norm:
@@ -281,7 +280,7 @@ class DebtNotifier:
             'phone': to_norm,
             'message': body,
             'client_id': client_id,
-            'app': os.getenv('APP_NAME', 'app'),
+            'app': os.getenv('APP_NAME', 'GeekTechnologie'),
             'timestamp': datetime.now().isoformat()
         }
         
@@ -290,11 +289,7 @@ class DebtNotifier:
             req = _urlrequest.Request(webhook_url, data=data_bytes, method='POST')
             req.add_header('Content-Type', 'application/json')
             
-            webhook_token = os.getenv("N8N_WEBHOOK_TOKEN")
-            if webhook_token:
-                req.add_header('Authorization', f'Bearer {webhook_token}')
-            
-            with _urlrequest.urlopen(req, timeout=15) as resp:
+            with _urlrequest.urlopen(req, timeout=30) as resp:
                 ok = 200 <= resp.status < 300
                 if ok:
                     print(f"[DebtNotifier] WhatsApp sent via n8n to {to_norm}")

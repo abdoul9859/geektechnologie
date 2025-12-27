@@ -4,17 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Devis {{ quotation.quotation_number }}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap CSS uniquement pour l'affichage web, pas pour PDF -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" media="screen">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-        :root { --primary-color:#2c3e50; --secondary-color:#34495e; --accent-color:#3498db; --text-primary:#2c3e50; --text-secondary:#7f8c8d; --border-color:#ecf0f1; --bg-light:#f8f9fa; }
+        /* Styles inline pour compatibilité PDF - sans variables CSS */
         *{box-sizing:border-box;margin:0;padding:0}
         html,body{margin:0!important;padding:0!important;width:100%!important;min-height:100vh!important;background-color:#f5f5f5}
-        body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;line-height:1.6;font-size:11pt;color:var(--text-primary);display:flex;flex-direction:column;align-items:center;min-height:100vh}
+        body{font-family:Arial,Helvetica,sans-serif;line-height:1.6;font-size:11pt;color:#2c3e50;display:flex;flex-direction:column;align-items:center;min-height:100vh}
         .page-controls{position:fixed;top:20px;left:0;right:0;display:flex;justify-content:center;gap:10px;z-index:1000}
-        .btn-print{background-color:var(--primary-color);color:#fff;border:none}
-        .btn-return{background-color:var(--secondary-color);color:#fff;border:none}
+        .btn-print{background-color:#2c3e50;color:#fff;border:none}
+        .btn-return{background-color:#34495e;color:#fff;border:none}
         .page-container{display:flex;justify-content:center;align-items:center;padding:80px 0 0;min-height:100vh;width:100%;box-sizing:border-box}
         @media print {
             html, body { width:210mm; height:auto; margin:0 !important; padding:0 !important; overflow:visible; }
@@ -55,25 +54,25 @@
         .logo-section{display:flex;align-items:center;gap:16px}
         .logo{max-width:150px;max-height:150px;object-fit:contain}
         .company-info h1{font-size:22px;font-weight:800;margin:0;color:#111}
-        .company-info p{margin:2px 0;font-size:12px;color:var(--text-secondary)}
+        .company-info p{margin:2px 0;font-size:12px;color:#7f8c8d}
         .company-info{display:flex;flex-direction:column;justify-content:center}
         .invoice-info{text-align:right}
-        .invoice-title{font-size:28px;font-weight:300;color:var(--text-secondary);margin:0 0 6px 0}
-        .invoice-number{font-size:16px;font-weight:600;color:var(--primary-color);margin:0 0 6px 0}
-        .invoice-date{font-size:13px;color:var(--text-secondary);margin:0}
-        .billing{display:flex;padding:16px 24px;gap:24px;background:#fff;border-bottom:1px solid var(--border-color);margin:0 20px}
-        .section-title{font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-secondary);margin-bottom:8px;letter-spacing:.5px;border-bottom:2px solid var(--accent-color);padding-bottom:6px;display:inline-block}
-        .client-details p{margin:4px 0;font-size:13px;color:var(--text-primary)}
-        .info-box{background:var(--bg-light);padding:16px;border-radius:6px;border:1px solid var(--border-color)}
+        .invoice-title{font-size:28px;font-weight:300;color:#7f8c8d;margin:0 0 6px 0}
+        .invoice-number{font-size:16px;font-weight:600;color:#2c3e50;margin:0 0 6px 0}
+        .invoice-date{font-size:13px;color:#7f8c8d;margin:0}
+        .billing{display:flex;padding:16px 24px;gap:24px;background:#fff;border-bottom:1px solid #ecf0f1;margin:0 20px}
+        .section-title{font-size:11px;font-weight:700;text-transform:uppercase;color:#7f8c8d;margin-bottom:8px;letter-spacing:.5px;border-bottom:2px solid #3498db;padding-bottom:6px;display:inline-block}
+        .client-details p{margin:4px 0;font-size:13px;color:#2c3e50}
+        .info-box{background:#f8f9fa;padding:16px;border-radius:6px;border:1px solid #ecf0f1}
         .products{flex:1;display:flex;flex-direction:column;width:calc(100% - 60px);margin:16px 30px 0;background:#fff;overflow:hidden}
         .products-header{display:grid;grid-template-columns:1fr 80px 120px 120px;background:#f8f9fa;padding:12px 16px;font-size:12px;font-weight:600;color:#333;text-transform:uppercase;border:1px solid #ddd;border-bottom:2px solid #333}
         .product-row{display:grid;grid-template-columns:1fr 80px 120px 120px;padding:12px 16px;border-bottom:1px solid #eee}
-        .product-name{font-weight:500;font-size:13px;color:var(--text-primary);padding-right:12px}
+        .product-name{font-weight:500;font-size:13px;color:#2c3e50;padding-right:12px}
         .product-qty,.product-price,.product-total{text-align:right;font-size:13px}
         .product-desc{color:#777;font-size:10px;margin-top:3px;text-align:justify}
         .totals{margin:12px 24px 0;display:flex;justify-content:flex-end}
         .totals-card{min-width:320px;max-width:360px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;box-shadow:0 4px 10px rgba(0,0,0,.05);padding:14px 16px}
-        .totals-header{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-secondary);margin-bottom:8px}
+        .totals-header{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#7f8c8d;margin-bottom:8px}
         .totals-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0}
         .totals-row + .totals-row{border-top:1px dashed #e5e7eb}
         .totals-label{color:#6b7280;font-size:12px}
@@ -161,8 +160,8 @@
                 <div style="flex:1">
                     <div class="section-title">Informations</div>
                     <div class="info-box">
-                        <div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase">Validité</div>
-                        <div style="font-size:16px;font-weight:600;color:var(--primary-color);">{{ quotation.expiry_date | format_date }}</div>
+                        <div style="font-size:11px;color:#7f8c8d;text-transform:uppercase">Validité</div>
+                        <div style="font-size:16px;font-weight:600;color:#2c3e50;">{{ quotation.expiry_date | format_date }}</div>
                     </div>
                 </div>
             </div>

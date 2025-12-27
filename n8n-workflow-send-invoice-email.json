@@ -1,0 +1,162 @@
+{
+  "name": "Send Invoice Email",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "send-invoice-email",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "send-invoice-email"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les données du webhook\nconst data = $input.first().json.body || $input.first().json;\n\nconsole.log('Données facture email reçues:', JSON.stringify(data));\n\nconst invoiceNumber = data.invoice_number || 'N/A';\nconst clientName = data.client_name || 'Client';\nconst total = data.total || 0;\nconst htmlUrl = data.pdf_url || '';\nconst email = data.email || '';\n\nreturn [{\n  json: {\n    invoiceNumber,\n    clientName,\n    total,\n    htmlUrl,\n    email\n  }\n}];"
+      },
+      "id": "extract-data-node",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://72.62.22.52:3001/api/generatePdf",
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"htmlUrl\": \"{{ $json.htmlUrl }}\", \"filename\": \"Facture-{{ $json.invoiceNumber }}.pdf\"}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "generate-pdf-node",
+      "name": "Generate PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récupérer les données précédentes et le fichier PDF\nconst previousData = $('Extract Data').first().json;\nconst binaryData = $input.first().binary;\n\nconst invoiceNumber = previousData.invoiceNumber;\nconst clientName = previousData.clientName;\nconst total = previousData.total;\nconst email = previousData.email;\n\n// Formater le montant\nconst formattedTotal = new Intl.NumberFormat('fr-FR').format(total) + ' FCFA';\n\n// Construire le corps de l'email en HTML\nconst htmlBody = `\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; padding: 20px; }\n    .header { background: #2c3e50; color: white; padding: 20px; text-align: center; }\n    .content { padding: 20px; background: #f9f9f9; }\n    .invoice-info { background: white; padding: 15px; border-radius: 5px; margin: 15px 0; }\n    .total { font-size: 24px; color: #27ae60; font-weight: bold; }\n    .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>GeekTechnologie</h1>\n    </div>\n    <div class=\"content\">\n      <p>Bonjour <strong>${clientName}</strong>,</p>\n      <p>Veuillez trouver ci-joint votre facture.</p>\n      \n      <div class=\"invoice-info\">\n        <p><strong>Numéro de facture :</strong> ${invoiceNumber}</p>\n        <p><strong>Montant total :</strong> <span class=\"total\">${formattedTotal}</span></p>\n      </div>\n      \n      <p style=\"margin-top: 20px;\">Pour toute question, n'hésitez pas à nous contacter.</p>\n      <p>Cordialement,<br><strong>L'équipe GeekTechnologie</strong></p>\n    </div>\n    <div class=\"footer\">\n      <p>GeekTechnologie - Votre partenaire technologique</p>\n    </div>\n  </div>\n</body>\n</html>\n`;\n\nreturn [{\n  json: {\n    to: email,\n    subject: `Facture ${invoiceNumber} - GeekTechnologie`,\n    html: htmlBody,\n    attachmentName: `Facture_${invoiceNumber}.pdf`\n  },\n  binary: binaryData\n}];"
+      },
+      "id": "format-email-node",
+      "name": "Format Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'noreply@geektechnologie.com' }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "html": "={{ $json.html }}",
+        "options": {
+          "attachments": "data"
+        }
+      },
+      "id": "send-email-node",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1050, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"success\": true, \"message\": \"Facture envoyée par email avec pièce jointe\"} }}"
+      },
+      "id": "respond-success-node",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Generate PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate PDF": {
+      "main": [
+        [
+          {
+            "node": "Format Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2",
+  "meta": {
+    "instanceId": "geektechnologie"
+  },
+  "tags": []
+}

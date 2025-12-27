@@ -99,6 +99,7 @@ async def create_daily_purchase(
             amount=amount_int,
             payment_method=payload.payment_method,
             reference=payload.reference,
+            created_by=current_user.user_id,
         )
         db.add(item)
         db.commit()

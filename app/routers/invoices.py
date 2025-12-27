@@ -454,7 +454,8 @@ async def create_invoice(
             warranty_duration=getattr(invoice_data, "warranty_duration", None),
             warranty_start_date=getattr(invoice_data, "warranty_start_date", None),
             warranty_end_date=getattr(invoice_data, "warranty_end_date", None),
-            status="en attente"
+            status="en attente",
+            created_by=current_user.user_id
         )
         
         db.add(db_invoice)
@@ -900,7 +901,8 @@ async def update_invoice(
             has_variants = db.query(ProductVariant.variant_id).filter(ProductVariant.product_id == product.product_id).first() is not None
 
             if has_variants:
-                # Exiger une variante spécifique et interdire la quantité agrégée (>1) sans variantes
+                # Pour la mise à jour, on est plus permissif: si aucune variante n'est spécifiée,
+                # on permet quand même la mise à jour (les variantes ont été restaurées dans REVERT)
                 resolved_variant = None
                 if getattr(item_data, 'variant_id', None):
                     resolved_variant = db.query(ProductVariant).filter(ProductVariant.variant_id == item_data.variant_id).first()
@@ -914,17 +916,19 @@ async def update_invoice(
                     ).first()
                     if not resolved_variant:
                         raise HTTPException(status_code=404, detail=f"Variante avec IMEI {imei_code} introuvable")
-                else:
-                    raise HTTPException(status_code=400, detail="Produit avec variantes: vous devez sélectionner des variantes (IMEI) au lieu de définir une quantité")
-
-                if resolved_variant.product_id != product.product_id:
-                    raise HTTPException(status_code=400, detail="Variante n'appartient pas au produit")
-                if bool(resolved_variant.is_sold):
-                    raise HTTPException(status_code=400, detail=f"La variante {resolved_variant.imei_serial} est déjà vendue")
-                # Forcer quantité = 1 par ligne de variante
-                if int(item_data.quantity or 0) != 1:
-                    raise HTTPException(status_code=400, detail="Pour un produit avec variantes, la quantité doit être 1 par ligne de variante")
-                resolved_variant.is_sold = True
+                
+                # Si une variante est spécifiée, valider et marquer comme vendue
+                if resolved_variant:
+                    if resolved_variant.product_id != product.product_id:
+                        raise HTTPException(status_code=400, detail="Variante n'appartient pas au produit")
+                    if bool(resolved_variant.is_sold):
+                        raise HTTPException(status_code=400, detail=f"La variante {resolved_variant.imei_serial} est déjà vendue")
+                    # Forcer quantité = 1 par ligne de variante
+                    if int(item_data.quantity or 0) != 1:
+                        raise HTTPException(status_code=400, detail="Pour un produit avec variantes, la quantité doit être 1 par ligne de variante")
+                    resolved_variant.is_sold = True
+                # Si aucune variante n'est spécifiée lors d'une mise à jour, on permet quand même
+                # (c'est une modification de facture existante, les variantes ont été restaurées)
             else:
                 # Produits sans variantes: vérifier stock disponible agrégé
                 if (product.quantity or 0) < int(item_data.quantity or 0):
@@ -1832,9 +1836,9 @@ async def send_invoice_email(
         if not invoice:
             raise HTTPException(status_code=404, detail="Facture non trouvée")
         
-        # Construire l'URL du PDF de la facture
-        base_url = str(request.base_url).rstrip('/')
-        pdf_url = f"{base_url}/api/invoices/{data.invoice_id}/print"
+        # Construire l'URL HTML de la facture (même URL que WhatsApp)
+        app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
+        pdf_url = f"{app_public_url}/invoices/print/{data.invoice_id}"
         
         # Appeler le webhook n8n pour envoyer par email
         webhook_url = f"{N8N_BASE_URL}/webhook/send-invoice-email"

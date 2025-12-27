@@ -48,6 +48,7 @@ async function loadDailyRecap() {
         updateBankTables(data.finances);
         updateDebtsSection(data.debts || {});
         updateDashboardSection(data.dashboard || {});
+        updateUserStats(data.user_stats || {});
         
         hideLoading();
         
@@ -558,4 +559,108 @@ function goToQuotationFromRecap(quotationId, quotationNumber) {
         sessionStorage.setItem('quotationSearchQuery', val);
     } catch (e) {}
     window.location.href = '/quotations';
+}
+
+// Statistiques de l'utilisateur connecté
+function updateUserStats(userStats) {
+    try {
+        if (!userStats || typeof userStats !== 'object') userStats = {};
+        
+        // Nom d'utilisateur
+        const usernameEl = document.getElementById('userStatsUsername');
+        if (usernameEl) usernameEl.textContent = userStats.username ? `(${userStats.username})` : '';
+        
+        // Factures
+        const userInvoicesCount = document.getElementById('userInvoicesCount');
+        const userInvoicesTotal = document.getElementById('userInvoicesTotal');
+        if (userInvoicesCount) userInvoicesCount.textContent = userStats.invoices?.count || 0;
+        if (userInvoicesTotal) userInvoicesTotal.textContent = formatCurrency(userStats.invoices?.total || 0);
+        
+        // Devis
+        const userQuotationsCount = document.getElementById('userQuotationsCount');
+        const userQuotationsTotal = document.getElementById('userQuotationsTotal');
+        if (userQuotationsCount) userQuotationsCount.textContent = userStats.quotations?.count || 0;
+        if (userQuotationsTotal) userQuotationsTotal.textContent = formatCurrency(userStats.quotations?.total || 0);
+        
+        // Paiements
+        const userPaymentsTotal = document.getElementById('userPaymentsTotal');
+        const userPaymentsCount = document.getElementById('userPaymentsCount');
+        if (userPaymentsTotal) userPaymentsTotal.textContent = formatCurrency(userStats.payments?.total || 0);
+        if (userPaymentsCount) userPaymentsCount.textContent = `${userStats.payments?.count || 0} paiements`;
+        
+        // Dépenses
+        const userPurchasesTotal = document.getElementById('userPurchasesTotal');
+        const userPurchasesCount = document.getElementById('userPurchasesCount');
+        if (userPurchasesTotal) userPurchasesTotal.textContent = formatCurrency(userStats.daily_purchases?.total || 0);
+        if (userPurchasesCount) userPurchasesCount.textContent = `${userStats.daily_purchases?.count || 0} achats`;
+        
+        // Solde net
+        const userNetBalance = document.getElementById('userNetBalance');
+        const userNetBalanceBox = document.getElementById('userNetBalanceBox');
+        const netBalance = userStats.net_balance || 0;
+        if (userNetBalance) userNetBalance.textContent = formatCurrency(netBalance);
+        if (userNetBalanceBox) {
+            userNetBalanceBox.classList.remove('bg-success', 'bg-danger', 'bg-light');
+            if (netBalance > 0) {
+                userNetBalanceBox.classList.add('bg-success', 'text-white');
+                userNetBalance.classList.remove('text-danger');
+                userNetBalance.classList.add('text-white');
+            } else if (netBalance < 0) {
+                userNetBalanceBox.classList.add('bg-danger', 'text-white');
+                userNetBalance.classList.remove('text-success');
+                userNetBalance.classList.add('text-white');
+            } else {
+                userNetBalanceBox.classList.add('bg-light');
+            }
+        }
+        
+        // Table des factures utilisateur
+        const userInvoicesTable = document.getElementById('userInvoicesTable');
+        if (userInvoicesTable) {
+            const invoicesList = userStats.invoices?.list || [];
+            if (invoicesList.length === 0) {
+                userInvoicesTable.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Aucune facture créée</td></tr>';
+            } else {
+                userInvoicesTable.innerHTML = invoicesList.map(inv => `
+                    <tr style="cursor:pointer" onclick="goToInvoiceFromRecap(${inv.id}, '${inv.number}')">
+                        <td>${inv.time || '-'}</td>
+                        <td><strong>${inv.number}</strong></td>
+                        <td>${inv.client_name}</td>
+                        <td>${formatCurrency(inv.total)}</td>
+                        <td><span class="badge ${getStatusBadgeClass(inv.status)}">${inv.status}</span></td>
+                    </tr>
+                `).join('');
+            }
+        }
+        
+        // Table des devis utilisateur
+        const userQuotationsTable = document.getElementById('userQuotationsTable');
+        if (userQuotationsTable) {
+            const quotationsList = userStats.quotations?.list || [];
+            if (quotationsList.length === 0) {
+                userQuotationsTable.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Aucun devis créé</td></tr>';
+            } else {
+                userQuotationsTable.innerHTML = quotationsList.map(q => `
+                    <tr style="cursor:pointer" onclick="goToQuotationFromRecap(${q.id}, '${q.number}')">
+                        <td>${q.time || '-'}</td>
+                        <td><strong>${q.number}</strong></td>
+                        <td>${q.client_name}</td>
+                        <td>${formatCurrency(q.total)}</td>
+                        <td><span class="badge ${getQuotationStatusBadgeClass(q.status)}">${q.status}</span></td>
+                    </tr>
+                `).join('');
+            }
+        }
+    } catch (e) {
+        console.error('Erreur updateUserStats:', e);
+    }
+}
+
+function getQuotationStatusBadgeClass(status) {
+    switch ((status || '').toLowerCase()) {
+        case 'accepté': return 'bg-success';
+        case 'refusé': return 'bg-danger';
+        case 'expiré': return 'bg-secondary';
+        default: return 'bg-warning text-dark';
+    }
 }
