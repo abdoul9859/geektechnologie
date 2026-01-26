@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, Depends, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, FileResponse, Response
+from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from io import BytesIO
 from sqlalchemy.orm import Session
@@ -13,6 +13,7 @@ from dotenv import load_dotenv
 import json
 import re
 from datetime import date, datetime
+import httpx
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -119,8 +120,14 @@ async def cache_headers_middleware(request, call_next):
         # Only apply security headers in production (not on localhost)
         if not (path.startswith("/") and (request.client.host in ["127.0.0.1", "localhost"] or 
                 request.headers.get("host", "").startswith(("localhost:", "127.0.0.1:")))):
-            response.headers.setdefault("Content-Security-Policy", "upgrade-insecure-requests")
+            # Autoriser frame-ancestors '*' pour le diagnostic et s'assurer que l'iframe peut charger des scripts externes
+            response.headers["Content-Security-Policy"] = "upgrade-insecure-requests; frame-ancestors *; frame-src *; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'"
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+        
+        # Désactiver temporairement X-Frame-Options pour lever tout blocage résiduel
+        if "X-Frame-Options" in response.headers:
+            del response.headers["X-Frame-Options"]
+        # response.headers["X-Frame-Options"] = "ALLOWALL" # Option non standard mais testée par certains navigateurs
     except Exception:
         # En cas de souci, on n'empêche pas la réponse de sortir
         pass
@@ -554,6 +561,113 @@ async def daily_sales_page(request: Request, db: Session = Depends(get_db)):
 async def google_sheets_sync_page(request: Request, db: Session = Depends(get_db)):
     """Page de synchronisation Google Sheets"""
     return templates.TemplateResponse("google_sheets_sync.html", {"request": request, "global_settings": _load_company_settings(db)})
+
+@app.get("/whatsapp", response_class=HTMLResponse)
+async def whatsapp_page(request: Request, db: Session = Depends(get_db)):
+    # Déterminer l'URL du service WhatsApp pour l'iframe
+    # En local, on peut utiliser localhost:3001, mais en prod il faut l'URL publique
+    wa_url = os.getenv("WHATSAPP_SERVICE_PUBLIC_URL")
+    if not wa_url:
+        # Fallback intelligent basé sur l'URL de la requête
+        host = request.url.hostname
+        protocol = request.url.scheme
+        wa_url = f"{protocol}://{host}:3001/whatsapp"
+    
+    return templates.TemplateResponse("whatsapp.html", {
+        "request": request, 
+        "global_settings": _load_company_settings(db),
+        "whatsapp_service_url": wa_url
+    })
+
+@app.get("/whatsapp/proxy")
+async def whatsapp_proxy():
+    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp:3001")
+    url = f"{base_url.rstrip('/')}/whatsapp"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            
+            # Modifier le HTML pour que les appels API passent aussi par le proxy local
+            content = r.text
+
+            # 1) Tentative de remplacement direct de la fonction getJson si présente
+            try:
+                replacement_script = (
+                    "\n    async function getJson(url) {\n"
+                    "      let targetUrl = url;\n"
+                    "      if (url === '/api/qr') targetUrl = '/api/whatsapp/qr';\n"
+                    "      if (url === '/api/status') targetUrl = '/api/whatsapp/status';\n"
+                    "      const res = await fetch(targetUrl, { cache: 'no-store' });\n"
+                    "      const data = await res.json().catch(() => ({}));\n"
+                    "      return { ok: res.ok, status: res.status, data };\n"
+                    "    }\n"
+                )
+                import re as _re
+                content2 = _re.sub(r"async function getJson\(url\) \{.*?\}", replacement_script, content, flags=_re.DOTALL)
+                content = content2 if content2 else content
+            except Exception:
+                pass
+
+            # 2) Filet de sécurité: override global de window.fetch pour réécrire toutes les URLs /api/*
+            inject = (
+                "<script>(function(){try{var _origFetch=window.fetch;"
+                "window.fetch=function(input, init){try{var u=(typeof input==='string')?input:(input && input.url)||'';"
+                "if(u && u.indexOf('/api/')===0){input='/api/whatsapp'+u.substring(4);} }catch(e){} return _origFetch(input, init);};"
+                "}catch(e){}})();</script>"
+            )
+
+            # Injecter le script le plus tôt possible (juste après <head>) pour qu'il soit actif avant les autres scripts
+            if '<head>' in content:
+                content = content.replace('<head>', '<head>' + inject)
+            elif '</body>' in content:
+                content = content.replace('</body>', inject + '</body>')
+            else:
+                content = inject + content
+
+            # 3) Fallback: remplacements larges de littéraux '/api/...'
+            try:
+                content = content.replace("/api/status", "/api/whatsapp/status")
+                content = content.replace("/api/qr", "/api/whatsapp/qr")
+            except Exception:
+                pass
+
+            return HTMLResponse(content=content)
+    except Exception as e:
+        return HTMLResponse(content=f"Erreur proxy WhatsApp: {str(e)}", status_code=503)
+
+@app.get("/api/whatsapp/qr")
+async def whatsapp_qr_proxy():
+    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp:3001")
+    url = f"{base_url.rstrip('/')}/api/qr"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            return JSONResponse(content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "error"})
+
+@app.get("/api/whatsapp/status")
+async def whatsapp_status_proxy():
+    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp:3001")
+    url = f"{base_url.rstrip('/')}/api/status"
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            return JSONResponse(content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"status": "not_ready", "qrCode": False})
+
+# ===== Legacy compatibility endpoints (some clients still call /api/status and /api/qr) =====
+@app.get("/api/status")
+async def whatsapp_status_legacy():
+    return await whatsapp_status_proxy()
+
+@app.get("/api/qr")
+async def whatsapp_qr_legacy():
+    return await whatsapp_qr_proxy()
 
 # ===================== PRINT ROUTES (Invoice, Delivery Note) =====================
 

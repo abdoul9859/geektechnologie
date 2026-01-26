@@ -1,3 +1,2 @@
-2025/12/18-16:51:49.771 2f Reusing MANIFEST /app/whatsapp-session/session/Default/Site Characteristics Database/MANIFEST-000001
-2025/12/18-16:51:49.771 2f Recovering log #3
-2025/12/18-16:51:49.771 2f Reusing old log /app/whatsapp-session/session/Default/Site Characteristics Database/000003.log 
+2026/01/24-20:45:27.680 2f Creating DB /app/whatsapp-session/session/Default/Site Characteristics Database since it was missing.
+2026/01/24-20:45:27.703 2f Reusing MANIFEST /app/whatsapp-session/session/Default/Site Characteristics Database/MANIFEST-000001

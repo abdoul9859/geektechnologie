@@ -37,6 +37,8 @@ RUN npm install
 
 COPY index.js ./
 
+COPY whatsapp-connect.html ./
+
 # Créer le dossier pour la session
 RUN mkdir -p /app/whatsapp-session
 

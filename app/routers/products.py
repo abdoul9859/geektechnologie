@@ -743,13 +743,6 @@ async def get_product(
     product = db.query(Product).filter(Product.product_id == product_id).first()
     if not product:
         raise HTTPException(status_code=404, detail="Produit non trouvé")
-    # Mask purchase_price for non-manager/admin
-    try:
-        role = getattr(current_user, "role", "user")
-        if role not in ("admin", "manager") and product is not None:
-            product.purchase_price = Decimal(0)
-    except Exception:
-        pass
     return product
 
 @router.post("/", response_model=ProductResponse)

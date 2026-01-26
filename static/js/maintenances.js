@@ -744,22 +744,111 @@ async function sendReminder() {
     if (!currentMaintenanceId) return;
     
     try {
-        const response = await axios.post(`/api/maintenances/${currentMaintenanceId}/send-reminder`);
-        const data = response.data;
-        
-        if (data.maintenance?.client_phone) {
-            // Ouvrir WhatsApp avec le message
-            const phone = data.maintenance.client_phone.replace(/[\s\-\.]/g, '').trim();
-            const phoneFormatted = phone.startsWith('+') ? phone : '+221' + phone.replace(/^0/, '');
-            const message = encodeURIComponent(data.message);
-            window.open(`https://wa.me/${phoneFormatted.replace('+', '')}?text=${message}`, '_blank');
-            showSuccess('Rappel préparé - WhatsApp ouvert');
+        const { data: m } = await axios.get(`/api/maintenances/${currentMaintenanceId}`);
+        let phone = (m && m.client_phone) ? String(m.client_phone) : '';
+
+        if (!phone || phone.trim() === '') {
+            phone = prompt('Le numéro de téléphone du client n\'est pas renseigné.\nVeuillez entrer le numéro WhatsApp (ex: +221771234567):');
+            if (!phone || phone.trim() === '') {
+                showError('Numéro de téléphone requis pour l\'envoi WhatsApp');
+                return;
+            }
+        }
+
+        phone = phone.replace(/[\s\-\.]/g, '').trim();
+        if (!phone.startsWith('+')) {
+            phone = '+221' + phone.replace(/^0/, '');
+        }
+
+        showSuccess('Envoi du rappel en cours via WhatsApp...');
+        const response = await axios.post(`/api/maintenances/${currentMaintenanceId}/send-reminder-whatsapp`, {
+            phone: phone
+        });
+
+        if (response.data?.success) {
+            showSuccess('Rappel de récupération envoyé par WhatsApp avec succès!');
         } else {
-            showError('Pas de numéro de téléphone pour ce client');
+            showError(response.data?.message || 'Erreur lors de l\'envoi du rappel');
         }
     } catch (error) {
         console.error('Erreur envoi rappel:', error);
         showError(error.response?.data?.detail || 'Erreur lors de l\'envoi du rappel');
+    }
+}
+
+async function sendMaintenanceWhatsApp(kind = 'technician') {
+    if (!currentMaintenanceId) return;
+
+    try {
+        const { data: m } = await axios.get(`/api/maintenances/${currentMaintenanceId}`);
+        let phone = (m && m.client_phone) ? String(m.client_phone) : '';
+
+        if (!phone || phone.trim() === '') {
+            phone = prompt('Le numéro de téléphone du client n\'est pas renseigné.\nVeuillez entrer le numéro WhatsApp (ex: +221771234567):');
+            if (!phone || phone.trim() === '') {
+                showError('Numéro de téléphone requis pour l\'envoi WhatsApp');
+                return;
+            }
+        }
+
+        phone = phone.replace(/[\s\-\.]/g, '').trim();
+        if (!phone.startsWith('+')) {
+            phone = '+221' + phone.replace(/^0/, '');
+        }
+
+        showSuccess('Envoi en cours via WhatsApp...');
+        const response = await axios.post('/api/maintenances/send-whatsapp', {
+            maintenance_id: Number(currentMaintenanceId),
+            phone: phone,
+            kind: kind
+        });
+
+        if (response.data?.success) {
+            showSuccess('Document de maintenance envoyé par WhatsApp avec succès!');
+        } else {
+            showError(response.data?.message || 'Erreur lors de l\'envoi WhatsApp');
+        }
+    } catch (error) {
+        console.error('Erreur envoi WhatsApp maintenance:', error);
+        showError(error.response?.data?.detail || 'Erreur lors de l\'envoi par WhatsApp');
+    }
+}
+
+async function sendMaintenanceEmail(kind = 'technician') {
+    if (!currentMaintenanceId) return;
+
+    try {
+        const { data: m } = await axios.get(`/api/maintenances/${currentMaintenanceId}`);
+        let email = (m && m.client_email) ? String(m.client_email) : '';
+
+        if (!email || email.trim() === '') {
+            email = prompt('L\'email du client n\'est pas renseigné.\nVeuillez entrer l\'adresse email:');
+            if (!email || email.trim() === '') {
+                showError('Adresse email requise pour l\'envoi');
+                return;
+            }
+        }
+
+        if (!email.includes('@') || !email.includes('.')) {
+            showError('Adresse email invalide');
+            return;
+        }
+
+        showSuccess('Envoi en cours par email...');
+        const response = await axios.post('/api/maintenances/send-email', {
+            maintenance_id: Number(currentMaintenanceId),
+            email: email.trim(),
+            kind: kind
+        });
+
+        if (response.data?.success) {
+            showSuccess('Document de maintenance envoyé par email avec succès!');
+        } else {
+            showError(response.data?.message || 'Erreur lors de l\'envoi email');
+        }
+    } catch (error) {
+        console.error('Erreur envoi email maintenance:', error);
+        showError(error.response?.data?.detail || 'Erreur lors de l\'envoi par email');
     }
 }
 
@@ -813,18 +902,69 @@ function escapeHtml(text) {
 }
 
 function showSuccess(message) {
-    // Utiliser le système de notification existant ou créer un toast
-    if (typeof Swal !== 'undefined') {
-        Swal.fire({ icon: 'success', title: 'Succès', text: message, timer: 2000, showConfirmButton: false });
-    } else {
-        alert(message);
+    if (typeof showAlert === 'function') {
+        showAlert(message, 'success', 3000);
+        return;
     }
+
+    let alertsContainer = document.getElementById('alerts-container');
+    if (!alertsContainer) {
+        alertsContainer = document.createElement('div');
+        alertsContainer.id = 'alerts-container';
+        alertsContainer.className = 'position-fixed top-0 end-0 p-3';
+        alertsContainer.style.zIndex = '20000';
+        alertsContainer.style.width = '360px';
+        document.body.appendChild(alertsContainer);
+    }
+
+    const alertId = 'alert-' + Date.now();
+    const alertDiv = document.createElement('div');
+    alertDiv.id = alertId;
+    alertDiv.className = 'alert alert-success alert-dismissible fade show';
+    alertDiv.innerHTML = `
+        <i class="bi bi-check-circle-fill me-2"></i>
+        ${escapeHtml(String(message || ''))}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(alertsContainer);
+    alertsContainer.appendChild(alertDiv);
+
+    setTimeout(() => {
+        const a = document.getElementById(alertId);
+        if (a) a.remove();
+    }, 3000);
 }
 
 function showError(message) {
-    if (typeof Swal !== 'undefined') {
-        Swal.fire({ icon: 'error', title: 'Erreur', text: message });
-    } else {
-        alert('Erreur: ' + message);
+    if (typeof showAlert === 'function') {
+        showAlert(message, 'danger', 6000);
+        return;
     }
+
+    let alertsContainer = document.getElementById('alerts-container');
+    if (!alertsContainer) {
+        alertsContainer = document.createElement('div');
+        alertsContainer.id = 'alerts-container';
+        alertsContainer.className = 'position-fixed top-0 end-0 p-3';
+        alertsContainer.style.zIndex = '20000';
+        alertsContainer.style.width = '360px';
+        document.body.appendChild(alertsContainer);
+    }
+
+    const alertId = 'alert-' + Date.now();
+    const alertDiv = document.createElement('div');
+    alertDiv.id = alertId;
+    alertDiv.className = 'alert alert-danger alert-dismissible fade show';
+    alertDiv.innerHTML = `
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+        ${escapeHtml(String(message || ''))}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    `;
+    document.body.appendChild(alertsContainer);
+    alertsContainer.appendChild(alertDiv);
+
+    setTimeout(() => {
+        const a = document.getElementById(alertId);
+        if (a) a.remove();
+    }, 6000);
 }

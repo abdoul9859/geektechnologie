@@ -422,6 +422,34 @@
                     <i class="bi bi-whatsapp me-2"></i>Envoyer rappel
                 </button>
                 <div class="btn-group">
+                    <button type="button" class="btn btn-outline-success" onclick="sendMaintenanceWhatsApp()">
+                        <i class="bi bi-whatsapp me-2"></i>WhatsApp
+                    </button>
+                    <button type="button" class="btn btn-outline-success dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+                        <span class="visually-hidden">Toggle Dropdown</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><button class="dropdown-item" type="button" onclick="sendMaintenanceWhatsApp('technician')">Fiche technicien</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="sendMaintenanceWhatsApp('client')">Reçu client (dépôt)</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="sendMaintenanceWhatsApp('label')">Étiquette machine</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="sendMaintenanceWhatsApp('ticket')">Ticket client (numéro)</button></li>
+                    </ul>
+                </div>
+                <div class="btn-group">
+                    <button type="button" class="btn btn-outline-info" onclick="sendMaintenanceEmail()">
+                        <i class="bi bi-envelope me-2"></i>Email
+                    </button>
+                    <button type="button" class="btn btn-outline-info dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-expanded="false">
+                        <span class="visually-hidden">Toggle Dropdown</span>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        <li><button class="dropdown-item" type="button" onclick="sendMaintenanceEmail('technician')">Fiche technicien</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="sendMaintenanceEmail('client')">Reçu client (dépôt)</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="sendMaintenanceEmail('label')">Étiquette machine</button></li>
+                        <li><button class="dropdown-item" type="button" onclick="sendMaintenanceEmail('ticket')">Ticket client (numéro)</button></li>
+                    </ul>
+                </div>
+                <div class="btn-group">
                     <button type="button" class="btn btn-info" onclick="printMaintenanceSheet()">
                         <i class="bi bi-printer me-2"></i>Imprimer
                     </button>
@@ -446,5 +474,5 @@
 {% endblock %}
 
 {% block extra_scripts %}
-<script src="/static/js/maintenances.js"></script>
+<script src="/static/js/maintenances.js?v={{ ASSET_VERSION() }}"></script>
 {% endblock %}

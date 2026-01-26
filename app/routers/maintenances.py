@@ -7,6 +7,8 @@ from typing import Optional, List
 from datetime import datetime, date, timedelta
 from pydantic import BaseModel
 import logging
+import os
+import httpx
 
 from ..database import get_db, Maintenance, Client, User, UserSettings
 from ..auth import get_current_user
@@ -49,6 +51,18 @@ class MaintenanceCreate(BaseModel):
     technician_id: Optional[int] = None
     notes: Optional[str] = None
     internal_notes: Optional[str] = None
+
+
+class SendMaintenanceWhatsAppRequest(BaseModel):
+    maintenance_id: int
+    phone: str
+    kind: Optional[str] = "technician"
+
+
+class SendMaintenanceEmailRequest(BaseModel):
+    maintenance_id: int
+    email: str
+    kind: Optional[str] = "technician"
 
 
 class MaintenanceUpdate(BaseModel):
@@ -217,6 +231,114 @@ async def list_maintenances(
         }
     except Exception as e:
         logging.error(f"Erreur liste maintenances: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+N8N_BASE_URL = os.getenv("N8N_BASE_URL", "http://n8n:5678")
+
+
+def _normalize_maintenance_kind(kind: Optional[str]) -> str:
+    k = (kind or "technician").strip().lower()
+    allowed = {"technician", "tech", "fiche", "client", "recap", "receipt", "recu", "label", "sticker", "etiquette", "ticket"}
+    if k not in allowed:
+        return "technician"
+    # Canonical values used by the /print endpoint
+    if k in {"client", "recap", "receipt", "recu"}:
+        return "client"
+    if k in {"label", "sticker", "etiquette"}:
+        return "label"
+    if k in {"ticket"}:
+        return "ticket"
+    return "technician"
+
+
+@router.post("/send-whatsapp")
+async def send_maintenance_whatsapp(
+    data: SendMaintenanceWhatsAppRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Envoyer un rapport/fiche de maintenance par WhatsApp via n8n."""
+    try:
+        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == data.maintenance_id).first()
+        if not maintenance:
+            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
+
+        kind = _normalize_maintenance_kind(data.kind)
+        app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
+        pdf_url = f"{app_public_url}/api/maintenances/{data.maintenance_id}/print?kind={kind}"
+
+        webhook_url = f"{N8N_BASE_URL}/webhook/send-maintenance-whatsapp"
+        payload = {
+            "maintenance_id": data.maintenance_id,
+            "maintenance_number": maintenance.maintenance_number,
+            "phone": data.phone,
+            "pdf_url": pdf_url,
+            "client_name": maintenance.client_name,
+            "device": f"{maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}".strip(),
+            "kind": kind,
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload)
+
+        if response.status_code == 200:
+            return {"success": True, "message": "Document de maintenance envoyé par WhatsApp"}
+        logging.error(f"Erreur n8n WhatsApp maintenance: {response.status_code} - {response.text}")
+        return {"success": False, "message": f"Erreur n8n: {response.text}"}
+
+    except httpx.RequestError as e:
+        logging.error(f"Erreur connexion n8n (maintenance WhatsApp): {e}")
+        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Erreur envoi maintenance WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/send-email")
+async def send_maintenance_email(
+    data: SendMaintenanceEmailRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Envoyer un rapport/fiche de maintenance par Email via n8n."""
+    try:
+        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == data.maintenance_id).first()
+        if not maintenance:
+            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
+
+        kind = _normalize_maintenance_kind(data.kind)
+        app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
+        pdf_url = f"{app_public_url}/api/maintenances/{data.maintenance_id}/print?kind={kind}"
+
+        webhook_url = f"{N8N_BASE_URL}/webhook/send-maintenance-email"
+        payload = {
+            "maintenance_id": data.maintenance_id,
+            "maintenance_number": maintenance.maintenance_number,
+            "email": data.email,
+            "pdf_url": pdf_url,
+            "client_name": maintenance.client_name,
+            "device": f"{maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}".strip(),
+            "kind": kind,
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload)
+
+        if response.status_code == 200:
+            return {"success": True, "message": "Document de maintenance envoyé par email"}
+        logging.error(f"Erreur n8n Email maintenance: {response.status_code} - {response.text}")
+        return {"success": False, "message": f"Erreur n8n: {response.text}"}
+
+    except httpx.RequestError as e:
+        logging.error(f"Erreur connexion n8n (maintenance Email): {e}")
+        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Erreur envoi maintenance Email: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -570,13 +692,71 @@ async def send_pickup_reminder(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class SendReminderWhatsAppRequest(BaseModel):
+    phone: str
+
+
+@router.post("/{maintenance_id}/send-reminder-whatsapp")
+async def send_reminder_whatsapp(
+    maintenance_id: int,
+    data: SendReminderWhatsAppRequest,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Envoyer un rappel de récupération via n8n webhook."""
+    try:
+        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        if not maintenance:
+            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
+        
+        # Construire le message de rappel
+        device = f"{maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}".strip()
+        pickup_date = maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else 'Non définie'
+        
+        message = f"Bonjour {maintenance.client_name},\n\nVotre appareil ({device}) est prêt à être récupéré chez Geek Technologie.\n\nNuméro de fiche: {maintenance.maintenance_number}\nDate limite: {pickup_date}\n\nMerci de venir le récupérer dans les plus brefs délais.\n\nCordialement,\nGeek Technologie"
+        
+        # Appeler le webhook n8n
+        webhook_url = f"{N8N_BASE_URL}/webhook/send-maintenance-reminder-whatsapp"
+        
+        payload = {
+            "maintenance_id": maintenance_id,
+            "maintenance_number": maintenance.maintenance_number,
+            "phone": data.phone,
+            "message": message,
+            "client_name": maintenance.client_name,
+            "device": device
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(webhook_url, json=payload)
+        
+        if response.status_code == 200:
+            # Marquer le rappel comme envoyé
+            maintenance.reminder_sent = True
+            maintenance.reminder_sent_date = datetime.now()
+            db.commit()
+            
+            return {"success": True, "message": "Rappel de récupération envoyé par WhatsApp"}
+        
+        logging.error(f"Erreur n8n rappel WhatsApp: {response.status_code} - {response.text}")
+        return {"success": False, "message": f"Erreur n8n: {response.text}"}
+        
+    except httpx.RequestError as e:
+        logging.error(f"Erreur connexion n8n (rappel WhatsApp): {e}")
+        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Erreur envoi rappel WhatsApp: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{maintenance_id}/print", response_class=HTMLResponse)
 async def print_maintenance_sheet(
     request: Request,
     maintenance_id: int,
     kind: str = Query("technician"),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    db: Session = Depends(get_db)
 ):
     """Générer la fiche de maintenance imprimable."""
     try:

@@ -1457,7 +1457,7 @@ async function viewProduct(productId) {
                         <tr><td><strong>Marque:</strong></td><td>${product.brand || '-'}</td></tr>
                         <tr><td><strong>Modèle:</strong></td><td>${product.model || '-'}</td></tr>
                         <tr><td><strong>Prix unitaire:</strong></td><td>${formatCurrency(product.price)}</td></tr>
-                        ${window.authManager && window.authManager.isAdmin() ? `<tr><td><strong>Prix d'achat:</strong></td><td>${formatCurrency(product.purchase_price)}</td></tr>` : ''}
+                        ${window.authManager && typeof window.authManager.canViewPurchasePrice === 'function' && window.authManager.canViewPurchasePrice() ? `<tr><td><strong>Prix d'achat:</strong></td><td>${formatCurrency(product.purchase_price)}</td></tr>` : ''}
                         <tr><td><strong>État:</strong></td><td>${product.condition || '-'}</td></tr>
                         <tr><td><strong>Stock:</strong></td><td>${product.quantity} unités</td></tr>
                         <tr><td><strong>Code-barres:</strong></td><td>${product.barcode || '-'}</td></tr>

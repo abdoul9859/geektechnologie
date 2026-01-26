@@ -10,9 +10,43 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
 
+app.get('/whatsapp', (req, res) => {
+    res.sendFile(path.join(__dirname, 'whatsapp-connect.html'));
+});
+
+app.get('/whatsapp-connect.html', (req, res) => {
+    res.sendFile(path.join(__dirname, 'whatsapp-connect.html'));
+});
+
 // État du client WhatsApp
 let clientReady = false;
 let qrCodeData = null;
+
+function _normalizeBase64(s) {
+    if (!s) return s;
+    let out = String(s).replace(/\s+/g, '');
+    // Fix padding
+    const pad = out.length % 4;
+    if (pad === 2) out += '==';
+    else if (pad === 3) out += '=';
+    else if (pad === 1) {
+        // If length mod 4 is 1, the string is invalid; best effort: trim last char
+        out = out.slice(0, -1);
+    }
+
+    return out;
+}
+
+function _isLikelyPdf(buf) {
+    try {
+        if (!buf || buf.length < 1000) return false;
+        const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+        // PDF files start with bytes: 0x25 0x50 0x44 0x46 0x2D => "%PDF-"
+        return b.length >= 5 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 && b[4] === 0x2d;
+    } catch {
+        return false;
+    }
+}
 
 // Initialiser le client WhatsApp
 const client = new Client({
@@ -60,7 +94,43 @@ client.on('disconnected', (reason) => {
     clientReady = false;
 });
 
+function _cleanupChromiumSingletonLocks(rootDir) {
+    try {
+        if (!fs.existsSync(rootDir)) return;
+
+        const stack = [rootDir];
+        while (stack.length) {
+            const dir = stack.pop();
+            let entries = [];
+            try {
+                entries = fs.readdirSync(dir, { withFileTypes: true });
+            } catch {
+                continue;
+            }
+
+            for (const ent of entries) {
+                const full = path.join(dir, ent.name);
+                if (ent.isDirectory()) {
+                    stack.push(full);
+                    continue;
+                }
+                // Chromium lock files that prevent relaunch after crash
+                if (ent.name.startsWith('Singleton')) {
+                    try {
+                        fs.rmSync(full, { force: true });
+                    } catch {
+                        // ignore
+                    }
+                }
+            }
+        }
+    } catch {
+        // ignore
+    }
+}
+
 // Démarrer le client
+_cleanupChromiumSingletonLocks(path.resolve('./whatsapp-session'));
 client.initialize();
 
 // API Endpoints
@@ -103,7 +173,7 @@ app.post('/api/sendText', async (req, res) => {
             chatId = chatId + '@c.us';
         }
         
-        const result = await client.sendMessage(chatId, text);
+        const result = await client.sendMessage(chatId, text, { sendSeen: false });
         res.json({ success: true, messageId: result.id._serialized });
         
     } catch (error) {
@@ -141,12 +211,14 @@ app.post('/api/sendFile', async (req, res) => {
         
         const base64Data = Buffer.from(response.data).toString('base64');
         const mimeType = response.headers['content-type'] || 'application/octet-stream';
+
+        const base64Clean = _normalizeBase64(base64Data);
         
         // Créer le média
-        const media = new MessageMedia(mimeType, base64Data, filename || 'document');
+        const media = new MessageMedia(mimeType, base64Clean, filename || 'document');
         
         // Envoyer
-        const result = await client.sendMessage(chatId, media, { caption: caption || '' });
+        const result = await client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false, sendMediaAsDocument: true });
         
         res.json({ success: true, messageId: result.id._serialized });
         
@@ -211,15 +283,22 @@ app.post('/api/sendPdf', async (req, res) => {
         await browser.close();
         
         console.log(`PDF généré: ${pdfBuffer.length} bytes`);
+
+        if (!_isLikelyPdf(pdfBuffer)) {
+            throw new Error('PDF généré invalide ou vide (la page source n\'est peut-être pas accessible depuis le conteneur)');
+        }
         
+        const pdfBuf = Buffer.isBuffer(pdfBuffer) ? pdfBuffer : Buffer.from(pdfBuffer);
+
         // Convertir en base64
-        const base64Data = pdfBuffer.toString('base64');
+        const base64Data = pdfBuf.toString('base64');
+        const base64Clean = _normalizeBase64(base64Data);
         
         // Créer le média
-        const media = new MessageMedia('application/pdf', base64Data, filename || 'document.pdf');
+        const media = new MessageMedia('application/pdf', base64Clean, filename || 'document.pdf');
         
         // Envoyer
-        const result = await client.sendMessage(chatId, media, { caption: caption || '' });
+        const result = await client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false, sendMediaAsDocument: true });
         
         res.json({ success: true, messageId: result.id._serialized });
         
@@ -307,9 +386,13 @@ app.post('/api/sendImage', async (req, res) => {
         
         // Télécharger l'image
         const media = await MessageMedia.fromUrl(imageUrl);
+
+        if (media && media.data) {
+            media.data = _normalizeBase64(media.data);
+        }
         
         // Envoyer
-        const result = await client.sendMessage(chatId, media, { caption: caption || '' });
+        const result = await client.sendMessage(chatId, media, { caption: caption || '', sendSeen: false, sendMediaAsDocument: true });
         
         res.json({ success: true, messageId: result.id._serialized });
         

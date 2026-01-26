@@ -229,7 +229,7 @@
                     </div>
 
                     <div class="row">
-                        <div class="col-md-4 admin-only" style="display: none;">
+                        <div class="col-md-4">
                             <div class="mb-3">
                                 <label for="productPurchasePrice" class="form-label">Prix d'achat (FCFA)</label>
                                 <input type="number" class="form-control" id="productPurchasePrice" step="1" min="0" inputmode="numeric" pattern="[0-9]*">
@@ -399,7 +399,7 @@ window.__productsBoot = (async function(){
 // Afficher les éléments admin-only si l'utilisateur est admin
 function showAdminElements() {
     try {
-        if (window.authManager && window.authManager.isAdmin()) {
+        if (window.authManager && typeof window.authManager.canViewPurchasePrice === 'function' && window.authManager.canViewPurchasePrice()) {
             document.querySelectorAll('.admin-only').forEach(el => {
                 el.style.display = 'block';
             });

@@ -1,0 +1,162 @@
+{
+  "name": "Send Maintenance Email",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "send-maintenance-email",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "send-maintenance-email"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire les données du webhook\nconst data = $input.first().json.body || $input.first().json;\n\nconsole.log('Données maintenance email reçues:', JSON.stringify(data));\n\nconst maintenanceNumber = data.maintenance_number || data.maintenanceNumber || 'N/A';\nconst clientName = data.client_name || data.clientName || 'Client';\nconst device = data.device || '';\nconst kind = data.kind || 'technician';\n\n// URL HTML du document (accessible via réseau Docker)\n// Aligné sur le pattern facture/devis: URL interne nitek_app\nconst htmlUrl = `http://nitek_app:8000/api/maintenances/${data.maintenance_id}/print?kind=${encodeURIComponent(kind)}`;\n\nconst email = data.email || '';\n\nreturn [{\n  json: {\n    maintenanceNumber,\n    clientName,\n    device,\n    kind,\n    htmlUrl,\n    email\n  }\n}];"
+      },
+      "id": "extract-data-node",
+      "name": "Extract Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://72.62.22.52:3001/api/generatePdf",
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={\"htmlUrl\": \"{{ $json.htmlUrl }}\", \"filename\": \"Maintenance-{{ $json.maintenanceNumber }}-{{ $json.kind }}.pdf\"}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "generate-pdf-node",
+      "name": "Generate PDF",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récupérer les données précédentes et le fichier PDF\nconst previousData = $('Extract Data').first().json;\n\nconst maintenanceNumber = previousData.maintenanceNumber;\nconst clientName = previousData.clientName;\nconst email = previousData.email;\nconst device = previousData.device;\nconst kind = previousData.kind;\n\nconst subject = `Maintenance ${maintenanceNumber} (${kind})`;\n\nconst htmlBody = `\n<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <style>\n    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }\n    .container { max-width: 600px; margin: 0 auto; padding: 20px; }\n    .header { background: #2c3e50; color: white; padding: 20px; text-align: center; }\n    .content { padding: 20px; background: #f9f9f9; }\n    .box { background: white; padding: 15px; border-radius: 5px; margin: 15px 0; }\n    .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }\n  </style>\n</head>\n<body>\n  <div class=\"container\">\n    <div class=\"header\">\n      <h1>GeekTechnologie</h1>\n    </div>\n    <div class=\"content\">\n      <p>Bonjour <strong>${clientName}</strong>,</p>\n      <p>Veuillez trouver ci-joint votre document de maintenance.</p>\n\n      <div class=\"box\">\n        <p><strong>Référence :</strong> ${maintenanceNumber}</p>\n        <p><strong>Type de document :</strong> ${kind}</p>\n        ${device ? `<p><strong>Appareil :</strong> ${device}</p>` : ''}\n      </div>\n\n      <p style=\"margin-top: 20px;\">Pour toute question, n'hésitez pas à nous contacter.</p>\n      <p>Cordialement,<br><strong>L'équipe GeekTechnologie</strong></p>\n    </div>\n    <div class=\"footer\">\n      <p>GeekTechnologie - Votre partenaire technologique</p>\n    </div>\n  </div>\n</body>\n</html>\n`;\n\nreturn [{\n  json: {\n    to: email,\n    subject: subject,\n    html: htmlBody\n  }\n}];"
+      },
+      "id": "format-email-node",
+      "name": "Format Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $env.SMTP_FROM || 'noreply@geektechnologie.com' }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "html",
+        "html": "={{ $json.html }}",
+        "options": {
+          "attachments": "data"
+        }
+      },
+      "id": "send-email-node",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1050, 300],
+      "credentials": {
+        "smtp": {
+          "id": "smtp-credentials",
+          "name": "SMTP Credentials"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"success\": true, \"message\": \"Document de maintenance envoyé par email avec pièce jointe\"} }}"
+      },
+      "id": "respond-success-node",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Data": {
+      "main": [
+        [
+          {
+            "node": "Generate PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate PDF": {
+      "main": [
+        [
+          {
+            "node": "Format Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1",
+  "meta": {
+    "instanceId": "geektechnologie"
+  },
+  "tags": []
+}

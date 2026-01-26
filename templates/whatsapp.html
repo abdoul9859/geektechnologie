@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}WhatsApp - Connexion{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<style>
+  .whatsapp-frame-wrap {
+    height: calc(100vh - 140px);
+    min-height: 560px;
+    border: 1px solid rgba(0,0,0,0.1);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #f8f9fa;
+  }
+  #waFrame {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    background: #fff;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="row mb-3">
+    <div class="col-12">
+      <div class="d-flex justify-content-between align-items-center">
+        <div>
+          <h1 class="h3 mb-1">
+            <i class="bi bi-whatsapp me-2 text-success"></i>
+            WhatsApp
+          </h1>
+          <p class="text-muted mb-0">Scanner le QR code si déconnecté, sinon voir le statut connecté.</p>
+        </div>
+        <div>
+          <span class="badge bg-secondary" id="waStatusBadge">Chargement...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col-12">
+      <div class="whatsapp-frame-wrap">
+        <iframe id="waFrame" title="WhatsApp Connect" style="display:none"></iframe>
+        <div id="qrContainer" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
+          <div>
+            <div id="qrCanvas"></div>
+            <div class="text-center mt-2">
+              <button id="btnRefresh" class="btn btn-sm btn-primary">Rafraîchir QR</button>
+              <button id="btnCheck" class="btn btn-sm btn-outline-secondary ms-1">Vérifier statut</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="text-muted mt-2" id="waHint" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  /* WhatsApp QR v2.1 - Fallback robuste */
+  document.addEventListener('DOMContentLoaded', function() {
+    const badge = document.getElementById('waStatusBadge');
+    const frame = document.getElementById('waFrame');
+    const qrContainer = document.getElementById('qrContainer');
+    const qrCanvas = document.getElementById('qrCanvas');
+    const btnRefresh = document.getElementById('btnRefresh');
+    const btnCheck = document.getElementById('btnCheck');
+    const hint = document.getElementById('waHint');
+    let lastQr = null;
+    let isRendering = false;
+    let isPolling = false;
+
+    function setBadge(text, cls) {
+      badge.className = 'badge ' + cls;
+      badge.textContent = text;
+    }
+
+    async function renderQr(qrString) {
+      if (!qrString) return;
+      if (isRendering) return;
+      isRendering = true;
+      try {
+        if (qrString !== lastQr) {
+          lastQr = qrString;
+          qrCanvas.innerHTML = '<div class="text-muted">Génération du QR...</div>';
+          
+          const img = document.createElement('img');
+          img.alt = 'QR Code WhatsApp';
+          img.style.maxWidth = '100%';
+          img.style.height = 'auto';
+          
+          // Vérifier si QRCode est disponible
+          if (typeof QRCode !== 'undefined' && QRCode.toDataURL) {
+            try {
+              const dataUrl = await QRCode.toDataURL(qrString, { 
+                width: 280, 
+                margin: 1, 
+                errorCorrectionLevel: 'M' 
+              });
+              img.src = dataUrl;
+            } catch (e) {
+              console.warn('QRCode.toDataURL failed, using fallback', e);
+              // Fallback vers API externe
+              img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(qrString);
+            }
+          } else {
+            // QRCode non disponible, utiliser API externe directement
+            console.warn('QRCode library not loaded, using external API');
+            img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(qrString);
+          }
+          
+          qrCanvas.innerHTML = '';
+          qrCanvas.appendChild(img);
+        }
+      } catch (e) {
+        console.error('QR render error', e);
+        qrCanvas.innerHTML = '<div class="text-danger">Erreur de génération du QR</div>';
+      } finally {
+        isRendering = false;
+      }
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    async function pollStatus() {
+      if (isPolling) return; // éviter la réentrance si un tick est encore en cours
+      isPolling = true;
+      try {
+        const { ok, data } = await fetchJson('/api/whatsapp/status');
+        if (!ok) throw new Error('status not ok');
+        if (data.status === 'ready') {
+          setBadge('Connecté', 'bg-success');
+          hint.style.display = 'none';
+        } else {
+          setBadge('Déconnecté', 'bg-warning text-dark');
+          // Demander un QR si nécessaire
+          const qrResp = await fetchJson('/api/whatsapp/qr');
+          if (qrResp.data && qrResp.data.qr) {
+            await renderQr(qrResp.data.qr);
+            hint.style.display = '';
+            hint.textContent = 'Scanne le QR code avec WhatsApp (Paramètres → Appareils liés)';
+          } else if (qrResp.data && qrResp.data.status === 'already_connected') {
+            qrCanvas.innerHTML = '<div class="text-center fs-2">✅</div>';
+            hint.style.display = 'none';
+          } else {
+            hint.style.display = '';
+            hint.textContent = 'QR non disponible. Réessaie dans quelques secondes…';
+          }
+        }
+      } catch (e) {
+        setBadge('Indisponible', 'bg-danger');
+      } finally { isPolling = false; }
+    }
+
+    // Boutons
+    if (btnRefresh) btnRefresh.addEventListener('click', pollStatus);
+    if (btnCheck) btnCheck.addEventListener('click', pollStatus);
+
+    // Démarrer
+    pollStatus();
+    setInterval(pollStatus, 2500);
+  });
+</script>
+{% endblock %}

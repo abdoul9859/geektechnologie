@@ -1,3 +1,2 @@
-2025/12/18-16:51:50.021 25 Reusing MANIFEST /app/whatsapp-session/session/Default/shared_proto_db/MANIFEST-000001
-2025/12/18-16:51:50.021 25 Recovering log #3
-2025/12/18-16:51:50.021 25 Reusing old log /app/whatsapp-session/session/Default/shared_proto_db/000003.log 
+2026/01/24-20:45:27.871 26 Creating DB /app/whatsapp-session/session/Default/shared_proto_db since it was missing.
+2026/01/24-20:45:27.888 26 Reusing MANIFEST /app/whatsapp-session/session/Default/shared_proto_db/MANIFEST-000001

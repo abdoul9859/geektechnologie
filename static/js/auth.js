@@ -100,6 +100,19 @@ class AuthManager {
         return this.userData.role === 'admin';
     }
 
+    isManager() {
+        return this.userData.role === 'manager';
+    }
+
+    hasAnyRole(roles = []) {
+        const r = this.userData && this.userData.role ? String(this.userData.role) : '';
+        return Array.isArray(roles) && roles.includes(r);
+    }
+
+    canViewPurchasePrice() {
+        return this.isAdmin() || this.isManager();
+    }
+
     getUser() {
         return this.userData;
     }
