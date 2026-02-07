@@ -4,7 +4,8 @@ from datetime import date
 from decimal import Decimal
 
 from ..database import DailyPurchase, DailyPurchaseCategory, get_next_id
-from ..auth import get_current_user, User
+from ..auth import get_current_user
+from ..database import User
 from ..schemas import (
     DailyPurchaseCreate,
     DailyPurchaseResponse,

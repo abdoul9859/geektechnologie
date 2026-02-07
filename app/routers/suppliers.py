@@ -3,7 +3,8 @@ from typing import Optional, List
 
 from ..database import Supplier, SupplierInvoice, get_next_id
 from ..schemas import SupplierQuickCreate, SupplierResponse
-from ..auth import get_current_user, User
+from ..auth import get_current_user
+from ..database import User
 
 router = APIRouter(
     prefix="/api/suppliers",
