@@ -28,19 +28,93 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://72.62.22.52:3001/api/sendPdf",
+        "url": "http://gotenberg:3000/forms/chromium/convert/url",
         "authentication": "none",
         "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={{ $json }}",
-        "options": {}
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formData",
+              "name": "url",
+              "value": "={{ $json.htmlUrl }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginTop",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginBottom",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginLeft",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginRight",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "printBackground",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
       },
-      "id": "send-pdf-node",
-      "name": "Send PDF WhatsApp",
+      "id": "generate-pdf-node",
+      "name": "Generate PDF",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://whatsapp_baileys:3002/api/sendPdfFile",
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formData",
+              "name": "phone",
+              "value": "={{ $('Extract Data').first().json.phone }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "filename",
+              "value": "={{ $('Extract Data').first().json.filename }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "caption",
+              "value": "={{ $('Extract Data').first().json.caption }}"
+            }
+          ]
+        },
+        "sendBinaryData": true,
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "send-whatsapp-node",
+      "name": "Send WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 300]
     },
     {
       "parameters": {
@@ -51,7 +125,7 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [850, 300]
+      "position": [1050, 300]
     }
   ],
   "connections": {
@@ -70,14 +144,25 @@
       "main": [
         [
           {
-            "node": "Send PDF WhatsApp",
+            "node": "Generate PDF",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send PDF WhatsApp": {
+    "Generate PDF": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp": {
       "main": [
         [
           {
@@ -93,7 +178,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "1",
+  "versionId": "3",
   "meta": {
     "instanceId": "geektechnologie"
   },

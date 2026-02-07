@@ -5,20 +5,58 @@
 {% block extra_head %}
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <style>
-  .whatsapp-frame-wrap {
-    height: calc(100vh - 140px);
-    min-height: 560px;
-    border: 1px solid rgba(0,0,0,0.1);
-    border-radius: 12px;
+  .wa-card {
+    max-width: 500px;
+    margin: 0 auto;
+    border-radius: 16px;
     overflow: hidden;
-    background: #f8f9fa;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
   }
-  #waFrame {
-    width: 100%;
-    height: 100%;
-    border: 0;
+  .wa-card-header {
+    background: linear-gradient(135deg, #25D366 0%, #128C7E 100%);
+    color: #fff;
+    padding: 24px;
+    text-align: center;
+  }
+  .wa-card-body {
+    padding: 32px;
+    text-align: center;
+    background: #fff;
+    min-height: 340px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+  }
+  #qrCanvas img {
+    border-radius: 12px;
+    border: 4px solid #25D366;
+    padding: 8px;
     background: #fff;
   }
+  .status-connected {
+    font-size: 64px;
+    line-height: 1;
+  }
+  .wa-instructions {
+    font-size: 0.9rem;
+    color: #666;
+    margin-top: 16px;
+    line-height: 1.5;
+  }
+  .wa-instructions ol {
+    text-align: left;
+    padding-left: 20px;
+  }
+  .spinner-qr {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #e9ecef;
+    border-top-color: #25D366;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 {% endblock %}
 
@@ -32,7 +70,7 @@
             <i class="bi bi-whatsapp me-2 text-success"></i>
             WhatsApp
           </h1>
-          <p class="text-muted mb-0">Scanner le QR code si déconnecté, sinon voir le statut connecté.</p>
+          <p class="text-muted mb-0">Connexion et statut du service WhatsApp.</p>
         </div>
         <div>
           <span class="badge bg-secondary" id="waStatusBadge">Chargement...</span>
@@ -43,36 +81,80 @@
 
   <div class="row">
     <div class="col-12">
-      <div class="whatsapp-frame-wrap">
-        <iframe id="waFrame" title="WhatsApp Connect" style="display:none"></iframe>
-        <div id="qrContainer" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;">
-          <div>
+      <div class="wa-card">
+        <div class="wa-card-header">
+          <i class="bi bi-whatsapp" style="font-size:2rem"></i>
+          <h4 class="mt-2 mb-0">WhatsApp Business</h4>
+        </div>
+        <div class="wa-card-body">
+          <!-- Loading state -->
+          <div id="stateLoading">
+            <div class="spinner-qr mx-auto"></div>
+            <p class="mt-3 text-muted">Connexion au service...</p>
+          </div>
+
+          <!-- QR Code state -->
+          <div id="stateQR" style="display:none">
             <div id="qrCanvas"></div>
-            <div class="text-center mt-2">
-              <button id="btnRefresh" class="btn btn-sm btn-primary">Rafraîchir QR</button>
-              <button id="btnCheck" class="btn btn-sm btn-outline-secondary ms-1">Vérifier statut</button>
+            <div class="wa-instructions">
+              <ol>
+                <li>Ouvrez <strong>WhatsApp</strong> sur votre telephone</li>
+                <li>Allez dans <strong>Parametres &gt; Appareils lies</strong></li>
+                <li>Appuyez sur <strong>Lier un appareil</strong></li>
+                <li>Scannez ce QR code</li>
+              </ol>
             </div>
+            <div class="mt-3">
+              <button id="btnRefresh" class="btn btn-sm btn-outline-success">
+                <i class="bi bi-arrow-clockwise me-1"></i>Rafraichir
+              </button>
+            </div>
+          </div>
+
+          <!-- Connected state -->
+          <div id="stateConnected" style="display:none">
+            <div class="status-connected">&#x2705;</div>
+            <h5 class="mt-3 text-success">Connecte</h5>
+            <p class="text-muted">WhatsApp est pret a envoyer des messages.</p>
+            <button id="btnRestart" class="btn btn-sm btn-outline-danger mt-2">
+              <i class="bi bi-arrow-repeat me-1"></i>Deconnecter et rescanner
+            </button>
+          </div>
+
+          <!-- Error state -->
+          <div id="stateError" style="display:none">
+            <div style="font-size:48px">&#x26A0;&#xFE0F;</div>
+            <h5 class="mt-3 text-danger">Service indisponible</h5>
+            <p class="text-muted">Le service WhatsApp ne repond pas.</p>
+            <button id="btnRetry" class="btn btn-sm btn-outline-primary mt-2">
+              <i class="bi bi-arrow-clockwise me-1"></i>Reessayer
+            </button>
           </div>
         </div>
       </div>
-      <div class="text-muted mt-2" id="waHint" style="display:none;"></div>
     </div>
   </div>
 </div>
 
 <script>
-  /* WhatsApp QR v2.1 - Fallback robuste */
   document.addEventListener('DOMContentLoaded', function() {
     const badge = document.getElementById('waStatusBadge');
-    const frame = document.getElementById('waFrame');
-    const qrContainer = document.getElementById('qrContainer');
+    const stateLoading = document.getElementById('stateLoading');
+    const stateQR = document.getElementById('stateQR');
+    const stateConnected = document.getElementById('stateConnected');
+    const stateError = document.getElementById('stateError');
     const qrCanvas = document.getElementById('qrCanvas');
-    const btnRefresh = document.getElementById('btnRefresh');
-    const btnCheck = document.getElementById('btnCheck');
-    const hint = document.getElementById('waHint');
+
     let lastQr = null;
     let isRendering = false;
     let isPolling = false;
+
+    function showState(state) {
+      stateLoading.style.display = state === 'loading' ? '' : 'none';
+      stateQR.style.display = state === 'qr' ? '' : 'none';
+      stateConnected.style.display = state === 'connected' ? '' : 'none';
+      stateError.style.display = state === 'error' ? '' : 'none';
+    }
 
     function setBadge(text, cls) {
       badge.className = 'badge ' + cls;
@@ -80,93 +162,99 @@
     }
 
     async function renderQr(qrString) {
-      if (!qrString) return;
-      if (isRendering) return;
+      if (!qrString || isRendering) return;
+      if (qrString === lastQr) return;
       isRendering = true;
+      lastQr = qrString;
       try {
-        if (qrString !== lastQr) {
-          lastQr = qrString;
-          qrCanvas.innerHTML = '<div class="text-muted">Génération du QR...</div>';
-          
-          const img = document.createElement('img');
-          img.alt = 'QR Code WhatsApp';
-          img.style.maxWidth = '100%';
-          img.style.height = 'auto';
-          
-          // Vérifier si QRCode est disponible
-          if (typeof QRCode !== 'undefined' && QRCode.toDataURL) {
-            try {
-              const dataUrl = await QRCode.toDataURL(qrString, { 
-                width: 280, 
-                margin: 1, 
-                errorCorrectionLevel: 'M' 
-              });
-              img.src = dataUrl;
-            } catch (e) {
-              console.warn('QRCode.toDataURL failed, using fallback', e);
-              // Fallback vers API externe
-              img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(qrString);
-            }
-          } else {
-            // QRCode non disponible, utiliser API externe directement
-            console.warn('QRCode library not loaded, using external API');
+        const img = document.createElement('img');
+        img.alt = 'QR Code WhatsApp';
+        img.style.width = '280px';
+        img.style.height = '280px';
+
+        if (typeof QRCode !== 'undefined' && QRCode.toDataURL) {
+          try {
+            const dataUrl = await QRCode.toDataURL(qrString, {
+              width: 280, margin: 1, errorCorrectionLevel: 'M'
+            });
+            img.src = dataUrl;
+          } catch (e) {
             img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(qrString);
           }
-          
-          qrCanvas.innerHTML = '';
-          qrCanvas.appendChild(img);
+        } else {
+          img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(qrString);
         }
+
+        qrCanvas.innerHTML = '';
+        qrCanvas.appendChild(img);
       } catch (e) {
-        console.error('QR render error', e);
-        qrCanvas.innerHTML = '<div class="text-danger">Erreur de génération du QR</div>';
+        qrCanvas.innerHTML = '<div class="text-danger">Erreur de generation du QR</div>';
       } finally {
         isRendering = false;
       }
     }
 
-    async function fetchJson(url) {
-      const res = await fetch(url, { cache: 'no-store' });
-      const data = await res.json().catch(() => ({}));
-      return { ok: res.ok, status: res.status, data };
-    }
-
     async function pollStatus() {
-      if (isPolling) return; // éviter la réentrance si un tick est encore en cours
+      if (isPolling) return;
       isPolling = true;
       try {
-        const { ok, data } = await fetchJson('/api/whatsapp/status');
-        if (!ok) throw new Error('status not ok');
+        const res = await fetch('/api/whatsapp/status', { cache: 'no-store' });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) throw new Error('service down');
+
         if (data.status === 'ready') {
-          setBadge('Connecté', 'bg-success');
-          hint.style.display = 'none';
+          setBadge('Connecte', 'bg-success');
+          showState('connected');
+          lastQr = null;
         } else {
-          setBadge('Déconnecté', 'bg-warning text-dark');
-          // Demander un QR si nécessaire
-          const qrResp = await fetchJson('/api/whatsapp/qr');
-          if (qrResp.data && qrResp.data.qr) {
-            await renderQr(qrResp.data.qr);
-            hint.style.display = '';
-            hint.textContent = 'Scanne le QR code avec WhatsApp (Paramètres → Appareils liés)';
-          } else if (qrResp.data && qrResp.data.status === 'already_connected') {
-            qrCanvas.innerHTML = '<div class="text-center fs-2">✅</div>';
-            hint.style.display = 'none';
+          setBadge('Deconnecte', 'bg-warning text-dark');
+          // Fetch QR code
+          const qrRes = await fetch('/api/whatsapp/qr', { cache: 'no-store' });
+          const qrData = await qrRes.json().catch(() => ({}));
+
+          if (qrData.qr) {
+            showState('qr');
+            await renderQr(qrData.qr);
+          } else if (qrData.status === 'already_connected') {
+            setBadge('Connecte', 'bg-success');
+            showState('connected');
           } else {
-            hint.style.display = '';
-            hint.textContent = 'QR non disponible. Réessaie dans quelques secondes…';
+            showState('qr');
+            qrCanvas.innerHTML = '<div class="text-muted"><div class="spinner-qr mx-auto mb-3"></div>En attente du QR code...</div>';
           }
         }
       } catch (e) {
         setBadge('Indisponible', 'bg-danger');
-      } finally { isPolling = false; }
+        showState('error');
+      } finally {
+        isPolling = false;
+      }
     }
 
-    // Boutons
-    if (btnRefresh) btnRefresh.addEventListener('click', pollStatus);
-    if (btnCheck) btnCheck.addEventListener('click', pollStatus);
+    async function restartService() {
+      if (!confirm('Deconnecter WhatsApp et generer un nouveau QR code ?')) return;
+      setBadge('Redemarrage...', 'bg-info');
+      showState('loading');
+      lastQr = null;
+      try {
+        await fetch('/api/whatsapp/restart', { method: 'POST' });
+      } catch (e) {}
+      // Wait for service to restart
+      setTimeout(pollStatus, 5000);
+    }
 
-    // Démarrer
+    // Button handlers
+    document.getElementById('btnRefresh').addEventListener('click', function() {
+      lastQr = null;
+      pollStatus();
+    });
+    document.getElementById('btnRestart').addEventListener('click', restartService);
+    document.getElementById('btnRetry').addEventListener('click', pollStatus);
+
+    // Start polling
     pollStatus();
-    setInterval(pollStatus, 2500);
+    setInterval(pollStatus, 3000);
   });
 </script>
 {% endblock %}

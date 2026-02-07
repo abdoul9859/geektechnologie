@@ -1,15 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, UploadFile, File
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import selectinload, load_only
-from sqlalchemy import or_, and_, func, text, exists, case
 from typing import List, Optional, Dict
 from decimal import Decimal
 import os
 import shutil
 from pathlib import Path
 from ..database import (
-    get_db, Product, ProductVariant, ProductVariantAttribute, StockMovement, Category,
-    CategoryAttribute, CategoryAttributeValue, UserSettings, DailySale, Invoice, Client
+    get_next_id, Product, ProductVariant, ProductVariantAttribute, StockMovement, Category,
+    CategoryAttribute, CategoryAttributeValue, UserSettings, DailySale, Invoice, Client,
+    InvoiceItem, QuotationItem, DeliveryNoteItem
 )
 from ..schemas import (
     ProductCreate, ProductUpdate, ProductResponse, ProductVariantCreate, StockMovementCreate,
@@ -20,32 +18,48 @@ from ..schemas import (
 from ..auth import get_current_user, require_role, require_any_role
 from decimal import Decimal
 from pydantic import BaseModel
-from ..database import InvoiceItem, QuotationItem, DeliveryNoteItem
-from sqlalchemy.exc import IntegrityError
 import logging
 import time
+import re
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
-def is_product_used_in_transactions(db: Session, product_id: int) -> bool:
-    """Vérifie si un produit est utilisé dans des factures, devis ou bons de livraison
+def is_product_used_in_transactions(product_id: int) -> bool:
+    """Verifie si un produit est utilise dans des factures, devis ou bons de livraison
     NOTE: Cette fonction retourne toujours False maintenant car on permet la modification des produits.
     La protection se fait au niveau des variantes individuelles."""
     return False
 
+# ---------------------------------------------------------------------------
+# Helper: enrich a Product document with its variants + variant attributes
+# so that ProductResponse (which expects a `variants` list) can serialise it.
+# ---------------------------------------------------------------------------
+async def _enrich_product_with_variants(product):
+    """Attach `variants` list (each with `attributes`) to a Product document."""
+    variants = await ProductVariant.find(
+        ProductVariant.product_id == product.product_id
+    ).sort(ProductVariant.variant_id).to_list()
+    for v in variants:
+        attrs = await ProductVariantAttribute.find(
+            ProductVariantAttribute.variant_id == v.variant_id
+        ).to_list()
+        v.attributes = attrs
+    product.variants = variants
+    return product
+
+
 @router.get("/id/{product_id}/can-modify")
 async def can_modify_product(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Vérifier si un produit peut être modifié (toujours True maintenant)"""
+    """Verifier si un produit peut etre modifie (toujours True maintenant)"""
     try:
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
-        # Les produits peuvent toujours être modifiés maintenant
+
+        # Les produits peuvent toujours etre modifies maintenant
         return {
             "product_id": product_id,
             "can_modify": True,
@@ -60,27 +74,26 @@ async def can_modify_product(
 @router.get("/id/{product_id}/variants/available")
 async def get_available_variants(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Récupérer les variantes disponibles d'un produit"""
+    """Recuperer les variantes disponibles d'un produit"""
     try:
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
-        available_variants = db.query(ProductVariant).filter(
+
+        available_variants = await ProductVariant.find(
             ProductVariant.product_id == product_id,
             ProductVariant.is_sold == False
-        ).all()
-        
+        ).to_list()
+
         variants_data = []
         for v in available_variants:
-            # Récupérer les attributs de la variante
-            attributes = db.query(ProductVariantAttribute).filter(
+            # Recuperer les attributs de la variante
+            attributes = await ProductVariantAttribute.find(
                 ProductVariantAttribute.variant_id == v.variant_id
-            ).all()
-            
+            ).to_list()
+
             variant_data = {
                 "variant_id": v.variant_id,
                 "imei_serial": v.imei_serial,
@@ -96,7 +109,7 @@ async def get_available_variants(
                 ]
             }
             variants_data.append(variant_data)
-        
+
         return {
             "product_id": product_id,
             "product_name": product.name,
@@ -111,20 +124,19 @@ async def get_available_variants(
 @router.get("/id/{product_id}/variants/sold")
 async def get_sold_variants(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Récupérer les variantes vendues d'un produit"""
+    """Recuperer les variantes vendues d'un produit"""
     try:
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
-        sold_variants = db.query(ProductVariant).filter(
+
+        sold_variants = await ProductVariant.find(
             ProductVariant.product_id == product_id,
             ProductVariant.is_sold == True
-        ).all()
-        
+        ).to_list()
+
         return {
             "product_id": product_id,
             "sold_variants": [
@@ -147,66 +159,65 @@ async def get_sold_variants(
 @router.get("/id/{product_id}/sales/invoices-by-serial")
 async def get_product_invoices_by_serial(
     product_id: int,
-    imei: Optional[str] = Query(None, description="IMEI/numéro de série de la variante"),
-    db: Session = Depends(get_db),
+    imei: Optional[str] = Query(None, description="IMEI/numero de serie de la variante"),
     current_user = Depends(get_current_user),
 ):
-    """Retourner les factures liées à un produit (et éventuellement à un IMEI précis).
+    """Retourner les factures liees a un produit (et eventuellement a un IMEI precis).
 
-    Stratégie:
+    Strategie:
     - On s'appuie sur la table DailySale qui contient product_id, variant_imei et invoice_id.
-    - On renvoie une liste d'objets facture légère (id, numéro, client, date, total) ordonnée
-      par date de vente décroissante.
+    - On renvoie une liste d'objets facture legere (id, numero, client, date, total) ordonnee
+      par date de vente decroissante.
     """
     try:
-        # Vérifier que le produit existe
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        # Verifier que le produit existe
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
 
-        base_q = (
-            db.query(DailySale, Invoice, Client.name.label("client_name"))
-            .join(Invoice, DailySale.invoice_id == Invoice.invoice_id, isouter=True)
-            .join(Client, Client.client_id == Invoice.client_id, isouter=True)
-            .filter(DailySale.product_id == product_id)
-        )
-
-        q = base_q
+        # Build query filter for DailySale
+        sale_filter = {"product_id": product_id}
         if imei:
             imei_clean = imei.strip()
             if imei_clean:
-                q = q.filter(func.trim(DailySale.variant_imei) == imei_clean)
+                sale_filter["variant_imei"] = imei_clean
 
-        rows = (
-            q.order_by(DailySale.sale_date.desc(), DailySale.sale_id.desc())
-            .limit(50)
-            .all()
-        )
+        sales = await DailySale.find(sale_filter).sort(
+            -DailySale.sale_date, -DailySale.sale_id
+        ).limit(50).to_list()
 
-        # Si aucune vente trouvée pour cet IMEI (ex: anciennes factures sans variant_imei enregistré),
-        # retomber sur toutes les ventes du produit pour ne pas renvoyer une liste vide.
-        if not rows:
-            rows = (
-                base_q.order_by(DailySale.sale_date.desc(), DailySale.sale_id.desc())
-                .limit(50)
-                .all()
-            )
+        # If no sales found for this IMEI, fall back to all sales for the product
+        if not sales and imei:
+            sales = await DailySale.find(
+                DailySale.product_id == product_id
+            ).sort(-DailySale.sale_date, -DailySale.sale_id).limit(50).to_list()
 
-        # Dédoublonner par facture
+        # Deduplicate by invoice and enrich with invoice + client data
         seen_ids: set[int] = set()
         invoices_data: list[dict] = []
-        for sale, inv, client_name in rows:
+        for sale in sales:
+            if not sale.invoice_id:
+                continue
+            if sale.invoice_id in seen_ids:
+                continue
+            seen_ids.add(sale.invoice_id)
+
+            inv = await Invoice.find_one(Invoice.invoice_id == sale.invoice_id)
             if not inv:
                 continue
-            if inv.invoice_id in seen_ids:
-                continue
-            seen_ids.add(inv.invoice_id)
+
+            client_name = ""
+            if inv.client_id:
+                client_doc = await Client.find_one(Client.client_id == inv.client_id)
+                if client_doc:
+                    client_name = client_doc.name or ""
+
             invoices_data.append(
                 {
                     "invoice_id": inv.invoice_id,
                     "invoice_number": inv.invoice_number,
                     "client_id": inv.client_id,
-                    "client_name": client_name or "",
+                    "client_name": client_name,
                     "date": inv.date,
                     "total": float(inv.total or 0),
                     "remaining_amount": float(inv.remaining_amount or 0),
@@ -227,7 +238,7 @@ async def get_product_invoices_by_serial(
         logging.error(f"Erreur lors de la récupération des factures liées au produit: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
 
-# Cache simple pour accélérer les endpoints produits (similaire au dashboard)
+# Cache simple pour accelerer les endpoints produits (similaire au dashboard)
 _cache = {}
 _cache_duration = 300  # 5 minutes
 
@@ -242,14 +253,14 @@ def _is_cache_valid(entry):
     return entry and (time.time() - entry.get('timestamp', 0)) < _cache_duration
 
 
-def _get_cached_or_compute(cache_key: str, compute_func):
+async def _get_cached_or_compute(cache_key: str, compute_func):
     if cache_key in _cache and _is_cache_valid(_cache[cache_key]):
         return _cache[cache_key]['data']
-    result = compute_func()
+    result = await compute_func()
     _cache[cache_key] = {"data": result, "timestamp": time.time()}
     return result
 
-# Modèles Pydantic pour les catégories
+# Modeles Pydantic pour les categories
 class CategoryBase(BaseModel):
     name: str
     requires_variants: bool = False
@@ -263,66 +274,23 @@ class CategoryUpdate(CategoryBase):
 class CategoryResponse(CategoryBase):
     id: str
     product_count: int
-    
+
     class Config:
         from_attributes = True
 
 # =====================
-# Conditions (état des produits)
+# Conditions (etat des produits)
 # =====================
 
 DEFAULT_CONDITIONS = ["neuf", "occasion", "venant"]
 DEFAULT_CONDITION_KEY = "product_conditions"
 
-def _ensure_condition_columns(db: Session):
-    """Ajoute les colonnes condition aux tables si absentes (sans Alembic)."""
-    try:
-        bind = db.get_bind()
-        dialect = bind.dialect.name
-        if dialect == 'sqlite':
-            # products
-            res = db.execute(text("PRAGMA table_info(products)"))
-            prod_cols = [row[1] for row in res]
-            if 'condition' not in prod_cols:
-                db.execute(text("ALTER TABLE products ADD COLUMN condition VARCHAR(50)"))
-                db.commit()
-            # product_variants
-            res2 = db.execute(text("PRAGMA table_info(product_variants)"))
-            var_cols = [row[1] for row in res2]
-            if 'condition' not in var_cols:
-                db.execute(text("ALTER TABLE product_variants ADD COLUMN condition VARCHAR(50)"))
-                db.commit()
-        else:
-            # PostgreSQL: vérifier si les colonnes existent avant de les ajouter
-            try:
-                # Vérifier si la colonne condition existe dans products
-                result = db.execute(text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = 'products' AND column_name = 'condition'"
-                ))
-                if not result.fetchone():
-                    db.execute(text("ALTER TABLE products ADD COLUMN condition VARCHAR(50)"))
-                
-                # Vérifier si la colonne condition existe dans product_variants  
-                result2 = db.execute(text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_name = 'product_variants' AND column_name = 'condition'"
-                ))
-                if not result2.fetchone():
-                    db.execute(text("ALTER TABLE product_variants ADD COLUMN condition VARCHAR(50)"))
-                
-                db.commit()
-            except Exception as e:
-                db.rollback()
-                logging.error(f"Erreur lors de l'ajout des colonnes condition: {e}")
-    except Exception as e:
-        logging.error(f"Erreur dans _ensure_condition_columns: {e}")
-
-def _get_allowed_conditions(db: Session) -> dict:
-    """Retourne {options: [...], default: str}. Stocké dans UserSettings (global)."""
-    setting = db.query(UserSettings).filter(
-        UserSettings.user_id.is_(None), UserSettings.setting_key == DEFAULT_CONDITION_KEY
-    ).first()
+async def _get_allowed_conditions() -> dict:
+    """Retourne {options: [...], default: str}. Stocke dans UserSettings (global)."""
+    setting = await UserSettings.find_one(
+        UserSettings.user_id == None,
+        UserSettings.setting_key == DEFAULT_CONDITION_KEY
+    )
     import json
     if setting and setting.setting_value:
         try:
@@ -334,38 +302,43 @@ def _get_allowed_conditions(db: Session) -> dict:
             pass
     return {"options": DEFAULT_CONDITIONS, "default": DEFAULT_CONDITIONS[0]}
 
-def _set_allowed_conditions(db: Session, options: list[str], default_value: str):
+async def _set_allowed_conditions(options: list[str], default_value: str):
     import json
     payload = json.dumps({"options": options, "default": default_value}, ensure_ascii=False)
-    setting = db.query(UserSettings).filter(
-        UserSettings.user_id.is_(None), UserSettings.setting_key == DEFAULT_CONDITION_KEY
-    ).first()
+    setting = await UserSettings.find_one(
+        UserSettings.user_id == None,
+        UserSettings.setting_key == DEFAULT_CONDITION_KEY
+    )
     if not setting:
-        setting = UserSettings(user_id=None, setting_key=DEFAULT_CONDITION_KEY, setting_value=payload)
+        new_id = await get_next_id("user_settings")
+        setting = UserSettings(
+            setting_id=new_id,
+            user_id=None,
+            setting_key=DEFAULT_CONDITION_KEY,
+            setting_value=payload
+        )
+        await setting.insert()
     else:
         setting.setting_value = payload
-    db.add(setting)
-    db.commit()
+        await setting.save()
 
 class ConditionsUpdate(BaseModel):
     options: List[str]
     default: Optional[str] = None
 
 @router.get("/settings/conditions", tags=["settings"])
-async def get_conditions_settings(db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    _ensure_condition_columns(db)
-    return _get_allowed_conditions(db)
+async def get_conditions_settings(current_user = Depends(get_current_user)):
+    return await _get_allowed_conditions()
 
 @router.put("/settings/conditions", tags=["settings"])
-async def update_conditions_settings(payload: ConditionsUpdate, db: Session = Depends(get_db), current_user = Depends(require_role("admin"))):
-    _ensure_condition_columns(db)
+async def update_conditions_settings(payload: ConditionsUpdate, current_user = Depends(require_role("admin"))):
     options = [o.strip() for o in (payload.options or []) if o and o.strip()]
     if not options:
         raise HTTPException(status_code=400, detail="La liste des états ne peut pas être vide")
     default_value = (payload.default or options[0]).strip()
     if default_value not in options:
         options.insert(0, default_value)
-    _set_allowed_conditions(db, options, default_value)
+    await _set_allowed_conditions(options, default_value)
     return {"options": options, "default": default_value}
 
 @router.get("/", response_model=List[ProductResponse])
@@ -383,94 +356,104 @@ async def list_products(
     model: Optional[str] = None,
     has_barcode: Optional[bool] = None,
     include_archived: Optional[bool] = False,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Lister les produits avec recherche et filtres"""
-    _ensure_condition_columns(db)
-    query = db.query(Product)
-    
-    # Par défaut, exclure les produits archivés
+    query_filter: dict = {}
+    and_conditions: list = []
+
+    # Par defaut, exclure les produits archives
     if not include_archived:
-        query = query.filter(or_(Product.is_archived == False, Product.is_archived.is_(None)))
-    
+        and_conditions.append({"$or": [{"is_archived": False}, {"is_archived": None}, {"is_archived": {"$exists": False}}]})
+
     if search:
-        # Recherche dans nom, description, marque, modèle et codes-barres (produit et variantes)
-        search_filter = or_(
-            Product.name.ilike(f"%{search}%"),
-            Product.description.ilike(f"%{search}%"),
-            Product.brand.ilike(f"%{search}%"),
-            Product.model.ilike(f"%{search}%"),
-            Product.barcode.ilike(f"%{search}%")
-        )
-        
-        # Recherche aussi dans les codes-barres ou IMEI/séries des variantes
-        variant_search = db.query(ProductVariant.product_id).filter(
-            or_(
-                ProductVariant.barcode.ilike(f"%{search}%"),
-                ProductVariant.imei_serial.ilike(f"%{search}%")
-            )
-        ).subquery()
-        
-        query = query.filter(
-            or_(
-                search_filter,
-                Product.product_id.in_(variant_search)
-            )
-        )
-    
+        search_pattern = {"$regex": re.escape(search), "$options": "i"}
+        # Search in variants too (barcode, imei_serial)
+        variant_matches = await ProductVariant.find(
+            {"$or": [
+                {"barcode": search_pattern},
+                {"imei_serial": search_pattern}
+            ]}
+        ).to_list()
+        variant_product_ids = list({v.product_id for v in variant_matches})
+
+        product_search_or = [
+            {"name": search_pattern},
+            {"description": search_pattern},
+            {"brand": search_pattern},
+            {"model": search_pattern},
+            {"barcode": search_pattern},
+        ]
+        if variant_product_ids:
+            product_search_or.append({"product_id": {"$in": variant_product_ids}})
+        and_conditions.append({"$or": product_search_or})
+
     if category:
-        query = query.filter(Product.category == category)
+        and_conditions.append({"category": category})
 
     if condition:
-        # Comparaison insensible à la casse et aux espaces pour produit ET variantes
         condition_lower = condition.strip().lower()
-        
-        # Sous-requête pour les variantes ayant cette condition
-        variant_condition_subquery = db.query(ProductVariant.product_id).filter(
-            func.lower(func.trim(ProductVariant.condition)) == condition_lower
-        )
-        
-        # Filtrer les produits qui ont soit la condition au niveau produit, soit des variantes avec cette condition
-        query = query.filter(
-            or_(
-                func.lower(func.trim(Product.condition)) == condition_lower,
-                Product.product_id.in_(variant_condition_subquery)
-            )
-        )
+        # Products with matching condition OR variants with matching condition
+        variant_cond_matches = await ProductVariant.find(
+            {"condition": {"$regex": f"^\\s*{re.escape(condition_lower)}\\s*$", "$options": "i"}}
+        ).to_list()
+        variant_cond_pids = list({v.product_id for v in variant_cond_matches})
+        cond_or = [{"condition": {"$regex": f"^\\s*{re.escape(condition_lower)}\\s*$", "$options": "i"}}]
+        if variant_cond_pids:
+            cond_or.append({"product_id": {"$in": variant_cond_pids}})
+        and_conditions.append({"$or": cond_or})
 
     if min_price is not None:
-        query = query.filter(Product.price >= Decimal(min_price))
+        and_conditions.append({"price": {"$gte": Decimal(min_price)}})
     if max_price is not None:
-        query = query.filter(Product.price <= Decimal(max_price))
+        and_conditions.append({"price": {"$lte": Decimal(max_price)}})
 
     if brand:
-        query = query.filter(Product.brand.ilike(f"%{brand}%"))
+        and_conditions.append({"brand": {"$regex": re.escape(brand), "$options": "i"}})
     if model:
-        query = query.filter(Product.model.ilike(f"%{model}%"))
+        and_conditions.append({"model": {"$regex": re.escape(model), "$options": "i"}})
 
     if has_barcode is True:
-        query = query.filter(Product.barcode.isnot(None), func.length(func.trim(Product.barcode)) > 0)
+        and_conditions.append({"barcode": {"$ne": None}})
+        and_conditions.append({"barcode": {"$ne": ""}})
     elif has_barcode is False:
-        query = query.filter(or_(Product.barcode.is_(None), func.length(func.trim(Product.barcode)) == 0))
+        and_conditions.append({"$or": [{"barcode": None}, {"barcode": ""}, {"barcode": {"$exists": False}}]})
 
-    # Existence-based filters
-    pv_exists_available = exists().where(and_(ProductVariant.product_id == Product.product_id, ProductVariant.is_sold == False))
-    pv_exists_any = exists().where(ProductVariant.product_id == Product.product_id)
-    if in_stock is True:
-        query = query.filter(or_(Product.quantity > 0, pv_exists_available))
-    elif in_stock is False:
-        query = query.filter(and_(Product.quantity <= 0, ~pv_exists_available))
+    # For in_stock / has_variants filters we need variant info
+    if in_stock is not None or has_variants is not None:
+        # Get all product_ids that have at least one variant
+        all_variant_pids_docs = await ProductVariant.find().to_list()
+        pids_with_any_variant = set()
+        pids_with_available_variant = set()
+        for v in all_variant_pids_docs:
+            pids_with_any_variant.add(v.product_id)
+            if not v.is_sold:
+                pids_with_available_variant.add(v.product_id)
 
-    if has_variants is True:
-        query = query.filter(pv_exists_any)
-    elif has_variants is False:
-        query = query.filter(~pv_exists_any)
-    
-    # Tri par défaut: dernier produit ajouté en haut
-    query = query.order_by(Product.created_at.desc())
-    
-    products = query.offset(skip).limit(limit).all()
+        if in_stock is True:
+            and_conditions.append({"$or": [
+                {"quantity": {"$gt": 0}},
+                {"product_id": {"$in": list(pids_with_available_variant)}}
+            ]})
+        elif in_stock is False:
+            # Out of stock: quantity <= 0 AND no available variants
+            pids_in_stock = pids_with_available_variant
+            and_conditions.append({"quantity": {"$lte": 0}})
+            if pids_in_stock:
+                and_conditions.append({"product_id": {"$nin": list(pids_in_stock)}})
+
+        if has_variants is True:
+            and_conditions.append({"product_id": {"$in": list(pids_with_any_variant)}})
+        elif has_variants is False:
+            and_conditions.append({"product_id": {"$nin": list(pids_with_any_variant)}})
+
+    if and_conditions:
+        query_filter = {"$and": and_conditions} if len(and_conditions) > 1 else and_conditions[0]
+
+    products = await Product.find(query_filter).sort(
+        -Product.created_at
+    ).skip(skip).limit(limit).to_list()
+
     # Mask purchase_price for non-manager/admin
     try:
         role = getattr(current_user, "role", "user")
@@ -482,15 +465,20 @@ async def list_products(
                     pass
     except Exception:
         pass
-    # Si un filtre de condition est actif, ne retourner que les variantes correspondant à cette condition
+
+    # Enrich with variants
+    for p in products:
+        await _enrich_product_with_variants(p)
+
+    # Si un filtre de condition est actif, ne retourner que les variantes correspondant a cette condition
     if condition:
         cond_lower = (condition or "").strip().lower()
         for p in products:
             try:
-                _ = p.variants  # force load
-                p.variants = [v for v in (p.variants or []) if ((v.condition or "").strip().lower() == cond_lower)]
+                p.variants = [v for v in (p.variants or []) if ((getattr(v, 'condition', None) or "").strip().lower() == cond_lower)]
             except Exception:
                 pass
+
     return products
 
 class PaginatedProductsResponse(BaseModel):
@@ -514,146 +502,149 @@ async def list_products_paginated(
     include_archived: Optional[bool] = False,
     sort_by: Optional[str] = Query("created_at"),  # name | category | price | stock | barcode | created_at
     sort_dir: Optional[str] = Query("desc"),  # asc | desc
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Lister les produits avec pagination (retourne items + total)."""
-    _ensure_condition_columns(db)
-    # Eager-load only the necessary columns to speed up list view
-    # Note: nous n'incluons plus le selectinload des variantes pour la liste; un résumé sera calculé séparément
-    base_query = (
-        db.query(Product)
-        .options(
-            load_only(
-                Product.product_id,
-                Product.name,
-                Product.description,
-                Product.quantity,
-                Product.price,
-                Product.purchase_price,
-                Product.category,
-                Product.brand,
-                Product.model,
-                Product.barcode,
-                Product.condition,
-                Product.has_unique_serial,
-                Product.entry_date,
-                Product.notes,
-                Product.image_path,
-                Product.created_at,
-                Product.is_archived,
-            )
-        )
-    )
-    
-    # Par défaut, exclure les produits archivés
+    and_conditions: list = []
+
+    # Par defaut, exclure les produits archives
     if not include_archived:
-        base_query = base_query.filter(or_(Product.is_archived == False, Product.is_archived.is_(None)))
+        and_conditions.append({"$or": [{"is_archived": False}, {"is_archived": None}, {"is_archived": {"$exists": False}}]})
 
     if search:
-        search_filter = or_(
-            Product.name.ilike(f"%{search}%"),
-            Product.description.ilike(f"%{search}%"),
-            Product.brand.ilike(f"%{search}%"),
-            Product.model.ilike(f"%{search}%"),
-            Product.barcode.ilike(f"%{search}%")
-        )
-        variant_search = db.query(ProductVariant.product_id).filter(
-            or_(
-                ProductVariant.barcode.ilike(f"%{search}%"),
-                ProductVariant.imei_serial.ilike(f"%{search}%")
-            )
-        ).subquery()
-        base_query = base_query.filter(or_(search_filter, Product.product_id.in_(variant_search)))
+        search_pattern = {"$regex": re.escape(search), "$options": "i"}
+        variant_matches = await ProductVariant.find(
+            {"$or": [
+                {"barcode": search_pattern},
+                {"imei_serial": search_pattern}
+            ]}
+        ).to_list()
+        variant_product_ids = list({v.product_id for v in variant_matches})
+
+        product_search_or = [
+            {"name": search_pattern},
+            {"description": search_pattern},
+            {"brand": search_pattern},
+            {"model": search_pattern},
+            {"barcode": search_pattern},
+        ]
+        if variant_product_ids:
+            product_search_or.append({"product_id": {"$in": variant_product_ids}})
+        and_conditions.append({"$or": product_search_or})
 
     if category:
-        base_query = base_query.filter(Product.category == category)
+        and_conditions.append({"category": category})
 
     if condition:
-        # Comparaison insensible à la casse et aux espaces pour produit ET variantes
         condition_lower = condition.strip().lower()
-        
-        # Sous-requête pour les variantes ayant cette condition
-        variant_condition_subquery = db.query(ProductVariant.product_id).filter(
-            func.lower(func.trim(ProductVariant.condition)) == condition_lower
-        )
-        
-        # Filtrer les produits qui ont soit la condition au niveau produit, soit des variantes avec cette condition
-        base_query = base_query.filter(
-            or_(
-                func.lower(func.trim(Product.condition)) == condition_lower,
-                Product.product_id.in_(variant_condition_subquery)
-            )
-        )
+        variant_cond_matches = await ProductVariant.find(
+            {"condition": {"$regex": f"^\\s*{re.escape(condition_lower)}\\s*$", "$options": "i"}}
+        ).to_list()
+        variant_cond_pids = list({v.product_id for v in variant_cond_matches})
+        cond_or = [{"condition": {"$regex": f"^\\s*{re.escape(condition_lower)}\\s*$", "$options": "i"}}]
+        if variant_cond_pids:
+            cond_or.append({"product_id": {"$in": variant_cond_pids}})
+        and_conditions.append({"$or": cond_or})
 
     if min_price is not None:
-        base_query = base_query.filter(Product.price >= Decimal(min_price))
+        and_conditions.append({"price": {"$gte": Decimal(min_price)}})
     if max_price is not None:
-        base_query = base_query.filter(Product.price <= Decimal(max_price))
+        and_conditions.append({"price": {"$lte": Decimal(max_price)}})
 
     if brand:
-        base_query = base_query.filter(Product.brand.ilike(f"%{brand}%"))
+        and_conditions.append({"brand": {"$regex": re.escape(brand), "$options": "i"}})
     if model:
-        base_query = base_query.filter(Product.model.ilike(f"%{model}%"))
+        and_conditions.append({"model": {"$regex": re.escape(model), "$options": "i"}})
 
     if has_barcode is True:
-        base_query = base_query.filter(Product.barcode.isnot(None), func.length(func.trim(Product.barcode)) > 0)
+        and_conditions.append({"barcode": {"$ne": None}})
+        and_conditions.append({"barcode": {"$ne": ""}})
     elif has_barcode is False:
-        base_query = base_query.filter(or_(Product.barcode.is_(None), func.length(func.trim(Product.barcode)) == 0))
+        and_conditions.append({"$or": [{"barcode": None}, {"barcode": ""}, {"barcode": {"$exists": False}}]})
 
-    pv_exists_available = exists().where(and_(ProductVariant.product_id == Product.product_id, ProductVariant.is_sold == False))
-    pv_exists_any = exists().where(ProductVariant.product_id == Product.product_id)
-    if in_stock is True:
-        base_query = base_query.filter(or_(Product.quantity > 0, pv_exists_available))
-    elif in_stock is False:
-        base_query = base_query.filter(and_(Product.quantity <= 0, ~pv_exists_available))
+    # For in_stock / has_variants filters
+    # We pre-compute variant info only when these filters are active
+    pids_with_any_variant = set()
+    pids_with_available_variant = set()
+    need_variant_scan = (in_stock is not None or has_variants is not None)
+    if need_variant_scan:
+        all_variant_docs = await ProductVariant.find().to_list()
+        for v in all_variant_docs:
+            pids_with_any_variant.add(v.product_id)
+            if not v.is_sold:
+                pids_with_available_variant.add(v.product_id)
 
-    if has_variants is True:
-        base_query = base_query.filter(pv_exists_any)
-    elif has_variants is False:
-        base_query = base_query.filter(~pv_exists_any)
+        if in_stock is True:
+            and_conditions.append({"$or": [
+                {"quantity": {"$gt": 0}},
+                {"product_id": {"$in": list(pids_with_available_variant)}}
+            ]})
+        elif in_stock is False:
+            and_conditions.append({"quantity": {"$lte": 0}})
+            if pids_with_available_variant:
+                and_conditions.append({"product_id": {"$nin": list(pids_with_available_variant)}})
 
-    # Prepare join for stock sorting: available variants per product (non sold)
-    available_variants_sub = (
-        db.query(
-            ProductVariant.product_id.label('product_id'),
-            func.sum(case((ProductVariant.is_sold == False, 1), else_=0)).label('available')
-        )
-        .group_by(ProductVariant.product_id)
-        .subquery()
-    )
-    base_query = base_query.outerjoin(available_variants_sub, available_variants_sub.c.product_id == Product.product_id)
+        if has_variants is True:
+            and_conditions.append({"product_id": {"$in": list(pids_with_any_variant)}})
+        elif has_variants is False:
+            and_conditions.append({"product_id": {"$nin": list(pids_with_any_variant)}})
 
-    # Apply ordering
+    query_filter = {}
+    if and_conditions:
+        query_filter = {"$and": and_conditions} if len(and_conditions) > 1 else and_conditions[0]
+
+    # Sorting
     sort_key = (sort_by or "name").strip().lower()
     sort_dir_key = (sort_dir or "asc").strip().lower()
-    dir_desc = sort_dir_key == 'desc'
-    stock_expr = func.coalesce(available_variants_sub.c.available, Product.quantity)
-
-    if sort_key == 'price':
-        order_expr = Product.price.desc() if dir_desc else Product.price.asc()
-    elif sort_key == 'category':
-        order_expr = Product.category.desc() if dir_desc else Product.category.asc()
-    elif sort_key == 'barcode':
-        order_expr = Product.barcode.desc() if dir_desc else Product.barcode.asc()
-    elif sort_key == 'stock':
-        order_expr = stock_expr.desc() if dir_desc else stock_expr.asc()
-    elif sort_key == 'created_at':
-        order_expr = Product.created_at.desc() if dir_desc else Product.created_at.asc()
-    else:  # name (default)
-        order_expr = Product.name.desc() if dir_desc else Product.name.asc()
-
-    base_query = base_query.order_by(order_expr, Product.product_id.asc())
+    dir_desc = sort_dir_key == "desc"
 
     start_time = time.time()
-    # Calculer le total AVANT les jointures/tri pour de meilleures perfs
-    filtered_query = base_query
-    total = filtered_query.count()
+
+    # Total count
+    total = await Product.find(query_filter).count()
     count_time = time.time()
     logging.info(f"Product count (filtered) took: {count_time - start_time:.4f} seconds")
 
-    skip = (page - 1) * page_size
-    items = base_query.offset(skip).limit(page_size).all()
+    # For "stock" sorting, we need to compute available variant counts and sort in Python
+    # For other sorts, we can use MongoDB sort directly
+    skip_val = (page - 1) * page_size
+
+    if sort_key == "stock":
+        # Load all matching products, compute effective stock, sort in Python, then paginate
+        all_products = await Product.find(query_filter).to_list()
+
+        # Build available variants count per product
+        product_ids_all = [p.product_id for p in all_products]
+        avail_map: dict[int, int] = {}
+        if product_ids_all:
+            avail_variants = await ProductVariant.find(
+                ProductVariant.product_id.is_in(product_ids_all) if hasattr(ProductVariant.product_id, 'is_in') else {"product_id": {"$in": product_ids_all}},
+                ProductVariant.is_sold == False
+            ).to_list()
+            for v in avail_variants:
+                avail_map[v.product_id] = avail_map.get(v.product_id, 0) + 1
+
+        def stock_key(p):
+            return avail_map.get(p.product_id, 0) if avail_map.get(p.product_id) is not None else (p.quantity or 0)
+
+        all_products.sort(key=stock_key, reverse=dir_desc)
+        items = all_products[skip_val:skip_val + page_size]
+    else:
+        # Map sort_key to Product field
+        sort_field_map = {
+            "price": Product.price,
+            "category": Product.category,
+            "barcode": Product.barcode,
+            "created_at": Product.created_at,
+            "name": Product.name,
+        }
+        sort_field = sort_field_map.get(sort_key, Product.name)
+        mongo_sort = -sort_field if dir_desc else +sort_field
+
+        items = await Product.find(query_filter).sort(
+            mongo_sort, +Product.product_id
+        ).skip(skip_val).limit(page_size).to_list()
+
     # Mask purchase_price for non-manager/admin
     try:
         role = getattr(current_user, "role", "user")
@@ -666,63 +657,43 @@ async def list_products_paginated(
     except Exception:
         pass
 
-    # Calcul d'un résumé variantes pour les produits affichés (un seul aller-retour DB)
+    # Compute variant summary for displayed products (single DB round-trip)
     product_ids = [p.product_id for p in items]
-    variant_summary_map = {}
+    variant_summary_map: dict = {}
     if product_ids:
-        # Ensemble des produits qui ont au moins une variante (vendue ou non)
-        variant_any_rows = (
-            db.query(ProductVariant.product_id)
-            .filter(ProductVariant.product_id.in_(product_ids))
-            .group_by(ProductVariant.product_id)
-            .all()
-        )
-        has_variants_set = {r[0] for r in variant_any_rows}
+        all_variants_for_page = await ProductVariant.find(
+            {"product_id": {"$in": product_ids}}
+        ).to_list()
 
-        # Compte des variantes disponibles et répartition par condition (uniquement non vendues)
-        rows = (
-            db.query(
-                ProductVariant.product_id,
-                func.lower(func.coalesce(func.trim(ProductVariant.condition), '')).label('cond_key'),
-                func.count(ProductVariant.variant_id).label('available_by_condition')
-            )
-            .filter(
-                ProductVariant.product_id.in_(product_ids),
-                ProductVariant.is_sold == False
-            )
-            .group_by(
-                ProductVariant.product_id,
-                ProductVariant.condition
-            )
-            .all()
-        )
-        # Agréger par produit
+        has_variants_set = set()
+        # Build per-product summary
         for pid in product_ids:
             variant_summary_map[pid] = {
-                'has_variants': pid in has_variants_set,
+                'has_variants': False,
                 'available': 0,
                 'by_condition': {}
             }
-        for pid, cond_key, available_by_cond in rows:
-            entry = variant_summary_map.get(pid)
-            if entry is None:
-                entry = {'has_variants': pid in has_variants_set, 'available': 0, 'by_condition': {}}
-                variant_summary_map[pid] = entry
-            key = (cond_key or '').strip() or 'inconnu'
-            count_val = int(available_by_cond or 0)
-            entry['by_condition'][key] = int((entry['by_condition'].get(key, 0)) + count_val)
-            entry['available'] = entry['available'] + count_val
 
-    # Injecter les champs légers dans les objets Product renvoyés (les pydantic ProductListItem les acceptera)
+        for v in all_variants_for_page:
+            has_variants_set.add(v.product_id)
+            entry = variant_summary_map.get(v.product_id)
+            if entry is None:
+                entry = {'has_variants': True, 'available': 0, 'by_condition': {}}
+                variant_summary_map[v.product_id] = entry
+            entry['has_variants'] = True
+            if not v.is_sold:
+                cond_key = ((v.condition or "").strip().lower()) or "inconnu"
+                entry['by_condition'][cond_key] = entry['by_condition'].get(cond_key, 0) + 1
+                entry['available'] += 1
+
+    # Inject lightweight fields into Product objects
     for p in items:
         try:
             sum_entry = variant_summary_map.get(p.product_id)
             p.has_variants = bool(sum_entry.get('has_variants')) if sum_entry else False
             p.variants_available = int(sum_entry.get('available', 0)) if sum_entry else 0
             p.variant_condition_counts = sum_entry.get('by_condition', {}) if sum_entry else {}
-            # éviter de renvoyer toutes les variantes pour la liste
-            if hasattr(p, 'variants'):
-                p.variants = []
+            p.variants = []
         except Exception:
             pass
 
@@ -735,48 +706,45 @@ async def list_products_paginated(
 @router.get("/id/{product_id}", response_model=ProductResponse)
 async def get_product(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Obtenir un produit par ID"""
-    _ensure_condition_columns(db)
-    product = db.query(Product).filter(Product.product_id == product_id).first()
+    product = await Product.find_one(Product.product_id == product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Produit non trouvé")
+    await _enrich_product_with_variants(product)
     return product
 
 @router.post("/", response_model=ProductResponse)
 async def create_product(
     product_data: ProductCreate,
-    db: Session = Depends(get_db),
     current_user = Depends(require_any_role(["user", "manager"]))
 ):
-    """Créer un nouveau produit avec variantes selon la règle métier"""
+    """Creer un nouveau produit avec variantes selon la regle metier"""
     try:
-        print(f"🔍 Received product data: {product_data}")
-        print(f"🔍 Product data dict: {product_data.dict()}")
-        print(f"🔍 Variants: {product_data.variants}")
-        _ensure_condition_columns(db)
-        cond_cfg = _get_allowed_conditions(db)
+        print(f"Received product data: {product_data}")
+        print(f"Product data dict: {product_data.dict()}")
+        print(f"Variants: {product_data.variants}")
+        cond_cfg = await _get_allowed_conditions()
         allowed = set([c.lower() for c in cond_cfg["options"]])
         default_cond = cond_cfg["default"]
-        # Validation selon la règle métier des mémoires
+        # Validation selon la regle metier des memoires
         has_variants = len(product_data.variants) > 0
-        
-        # Normaliser le code-barres produit (autorisé même si variantes, il sert de code partagé)
+
+        # Normaliser le code-barres produit (autorise meme si variantes, il sert de code partage)
         normalized_barcode = None
         if product_data.barcode is not None:
             bc = (product_data.barcode or "").strip()
             normalized_barcode = bc or None
-        
-        # Vérifier l'unicité du code-barres produit (global: produits + variantes)
+
+        # Verifier l'unicite du code-barres produit (global: produits + variantes)
         if normalized_barcode:
-            exists_prod = db.query(Product).filter(Product.barcode == normalized_barcode).first()
-            exists_var = db.query(ProductVariant).filter(ProductVariant.barcode == normalized_barcode).first()
+            exists_prod = await Product.find_one(Product.barcode == normalized_barcode)
+            exists_var = await ProductVariant.find_one(ProductVariant.barcode == normalized_barcode)
             if exists_prod or exists_var:
                 raise HTTPException(status_code=400, detail="Ce code-barres existe déjà")
-        
-        # Normaliser et contrôler les variantes
+
+        # Normaliser et controler les variantes
         variant_barcodes = []
         variant_serials = []
         normalized_variants = []
@@ -799,24 +767,32 @@ async def create_product(
             raise HTTPException(status_code=400, detail="Codes-barres de variantes en double dans la demande")
         if len(set(variant_serials)) != len(variant_serials):
             raise HTTPException(status_code=400, detail="IMEI/numéros de série en double dans la demande")
-        # Unicité globale pour variantes
+        # Unicite globale pour variantes
         if variant_barcodes:
-            exists_var_barcodes = db.query(ProductVariant).filter(ProductVariant.barcode.in_(variant_barcodes)).all()
-            exists_prod_barcodes = db.query(Product).filter(Product.barcode.in_(variant_barcodes)).all()
+            exists_var_barcodes = await ProductVariant.find(
+                {"barcode": {"$in": variant_barcodes}}
+            ).to_list()
+            exists_prod_barcodes = await Product.find(
+                {"barcode": {"$in": variant_barcodes}}
+            ).to_list()
             if exists_var_barcodes or exists_prod_barcodes:
                 raise HTTPException(status_code=400, detail="Un ou plusieurs codes-barres de variantes existent déjà")
         if variant_serials:
-            exists_serials = db.query(ProductVariant).filter(ProductVariant.imei_serial.in_(variant_serials)).all()
+            exists_serials = await ProductVariant.find(
+                {"imei_serial": {"$in": variant_serials}}
+            ).to_list()
             if exists_serials:
                 raise HTTPException(status_code=400, detail="Un ou plusieurs IMEI/numéros de série existent déjà")
-        
-        # Créer le produit
+
+        # Creer le produit
         # Normaliser/valider condition produit
         prod_condition = (product_data.condition or default_cond)
         if prod_condition and prod_condition.lower() not in allowed:
             raise HTTPException(status_code=400, detail="Condition de produit invalide")
 
+        product_id = await get_next_id("products")
         db_product = Product(
+            product_id=product_id,
             name=product_data.name,
             description=product_data.description,
             quantity=len(normalized_variants) if has_variants else product_data.quantity,
@@ -832,59 +808,58 @@ async def create_product(
             entry_date=product_data.entry_date,
             notes=product_data.notes
         )
-        
-        db.add(db_product)
-        db.flush()  # Pour obtenir l'ID du produit
-        
-        # Créer les variantes si présentes
+
+        await db_product.insert()
+
+        # Creer les variantes si presentes
+        created_variants = []
         for nv in normalized_variants:
+            variant_id = await get_next_id("product_variants")
             db_variant = ProductVariant(
+                variant_id=variant_id,
                 product_id=db_product.product_id,
                 imei_serial=nv['imei_serial'],
                 barcode=nv['barcode'],
                 condition=nv['condition']
             )
-            db.add(db_variant)
-            db.flush()
-            
-        # Créer les attributs de la variante (si présents dans payload d'origine)
-        for db_v, orig_v in zip(db_product.variants, (product_data.variants or [])):
+            await db_variant.insert()
+            created_variants.append(db_variant)
+
+        # Creer les attributs de la variante (si presents dans payload d'origine)
+        for db_v, orig_v in zip(created_variants, (product_data.variants or [])):
             for attr_data in getattr(orig_v, 'attributes', []) or []:
+                attr_id = await get_next_id("product_variant_attributes")
                 db_attr = ProductVariantAttribute(
+                    attribute_id=attr_id,
                     variant_id=db_v.variant_id,
                     attribute_name=attr_data.attribute_name,
                     attribute_value=attr_data.attribute_value
                 )
-                db.add(db_attr)
-        
-        # Créer un mouvement de stock d'entrée
+                await db_attr.insert()
+
+        # Creer un mouvement de stock d'entree
         if db_product.quantity > 0:
+            movement_id = await get_next_id("stock_movements")
             stock_movement = StockMovement(
+                movement_id=movement_id,
                 product_id=db_product.product_id,
                 quantity=db_product.quantity,
                 movement_type="IN",
                 reference_type="CREATION",
                 notes="Création du produit"
             )
-            db.add(stock_movement)
-        
-        db.commit()
-        db.refresh(db_product)
-        
+            await stock_movement.insert()
+
+        # Enrich for response
+        await _enrich_product_with_variants(db_product)
         return db_product
-        
+
     except HTTPException:
         raise
-    except IntegrityError as ie:
-        db.rollback()
-        # Essayer de mapper les erreurs d'unicité en 400
-        msg = str(getattr(ie, 'orig', ie))
-        if 'unique' in msg.lower() or 'duplicate key value' in msg.lower():
-            raise HTTPException(status_code=400, detail="Violation d'unicité (code-barres ou IMEI déjà utilisé)")
-        logging.error(f"Erreur d'intégrité lors de la création du produit: {ie}")
-        raise HTTPException(status_code=500, detail="Erreur serveur")
     except Exception as e:
-        db.rollback()
+        error_msg = str(e)
+        if 'duplicate key' in error_msg.lower() or 'unique' in error_msg.lower() or 'E11000' in error_msg:
+            raise HTTPException(status_code=400, detail="Violation d'unicité (code-barres ou IMEI déjà utilisé)")
         logging.error(f"Erreur lors de la création du produit: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
 
@@ -892,78 +867,78 @@ async def create_product(
 async def update_product(
     product_id: int,
     product_data: ProductUpdate,
-    db: Session = Depends(get_db),
     current_user = Depends(require_any_role(["user", "manager"]))
 ):
-    """Mettre à jour un produit"""
+    """Mettre a jour un produit"""
     try:
-        _ensure_condition_columns(db)
-        cond_cfg = _get_allowed_conditions(db)
+        cond_cfg = await _get_allowed_conditions()
         allowed = set([c.lower() for c in cond_cfg["options"]])
         default_cond = cond_cfg["default"]
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
-        # Vérifier si le produit est utilisé dans des transactions
-        if is_product_used_in_transactions(db, product_id):
+
+        # Verifier si le produit est utilise dans des transactions
+        if is_product_used_in_transactions(product_id):
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Ce produit ne peut pas être modifié car il est déjà utilisé dans des factures, devis ou bons de livraison"
             )
-        
-        # Validation selon la règle métier
-        has_variants = len(product.variants) > 0
+
+        # Validation selon la regle metier
+        existing_variants = await ProductVariant.find(
+            ProductVariant.product_id == product_id
+        ).to_list()
+        has_variants = len(existing_variants) > 0
         new_variants = product_data.variants if product_data.variants is not None else []
         will_have_variants = len(new_variants) > 0 or has_variants
-        
-        # Normaliser barcode produit reçu: trim -> None si vide
+
+        # Normaliser barcode produit recu: trim -> None si vide
         incoming_barcode = None
         if product_data.barcode is not None:
             bc = (product_data.barcode or "").strip()
             incoming_barcode = bc or None
-        
-        # Règle: si le produit a/va avoir des variantes, interdire le code-barres produit
+
+        # Regle: si le produit a/va avoir des variantes, interdire le code-barres produit
         if will_have_variants and incoming_barcode:
             raise HTTPException(
                 status_code=400,
                 detail="Un produit avec variantes ne peut pas avoir de code-barres"
             )
-        
-        # Préparer les données à mettre à jour (sans variants)
+
+        # Preparer les donnees a mettre a jour (sans variants)
         update_data = product_data.dict(exclude_unset=True, exclude={'variants'})
-        
+
         # Normaliser et valider la condition si fournie
         if 'condition' in update_data and update_data['condition'] is not None:
             if update_data['condition'].lower() not in allowed:
                 raise HTTPException(status_code=400, detail="Condition de produit invalide")
-        
-        # Normaliser barcode côté update_data
+
+        # Normaliser barcode cote update_data
         if 'barcode' in update_data:
             update_data['barcode'] = None if will_have_variants else incoming_barcode
-        
-        # Vérifier l'unicité du code-barres produit si fourni et modifié
+
+        # Verifier l'unicite du code-barres produit si fourni et modifie
         if update_data.get('barcode'):
-            existing_product = (
-                db.query(Product)
-                .filter(Product.barcode == update_data['barcode'], Product.product_id != product_id)
-                .first()
+            existing_product = await Product.find_one(
+                Product.barcode == update_data['barcode'],
+                Product.product_id != product_id
             )
             if existing_product:
                 raise HTTPException(status_code=400, detail="Ce code-barres existe déjà")
-        
-        # Appliquer les mises à jour champ par champ
+
+        # Appliquer les mises a jour champ par champ
         for field, value in update_data.items():
-            # Normaliser les chaînes vides en None pour éviter les contraintes d'unicité sur ''
+            # Normaliser les chaines vides en None pour eviter les contraintes d'unicite sur ''
             if isinstance(value, str):
                 value = value.strip()
                 if value == "":
                     value = None
             setattr(product, field, value)
-        
-        # Gérer les variantes si fournies
+
+        # Gerer les variantes si fournies
         if product_data.variants is not None:
-            # Normaliser les données variantes et préparer des listes pour validation
+            # Normaliser les donnees variantes et preparer des listes pour validation
             norm_variants = []
             variant_barcodes = []
             variant_serials = []
@@ -981,80 +956,70 @@ async def update_product(
                 if v_barcode:
                     variant_barcodes.append(v_barcode)
                 variant_serials.append(v_serial)
-            
-            # Détecter doublons dans le payload
+
+            # Detecter doublons dans le payload
             if len(set(variant_barcodes)) != len(variant_barcodes):
                 raise HTTPException(status_code=400, detail="Codes-barres de variantes en double dans la demande")
             if len(set(variant_serials)) != len(variant_serials):
                 raise HTTPException(status_code=400, detail="IMEI/numéros de série en double dans la demande")
-            
-            # Vérifier unicité globale (hors variantes de ce produit)
-            if variant_barcodes:
-                existing_variants = db.query(ProductVariant).filter(
-                    ProductVariant.barcode.in_(variant_barcodes),
-                    ProductVariant.product_id != product_id
-                ).all()
-                if existing_variants:
-                    raise HTTPException(status_code=400, detail="Un ou plusieurs codes-barres de variantes existent déjà")
-            existing_serials = db.query(ProductVariant).filter(
-                ProductVariant.imei_serial.in_(variant_serials),
-                ProductVariant.product_id != product_id
-            ).all()
-            if existing_serials:
-                raise HTTPException(status_code=400, detail="Un ou plusieurs IMEI/numéros de série existent déjà")
-            
-            # Récupérer les variantes existantes avec leur statut de vente
-            existing_variants = {v.imei_serial: v for v in product.variants}
-            
-            # Identifier les variantes à supprimer (celles qui ne sont plus dans la nouvelle liste ET non vendues)
-            new_imeis = {nv['imei_serial'] for nv in norm_variants}
-            variants_to_delete = []
-            for imei, variant in existing_variants.items():
-                if imei not in new_imeis and not variant.is_sold:
-                    # Seulement supprimer les variantes non vendues
-                    variants_to_delete.append(variant)
-                elif imei not in new_imeis and variant.is_sold:
-                    # Les variantes vendues sont préservées même si elles ne sont pas dans la nouvelle liste
-                    pass
-            
-            # Supprimer uniquement les variantes non vendues
-            for variant in variants_to_delete:
-                try:
-                    db.delete(variant)
-                except Exception:
-                    pass
-            db.flush()
 
-            # Créer ou mettre à jour les variantes
+            # Verifier unicite globale (hors variantes de ce produit)
+            if variant_barcodes:
+                existing_variant_barcodes = await ProductVariant.find(
+                    {"barcode": {"$in": variant_barcodes}, "product_id": {"$ne": product_id}}
+                ).to_list()
+                if existing_variant_barcodes:
+                    raise HTTPException(status_code=400, detail="Un ou plusieurs codes-barres de variantes existent déjà")
+            existing_serial_matches = await ProductVariant.find(
+                {"imei_serial": {"$in": variant_serials}, "product_id": {"$ne": product_id}}
+            ).to_list()
+            if existing_serial_matches:
+                raise HTTPException(status_code=400, detail="Un ou plusieurs IMEI/numéros de série existent déjà")
+
+            # Recuperer les variantes existantes avec leur statut de vente
+            existing_variants_map = {v.imei_serial: v for v in existing_variants}
+
+            # Identifier les variantes a supprimer (celles qui ne sont plus dans la nouvelle liste ET non vendues)
+            new_imeis = {nv['imei_serial'] for nv in norm_variants}
+            for imei, variant in existing_variants_map.items():
+                if imei not in new_imeis and not variant.is_sold:
+                    # Supprimer les attributs d'abord
+                    await ProductVariantAttribute.find(
+                        ProductVariantAttribute.variant_id == variant.variant_id
+                    ).delete()
+                    await variant.delete()
+
+            # Creer ou mettre a jour les variantes
             imei_to_db_variant = {}
             for nv in norm_variants:
                 imei = nv['imei_serial']
-                if imei in existing_variants:
-                    # Mettre à jour la variante existante (préserver is_sold)
-                    db_variant = existing_variants[imei]
+                if imei in existing_variants_map:
+                    # Mettre a jour la variante existante (preserver is_sold)
+                    db_variant = existing_variants_map[imei]
                     db_variant.barcode = nv['barcode']
                     db_variant.condition = nv['condition']
-                    # Ne pas modifier is_sold - il est préservé
+                    await db_variant.save()
                 else:
-                    # Créer une nouvelle variante
+                    # Creer une nouvelle variante
+                    variant_id = await get_next_id("product_variants")
                     db_variant = ProductVariant(
+                        variant_id=variant_id,
                         product_id=product_id,
                         imei_serial=nv['imei_serial'],
                         barcode=nv['barcode'],
                         condition=nv['condition'],
-                        is_sold=False  # Nouvelle variante = non vendue
+                        is_sold=False
                     )
-                    db.add(db_variant)
-                    db.flush()  # pour obtenir variant_id immédiatement
-                
+                    await db_variant.insert()
+
                 imei_to_db_variant[str(nv['imei_serial']).strip()] = db_variant
 
             # Supprimer tous les anciens attributs des variantes existantes
             for db_variant in imei_to_db_variant.values():
-                db.query(ProductVariantAttribute).filter(
+                await ProductVariantAttribute.find(
                     ProductVariantAttribute.variant_id == db_variant.variant_id
                 ).delete()
-            
+
             # Attacher les nouveaux attributs aux bonnes variantes en se basant sur l'IMEI
             for orig_v in (product_data.variants or []):
                 try:
@@ -1065,90 +1030,95 @@ async def update_product(
                     if not db_v:
                         continue
                     for attr_data in (getattr(orig_v, 'attributes', []) or []):
+                        attr_id = await get_next_id("product_variant_attributes")
                         db_attr = ProductVariantAttribute(
+                            attribute_id=attr_id,
                             variant_id=db_v.variant_id,
                             attribute_name=attr_data.attribute_name,
                             attribute_value=attr_data.attribute_value
                         )
-                        db.add(db_attr)
+                        await db_attr.insert()
                 except Exception:
-                    # Ne pas bloquer la mise à jour si un attribut est mal formé
+                    # Ne pas bloquer la mise a jour si un attribut est mal forme
                     pass
-            
-            # Mettre à jour la quantité basée sur les variantes non vendues uniquement
-            available_variants = db.query(ProductVariant).filter(
+
+            # Mettre a jour la quantite basee sur les variantes non vendues uniquement
+            available_count = await ProductVariant.find(
                 ProductVariant.product_id == product_id,
                 ProductVariant.is_sold == False
             ).count()
-            product.quantity = available_variants
+            product.quantity = available_count
             # S'assurer que le code-barres produit est None si variantes
             product.barcode = None
-        
-        db.commit()
-        db.refresh(product)
-        
+
+        await product.save()
+
+        # Enrich for response
+        await _enrich_product_with_variants(product)
         return product
-        
+
     except HTTPException:
         raise
-    except IntegrityError as ie:
-        db.rollback()
-        msg = str(getattr(ie, 'orig', ie))
-        if 'unique' in msg.lower() or 'duplicate key value' in msg.lower():
-            raise HTTPException(status_code=400, detail="Violation d'unicité (code-barres ou IMEI déjà utilisé)")
-        logging.error(f"Erreur d'intégrité lors de la mise à jour du produit: {ie}")
-        raise HTTPException(status_code=500, detail="Erreur serveur")
     except Exception as e:
-        db.rollback()
+        error_msg = str(e)
+        if 'duplicate key' in error_msg.lower() or 'unique' in error_msg.lower() or 'E11000' in error_msg:
+            raise HTTPException(status_code=400, detail="Violation d'unicité (code-barres ou IMEI déjà utilisé)")
         logging.error(f"Erreur lors de la mise à jour du produit: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
 
 @router.delete("/id/{product_id}")
 async def delete_product(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(require_any_role(["manager"]))
 ):
     """Supprimer un produit"""
     try:
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
-        # Vérifier si le produit est utilisé dans des transactions
-        if is_product_used_in_transactions(db, product_id):
+
+        # Verifier si le produit est utilise dans des transactions
+        if is_product_used_in_transactions(product_id):
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Ce produit ne peut pas être supprimé car il est déjà utilisé dans des factures, devis ou bons de livraison"
             )
-        
-        # Créer un mouvement de stock de sortie pour traçabilité
+
+        # Creer un mouvement de stock de sortie pour tracabilite
         if product.quantity > 0:
+            movement_id = await get_next_id("stock_movements")
             stock_movement = StockMovement(
+                movement_id=movement_id,
                 product_id=product_id,
                 quantity=-product.quantity,
                 movement_type="OUT",
                 reference_type="DELETION",
                 notes=f"Suppression du produit: {product.name}"
             )
-            db.add(stock_movement)
-        
-        db.delete(product)
-        db.commit()
-        
+            await stock_movement.insert()
+
+        # Delete variant attributes, then variants, then product
+        variants = await ProductVariant.find(
+            ProductVariant.product_id == product_id
+        ).to_list()
+        for v in variants:
+            await ProductVariantAttribute.find(
+                ProductVariantAttribute.variant_id == v.variant_id
+            ).delete()
+        await ProductVariant.find(ProductVariant.product_id == product_id).delete()
+        await product.delete()
+
         return {"message": "Produit supprimé avec succès"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de la suppression du produit: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
 
 @router.get("/scan/{barcode}")
 async def scan_barcode(
     barcode: str,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Scanner un code-barres (produit ou variante) et retourner un objet JSON simple.
@@ -1157,7 +1127,7 @@ async def scan_barcode(
     - `products.barcode`
     - `product_variants.barcode`
     - `product_variants.imei_serial`
-    Les espaces en trop sont ignorés.
+    Les espaces en trop sont ignores.
     """
     try:
         code = (barcode or "").strip()
@@ -1165,10 +1135,9 @@ async def scan_barcode(
             raise HTTPException(status_code=400, detail="Code-barres vide")
 
         # 1) Produit par code-barres exact (trim)
-        product = (
-            db.query(Product)
-            .filter(func.trim(Product.barcode) == code)
-            .first()
+        # We search with regex to handle whitespace: ^\\s*code\\s*$
+        product = await Product.find_one(
+            {"barcode": {"$regex": f"^\\s*{re.escape(code)}\\s*$"}}
         )
         if product:
             return {
@@ -1181,30 +1150,27 @@ async def scan_barcode(
                 "barcode": product.barcode
             }
 
-        # 2) Variante par code-barres ou IMEI/série
-        variant = (
-            db.query(ProductVariant)
-            .join(Product)
-            .filter(
-                or_(
-                    func.trim(ProductVariant.barcode) == code,
-                    func.trim(ProductVariant.imei_serial) == code
-                )
-            )
-            .first()
+        # 2) Variante par code-barres ou IMEI/serie (exact match with trim)
+        variant = await ProductVariant.find_one(
+            {"$or": [
+                {"barcode": {"$regex": f"^\\s*{re.escape(code)}\\s*$"}},
+                {"imei_serial": {"$regex": f"^\\s*{re.escape(code)}\\s*$"}}
+            ]}
         )
         if variant:
-            # Charger les attributs
-            _ = variant.attributes  # force load
+            parent_product = await Product.find_one(Product.product_id == variant.product_id)
+            attributes = await ProductVariantAttribute.find(
+                ProductVariantAttribute.variant_id == variant.variant_id
+            ).to_list()
             attributes_text = ", ".join(
-                [f"{a.attribute_name}: {a.attribute_value}" for a in (variant.attributes or [])]
+                [f"{a.attribute_name}: {a.attribute_value}" for a in (attributes or [])]
             )
             return {
                 "type": "variant",
-                "product_id": variant.product.product_id,
-                "product_name": variant.product.name,
-                "price": float(variant.product.price or 0),
-                "category_name": variant.product.category,
+                "product_id": parent_product.product_id if parent_product else variant.product_id,
+                "product_name": parent_product.name if parent_product else "",
+                "price": float(parent_product.price or 0) if parent_product else 0,
+                "category_name": parent_product.category if parent_product else None,
                 "stock_quantity": 0 if variant.is_sold else 1,
                 "variant": {
                     "variant_id": variant.variant_id,
@@ -1215,31 +1181,28 @@ async def scan_barcode(
                 }
             }
 
-        # 3) Recherche partielle (fallback) sur produits et variantes
-        # Utile quand le code scanné a des préfixes/suffixes ou quand on veut matcher IMEI partiel
-        like_code = f"%{code}%"
-        variant_like = (
-            db.query(ProductVariant)
-            .join(Product)
-            .filter(
-                or_(
-                    ProductVariant.barcode.ilike(like_code),
-                    ProductVariant.imei_serial.ilike(like_code)
-                )
-            )
-            .first()
+        # 3) Recherche partielle (fallback) sur variantes
+        like_pattern = {"$regex": re.escape(code), "$options": "i"}
+        variant_like = await ProductVariant.find_one(
+            {"$or": [
+                {"barcode": like_pattern},
+                {"imei_serial": like_pattern}
+            ]}
         )
         if variant_like:
-            _ = variant_like.attributes
+            parent_product = await Product.find_one(Product.product_id == variant_like.product_id)
+            attributes = await ProductVariantAttribute.find(
+                ProductVariantAttribute.variant_id == variant_like.variant_id
+            ).to_list()
             attributes_text = ", ".join(
-                [f"{a.attribute_name}: {a.attribute_value}" for a in (variant_like.attributes or [])]
+                [f"{a.attribute_name}: {a.attribute_value}" for a in (attributes or [])]
             )
             return {
                 "type": "variant",
-                "product_id": variant_like.product.product_id,
-                "product_name": variant_like.product.name,
-                "price": float(variant_like.product.price or 0),
-                "category_name": variant_like.product.category,
+                "product_id": parent_product.product_id if parent_product else variant_like.product_id,
+                "product_name": parent_product.name if parent_product else "",
+                "price": float(parent_product.price or 0) if parent_product else 0,
+                "category_name": parent_product.category if parent_product else None,
                 "stock_quantity": 0 if variant_like.is_sold else 1,
                 "variant": {
                     "variant_id": variant_like.variant_id,
@@ -1250,10 +1213,9 @@ async def scan_barcode(
                 }
             }
 
-        product_like = (
-            db.query(Product)
-            .filter(Product.barcode.ilike(like_code))
-            .first()
+        # 4) Recherche partielle sur produit barcode
+        product_like = await Product.find_one(
+            {"barcode": like_pattern}
         )
         if product_like:
             return {
@@ -1274,40 +1236,30 @@ async def scan_barcode(
         logging.error(f"Erreur lors du scan: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
 
-# ==== GESTION DES CATÉGORIES ====
+# ==== GESTION DES CATEGORIES ====
 
 @router.get("/categories", response_model=List[CategoryResponse])
 async def get_categories(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Obtenir la liste des catégories avec le nombre de produits associés (mis en cache 5 min)"""
+    """Obtenir la liste des categories avec le nombre de produits associes (mis en cache 5 min)"""
     try:
         cache_key = _get_cache_key("product_categories")
 
-        def compute():
-            rows = db.query(
-                Category.category_id.label('id'),
-                Category.name.label('name'),
-                Category.requires_variants.label('requires_variants'),
-                func.count(Product.product_id).label('product_count')
-            ).outerjoin(
-                Product, Category.name == Product.category
-            ).group_by(
-                Category.category_id, Category.name, Category.requires_variants
-            ).all()
+        async def compute():
+            categories = await Category.find().to_list()
+            result = []
+            for cat in categories:
+                product_count = await Product.find(Product.category == cat.name).count()
+                result.append({
+                    "id": str(cat.category_id),
+                    "name": str(cat.name),
+                    "requires_variants": bool(getattr(cat, 'requires_variants', False)),
+                    "product_count": int(product_count or 0),
+                })
+            return result
 
-            return [
-                {
-                    "id": str(r.id),
-                    "name": str(r.name),
-                    "requires_variants": bool(getattr(r, 'requires_variants', False)),
-                    "product_count": int(r.product_count or 0),
-                }
-                for r in rows
-            ]
-
-        result = _get_cached_or_compute(cache_key, compute)
+        result = await _get_cached_or_compute(cache_key, compute)
         return result
     except Exception as e:
         logging.error(f"Erreur /products/categories: {e}")
@@ -1316,19 +1268,17 @@ async def get_categories(
 @router.get("/categories/{category_id}", response_model=CategoryResponse)
 async def get_category(
     category_id: str,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Obtenir une catégorie spécifique avec le nombre de produits associés"""
-    # Chercher d'abord la catégorie par ID (numérique) ou par nom (texte)
-    category = _category_query_by_identifier(db, category_id).first()
-    
+    """Obtenir une categorie specifique avec le nombre de produits associes"""
+    category = await _category_find_by_identifier(category_id)
+
     if not category:
         raise HTTPException(status_code=404, detail="Catégorie non trouvée")
-    
-    # Compter les produits associés
-    product_count = db.query(Product).filter(Product.category == category.name).count()
-    
+
+    # Compter les produits associes
+    product_count = await Product.find(Product.category == category.name).count()
+
     return {
         "id": str(category.category_id),
         "name": category.name,
@@ -1339,32 +1289,31 @@ async def get_category(
 @router.post("/categories", response_model=CategoryResponse)
 async def create_category(
     category_data: CategoryCreate,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Créer une nouvelle catégorie"""
-    # Vérifier si la catégorie existe déjà
-    existing_category = db.query(Category).filter(
-        func.lower(Category.name) == func.lower(category_data.name)
-    ).first()
-    
+    """Creer une nouvelle categorie"""
+    # Verifier si la categorie existe deja
+    existing_category = await Category.find_one(
+        {"name": {"$regex": f"^{re.escape(category_data.name)}$", "$options": "i"}}
+    )
+
     if existing_category:
         raise HTTPException(
             status_code=400,
             detail="Une catégorie avec ce nom existe déjà"
         )
-    
-    # Créer la nouvelle catégorie
+
+    # Creer la nouvelle categorie
+    cat_id = await get_next_id("categories")
     new_category = Category(
+        category_id=cat_id,
         name=category_data.name,
         description=getattr(category_data, 'description', None),
         requires_variants=bool(getattr(category_data, 'requires_variants', False))
     )
-    
-    db.add(new_category)
-    db.commit()
-    db.refresh(new_category)
-    
+
+    await new_category.insert()
+
     return {
         "id": str(new_category.category_id),
         "name": new_category.name,
@@ -1376,49 +1325,47 @@ async def create_category(
 async def update_category(
     category_id: str,
     category_data: CategoryUpdate,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Mettre à jour une catégorie existante"""
-    # Chercher la catégorie par ID (numérique) ou nom (texte)
-    category = _category_query_by_identifier(db, category_id).first()
-    
+    """Mettre a jour une categorie existante"""
+    category = await _category_find_by_identifier(category_id)
+
     if not category:
         raise HTTPException(status_code=404, detail="Catégorie non trouvée")
-    
-    # Vérifier si le nouveau nom existe déjà (sauf s'il s'agit du même)
+
+    # Verifier si le nouveau nom existe deja (sauf s'il s'agit du meme)
     if category.name.lower() != category_data.name.lower():
-        existing_category = db.query(Category).filter(
-            func.lower(Category.name) == func.lower(category_data.name)
-        ).first()
-        
+        existing_category = await Category.find_one(
+            {"name": {"$regex": f"^{re.escape(category_data.name)}$", "$options": "i"}}
+        )
+
         if existing_category:
             raise HTTPException(
                 status_code=400,
                 detail="Une catégorie avec ce nom existe déjà"
             )
-    
-    # Sauvegarder l'ancien nom pour mettre à jour les produits
+
+    # Sauvegarder l'ancien nom pour mettre a jour les produits
     old_name = category.name
-    
-    # Mettre à jour la catégorie
+
+    # Mettre a jour la categorie
     category.name = category_data.name
     if hasattr(category_data, 'description'):
         category.description = category_data.description
     if hasattr(category_data, 'requires_variants'):
         category.requires_variants = bool(category_data.requires_variants)
-    
-    # Mettre à jour tous les produits avec cette catégorie
-    db.query(Product).filter(Product.category == old_name).update(
-        {"category": category_data.name}
-    )
-    
-    db.commit()
-    db.refresh(category)
-    
-    # Compter le nombre de produits dans la catégorie mise à jour
-    product_count = db.query(Product).filter(Product.category == category.name).count()
-    
+    await category.save()
+
+    # Mettre a jour tous les produits avec cette categorie
+    if old_name != category_data.name:
+        products_to_update = await Product.find(Product.category == old_name).to_list()
+        for p in products_to_update:
+            p.category = category_data.name
+            await p.save()
+
+    # Compter le nombre de produits dans la categorie mise a jour
+    product_count = await Product.find(Product.category == category.name).count()
+
     return {
         "id": str(category.category_id),
         "name": category.name,
@@ -1429,56 +1376,48 @@ async def update_category(
 @router.delete("/categories/{category_id}")
 async def delete_category(
     category_id: str,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Supprimer une catégorie"""
-    # Chercher la catégorie par ID (numérique) ou nom (texte)
-    category = _category_query_by_identifier(db, category_id).first()
-    
+    """Supprimer une categorie"""
+    category = await _category_find_by_identifier(category_id)
+
     if not category:
         raise HTTPException(status_code=404, detail="Catégorie non trouvée")
-    
-    # Vérifier si des produits utilisent cette catégorie
-    products_with_category = db.query(Product).filter(
+
+    # Verifier si des produits utilisent cette categorie
+    products_with_category = await Product.find(
         Product.category == category.name
     ).count()
-    
+
     if products_with_category > 0:
         raise HTTPException(
             status_code=400,
             detail=f"Impossible de supprimer la catégorie. {products_with_category} produit(s) l'utilisent encore."
         )
-    
-    # Supprimer la catégorie
-    db.delete(category)
-    db.commit()
-    
+
+    # Supprimer la categorie
+    await category.delete()
+
     return {"message": "Catégorie supprimée avec succès"}
 
 # =====================
-# Attributs de catégorie
+# Attributs de categorie
 # =====================
 
 def _slugify(text: str) -> str:
     return ''.join(c.lower() if c.isalnum() else '-' for c in text).strip('-')
 
-def _category_query_by_identifier(db: Session, identifier: str):
-    """Return a query for `Category` matching either numeric ID or name.
-
-    Avoids Postgres type mismatch (integer vs varchar) by casting in Python,
-    not in SQL.
-    """
+async def _category_find_by_identifier(identifier: str):
+    """Find a Category by numeric ID or name."""
     try:
-        # Accept strings like "001" -> 1 as id
         if str(identifier).isdigit():
-            return db.query(Category).filter(Category.category_id == int(identifier))
+            return await Category.find_one(Category.category_id == int(identifier))
     except Exception:
         pass
-    return db.query(Category).filter(Category.name == identifier)
+    return await Category.find_one(Category.name == identifier)
 
-def _category_or_404(db: Session, category_id: str) -> Category:
-    category = _category_query_by_identifier(db, category_id).first()
+async def _category_or_404(category_id: str) -> Category:
+    category = await _category_find_by_identifier(category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Catégorie non trouvée")
     return category
@@ -1486,33 +1425,38 @@ def _category_or_404(db: Session, category_id: str) -> Category:
 @router.get("/categories/{category_id}/attributes", response_model=List[CategoryAttributeResponse])
 async def list_category_attributes(
     category_id: str,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    category = _category_or_404(db, category_id)
-    attrs = db.query(CategoryAttribute).filter(CategoryAttribute.category_id == category.category_id).order_by(CategoryAttribute.sort_order).all()
-    # charger les valeurs
+    category = await _category_or_404(category_id)
+    attrs = await CategoryAttribute.find(
+        CategoryAttribute.category_id == category.category_id
+    ).sort(CategoryAttribute.sort_order).to_list()
+    # Load values for each attribute
     for a in attrs:
-        _ = a.values  # load relationship
+        values = await CategoryAttributeValue.find(
+            CategoryAttributeValue.attribute_id == a.attribute_id
+        ).sort(CategoryAttributeValue.sort_order).to_list()
+        a.values = values
     return attrs
 
 @router.post("/categories/{category_id}/attributes", response_model=CategoryAttributeResponse)
 async def create_category_attribute(
     category_id: str,
     payload: CategoryAttributeCreate,
-    db: Session = Depends(get_db),
     current_user = Depends(require_role("admin"))
 ):
-    category = _category_or_404(db, category_id)
+    category = await _category_or_404(category_id)
     code = payload.code or _slugify(payload.name)
-    # unicité code par catégorie
-    exists = db.query(CategoryAttribute).filter(
+    # unicite code par categorie
+    existing = await CategoryAttribute.find_one(
         CategoryAttribute.category_id == category.category_id,
-        func.lower(CategoryAttribute.code) == func.lower(code)
-    ).first()
-    if exists:
+        {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}
+    )
+    if existing:
         raise HTTPException(status_code=400, detail="Code d'attribut déjà utilisé pour cette catégorie")
+    attr_id = await get_next_id("category_attributes")
     attr = CategoryAttribute(
+        attribute_id=attr_id,
         category_id=category.category_id,
         name=payload.name,
         code=code,
@@ -1521,19 +1465,22 @@ async def create_category_attribute(
         multi_select=bool(payload.multi_select),
         sort_order=payload.sort_order or 0
     )
-    db.add(attr)
-    db.flush()
+    await attr.insert()
     # valeurs initiales
     for i, v in enumerate(payload.values or []):
         vcode = v.code or _slugify(v.value)
-        db.add(CategoryAttributeValue(
+        val_id = await get_next_id("category_attribute_values")
+        await CategoryAttributeValue(
+            value_id=val_id,
             attribute_id=attr.attribute_id,
             value=v.value,
             code=vcode,
             sort_order=v.sort_order if v.sort_order is not None else i
-        ))
-    db.commit()
-    db.refresh(attr)
+        ).insert()
+    # Reload with values for response
+    attr.values = await CategoryAttributeValue.find(
+        CategoryAttributeValue.attribute_id == attr.attribute_id
+    ).sort(CategoryAttributeValue.sort_order).to_list()
     return attr
 
 @router.put("/categories/{category_id}/attributes/{attribute_id}", response_model=CategoryAttributeResponse)
@@ -1541,26 +1488,25 @@ async def update_category_attribute(
     category_id: str,
     attribute_id: int,
     payload: CategoryAttributeUpdate,
-    db: Session = Depends(get_db),
     current_user = Depends(require_role("admin"))
 ):
-    category = _category_or_404(db, category_id)
-    attr = db.query(CategoryAttribute).filter(
+    category = await _category_or_404(category_id)
+    attr = await CategoryAttribute.find_one(
         CategoryAttribute.attribute_id == attribute_id,
         CategoryAttribute.category_id == category.category_id
-    ).first()
+    )
     if not attr:
         raise HTTPException(status_code=404, detail="Attribut non trouvé")
     if payload.name is not None:
         attr.name = payload.name
     if payload.code is not None:
-        # vérifier unicité
-        exists = db.query(CategoryAttribute).filter(
+        # verifier unicite
+        existing = await CategoryAttribute.find_one(
             CategoryAttribute.category_id == category.category_id,
-            func.lower(CategoryAttribute.code) == func.lower(payload.code),
+            {"code": {"$regex": f"^{re.escape(payload.code)}$", "$options": "i"}},
             CategoryAttribute.attribute_id != attr.attribute_id
-        ).first()
-        if exists:
+        )
+        if existing:
             raise HTTPException(status_code=400, detail="Code d'attribut déjà utilisé pour cette catégorie")
         attr.code = payload.code
     if payload.type is not None:
@@ -1571,32 +1517,37 @@ async def update_category_attribute(
         attr.multi_select = bool(payload.multi_select)
     if payload.sort_order is not None:
         attr.sort_order = payload.sort_order
-    db.commit()
-    db.refresh(attr)
+    await attr.save()
+    # Reload values for response
+    attr.values = await CategoryAttributeValue.find(
+        CategoryAttributeValue.attribute_id == attr.attribute_id
+    ).sort(CategoryAttributeValue.sort_order).to_list()
     return attr
 
 @router.delete("/categories/{category_id}/attributes/{attribute_id}")
 async def delete_category_attribute(
     category_id: str,
     attribute_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(require_role("admin"))
 ):
-    category = _category_or_404(db, category_id)
-    attr = db.query(CategoryAttribute).filter(
+    category = await _category_or_404(category_id)
+    attr = await CategoryAttribute.find_one(
         CategoryAttribute.attribute_id == attribute_id,
         CategoryAttribute.category_id == category.category_id
-    ).first()
+    )
     if not attr:
         raise HTTPException(status_code=404, detail="Attribut non trouvé")
-    # empêcher suppression si utilisé dans des variantes
-    in_use = db.query(ProductVariantAttribute).filter(
-        func.lower(ProductVariantAttribute.attribute_name) == func.lower(attr.name)
-    ).first()
+    # empecher suppression si utilise dans des variantes
+    in_use = await ProductVariantAttribute.find_one(
+        {"attribute_name": {"$regex": f"^{re.escape(attr.name)}$", "$options": "i"}}
+    )
     if in_use:
         raise HTTPException(status_code=400, detail="Attribut utilisé par des variantes, suppression interdite")
-    db.delete(attr)
-    db.commit()
+    # Delete associated values first
+    await CategoryAttributeValue.find(
+        CategoryAttributeValue.attribute_id == attr.attribute_id
+    ).delete()
+    await attr.delete()
     return {"message": "Attribut supprimé avec succès"}
 
 @router.post("/categories/{category_id}/attributes/{attribute_id}/values", response_model=CategoryAttributeValueResponse)
@@ -1604,32 +1555,31 @@ async def create_attribute_value(
     category_id: str,
     attribute_id: int,
     payload: CategoryAttributeValueCreate,
-    db: Session = Depends(get_db),
     current_user = Depends(require_role("admin"))
 ):
-    category = _category_or_404(db, category_id)
-    attr = db.query(CategoryAttribute).filter(
+    category = await _category_or_404(category_id)
+    attr = await CategoryAttribute.find_one(
         CategoryAttribute.attribute_id == attribute_id,
         CategoryAttribute.category_id == category.category_id
-    ).first()
+    )
     if not attr:
         raise HTTPException(status_code=404, detail="Attribut non trouvé")
     code = payload.code or _slugify(payload.value)
-    exists = db.query(CategoryAttributeValue).filter(
+    existing = await CategoryAttributeValue.find_one(
         CategoryAttributeValue.attribute_id == attribute_id,
-        func.lower(CategoryAttributeValue.code) == func.lower(code)
-    ).first()
-    if exists:
+        {"code": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}
+    )
+    if existing:
         raise HTTPException(status_code=400, detail="Code de valeur déjà utilisé pour cet attribut")
+    val_id = await get_next_id("category_attribute_values")
     val = CategoryAttributeValue(
+        value_id=val_id,
         attribute_id=attribute_id,
         value=payload.value,
         code=code,
         sort_order=payload.sort_order or 0
     )
-    db.add(val)
-    db.commit()
-    db.refresh(val)
+    await val.insert()
     return val
 
 @router.put("/categories/{category_id}/attributes/{attribute_id}/values/{value_id}", response_model=CategoryAttributeValueResponse)
@@ -1638,31 +1588,29 @@ async def update_attribute_value(
     attribute_id: int,
     value_id: int,
     payload: CategoryAttributeValueUpdate,
-    db: Session = Depends(get_db),
     current_user = Depends(require_role("admin"))
 ):
-    _ = _category_or_404(db, category_id)
-    val = db.query(CategoryAttributeValue).filter(
+    _ = await _category_or_404(category_id)
+    val = await CategoryAttributeValue.find_one(
         CategoryAttributeValue.value_id == value_id,
         CategoryAttributeValue.attribute_id == attribute_id
-    ).first()
+    )
     if not val:
         raise HTTPException(status_code=404, detail="Valeur non trouvée")
     if payload.value is not None:
         val.value = payload.value
     if payload.code is not None:
-        exists = db.query(CategoryAttributeValue).filter(
+        existing = await CategoryAttributeValue.find_one(
             CategoryAttributeValue.attribute_id == attribute_id,
-            func.lower(CategoryAttributeValue.code) == func.lower(payload.code),
+            {"code": {"$regex": f"^{re.escape(payload.code)}$", "$options": "i"}},
             CategoryAttributeValue.value_id != value_id
-        ).first()
-        if exists:
+        )
+        if existing:
             raise HTTPException(status_code=400, detail="Code de valeur déjà utilisé pour cet attribut")
         val.code = payload.code
     if payload.sort_order is not None:
         val.sort_order = payload.sort_order
-    db.commit()
-    db.refresh(val)
+    await val.save()
     return val
 
 @router.delete("/categories/{category_id}/attributes/{attribute_id}/values/{value_id}")
@@ -1670,127 +1618,103 @@ async def delete_attribute_value(
     category_id: str,
     attribute_id: int,
     value_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(require_role("admin"))
 ):
-    category = _category_or_404(db, category_id)
-    attr = db.query(CategoryAttribute).filter(
+    category = await _category_or_404(category_id)
+    attr = await CategoryAttribute.find_one(
         CategoryAttribute.attribute_id == attribute_id,
         CategoryAttribute.category_id == category.category_id
-    ).first()
+    )
     if not attr:
         raise HTTPException(status_code=404, detail="Attribut non trouvé")
-    val = db.query(CategoryAttributeValue).filter(
+    val = await CategoryAttributeValue.find_one(
         CategoryAttributeValue.value_id == value_id,
         CategoryAttributeValue.attribute_id == attribute_id
-    ).first()
+    )
     if not val:
         raise HTTPException(status_code=404, detail="Valeur non trouvée")
-    # empêcher suppression si valeur utilisée
-    in_use = db.query(ProductVariantAttribute).filter(
-        and_(
-            func.lower(ProductVariantAttribute.attribute_name) == func.lower(attr.name),
-            func.lower(ProductVariantAttribute.attribute_value) == func.lower(val.value)
-        )
-    ).first()
+    # empecher suppression si valeur utilisee
+    in_use = await ProductVariantAttribute.find_one(
+        {"$and": [
+            {"attribute_name": {"$regex": f"^{re.escape(attr.name)}$", "$options": "i"}},
+            {"attribute_value": {"$regex": f"^{re.escape(val.value)}$", "$options": "i"}}
+        ]}
+    )
     if in_use:
         raise HTTPException(status_code=400, detail="Valeur utilisée par des variantes, suppression interdite")
-    db.delete(val)
-    db.commit()
+    await val.delete()
     return {"message": "Valeur supprimée avec succès"}
 
-# Pour la compatibilité avec l'ancien endpoint
+# Pour la compatibilite avec l'ancien endpoint
 @router.get("/categories/list")
 async def get_categories_list(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Obtenir la liste des catégories uniques (ancien format)"""
-    categories = db.query(Product.category).distinct().filter(Product.category.isnot(None)).all()
-    return [cat[0] for cat in categories if cat[0]]
+    """Obtenir la liste des categories uniques (ancien format)"""
+    products = await Product.find(
+        {"category": {"$ne": None}}
+    ).to_list()
+    categories = list({p.category for p in products if p.category})
+    return sorted(categories)
 
 
 @router.get("/stats")
 async def get_products_stats(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Endpoint agrégé et mis en cache pour accélérer la page Produits."""
+    """Endpoint agrege et mis en cache pour accelerer la page Produits."""
     try:
         cache_key = _get_cache_key("products_stats")
 
-        def compute():
-            total_products = db.query(func.count(Product.product_id)).scalar() or 0
+        async def compute():
+            total_products = await Product.find().count()
 
             # Produits avec variantes (distinct product_id)
-            with_variants = db.query(func.count(func.distinct(ProductVariant.product_id))).scalar() or 0
+            all_variants = await ProductVariant.find().to_list()
+            pids_with_variants = set()
+            pids_with_available = set()
+            for v in all_variants:
+                pids_with_variants.add(v.product_id)
+                if not v.is_sold:
+                    pids_with_available.add(v.product_id)
+
+            with_variants = len(pids_with_variants)
             without_variants = int(total_products) - int(with_variants)
 
-            # Sous-requête: variantes disponibles (non vendues) par produit
-            available_variants_sub = (
-                db.query(
-                    ProductVariant.product_id.label('product_id'),
-func.sum(case((ProductVariant.is_sold == False, 1), else_=0)).label('available')
-                )
-                .group_by(ProductVariant.product_id)
-                .subquery()
-            )
+            # In stock: quantity > 0 OR has available variants
+            all_products = await Product.find().to_list()
+            in_stock = 0
+            out_of_stock = 0
+            with_barcode = 0
+            without_barcode = 0
 
-            # En stock: quantité > 0 OU variantes disponibles > 0
-            in_stock = (
-                db.query(func.count(Product.product_id))
-                .outerjoin(available_variants_sub, available_variants_sub.c.product_id == Product.product_id)
-                .filter(or_(Product.quantity > 0, available_variants_sub.c.available > 0))
-                .scalar()
-                or 0
-            )
+            for p in all_products:
+                has_stock = (p.quantity or 0) > 0 or p.product_id in pids_with_available
+                if has_stock:
+                    in_stock += 1
+                else:
+                    out_of_stock += 1
 
-            # Rupture de stock: (quantité <= 0 ou NULL) ET (aucune variante disponible)
-            out_of_stock = (
-                db.query(func.count(Product.product_id))
-                .outerjoin(available_variants_sub, available_variants_sub.c.product_id == Product.product_id)
-                .filter(
-                    and_(
-                        or_(Product.quantity <= 0, Product.quantity.is_(None)),
-                        or_(available_variants_sub.c.available == None, available_variants_sub.c.available <= 0)
-                    )
-                )
-                .scalar()
-                or 0
-            )
+                bc = (p.barcode or "").strip()
+                if bc:
+                    with_barcode += 1
+                else:
+                    without_barcode += 1
 
-            # Codes-barres
-            with_barcode = (
-                db.query(func.count(Product.product_id))
-                .filter(Product.barcode.isnot(None), func.length(func.trim(Product.barcode)) > 0)
-                .scalar()
-                or 0
-            )
-            without_barcode = int(total_products) - int(with_barcode)
-
-            # Catégories + compte produits
-            categories_with_count = db.query(
-                Category.category_id.label('id'),
-                Category.name.label('name'),
-                Category.requires_variants.label('requires_variants'),
-                func.count(Product.product_id).label('product_count')
-            ).outerjoin(
-                Product, Category.name == Product.category
-            ).group_by(
-                Category.category_id, Category.name, Category.requires_variants
-            ).all()
-            categories = [
-                {
-                    "id": str(cat.id),
+            # Categories + count
+            categories_docs = await Category.find().to_list()
+            categories = []
+            for cat in categories_docs:
+                count = await Product.find(Product.category == cat.name).count()
+                categories.append({
+                    "id": str(cat.category_id),
                     "name": str(cat.name),
                     "requires_variants": bool(getattr(cat, 'requires_variants', False)),
-                    "product_count": int(cat.product_count or 0),
-                }
-                for cat in categories_with_count
-            ]
+                    "product_count": int(count or 0),
+                })
 
-            # État/conditions autorisées
-            conditions_cfg = _get_allowed_conditions(db)
+            # Conditions autorisees
+            conditions_cfg = await _get_allowed_conditions()
 
             return {
                 "total_products": int(total_products),
@@ -1805,13 +1729,13 @@ func.sum(case((ProductVariant.is_sold == False, 1), else_=0)).label('available')
                 "cached_at": datetime.now().isoformat(),
             }
 
-        result = _get_cached_or_compute(cache_key, compute)
+        result = await _get_cached_or_compute(cache_key, compute)
         return result
     except Exception as e:
         logging.error(f"Erreur /products/stats: {e}")
         # Fallback minimal
         try:
-            conds = _get_allowed_conditions(db)
+            conds = await _get_allowed_conditions()
         except Exception:
             conds = {"options": DEFAULT_CONDITIONS, "default": DEFAULT_CONDITIONS[0]}
         return {
@@ -1830,7 +1754,7 @@ func.sum(case((ProductVariant.is_sold == False, 1), else_=0)).label('available')
 
 @router.delete("/cache")
 async def clear_products_cache(current_user = Depends(get_current_user)):
-    """Vider le cache lié aux endpoints produits (admin recommandé)."""
+    """Vider le cache lie aux endpoints produits (admin recommande)."""
     try:
         global _cache
         _cache.clear()
@@ -1863,13 +1787,12 @@ async def products_cache_info(current_user = Depends(get_current_user)):
 async def upload_product_image(
     product_id: int,
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
     current_user = Depends(require_any_role(["manager"]))
 ):
     """Upload une image pour un produit"""
     try:
-        # Vérifier que le produit existe
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        # Verifier que le produit existe
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
 
@@ -1882,11 +1805,11 @@ async def upload_product_image(
                 detail=f"Type de fichier non autorisé. Types acceptés : {', '.join(allowed_extensions)}"
             )
 
-        # Créer le dossier uploads/products s'il n'existe pas
+        # Creer le dossier uploads/products s'il n'existe pas
         upload_dir = Path("static/uploads/products")
         upload_dir.mkdir(parents=True, exist_ok=True)
 
-        # Générer un nom de fichier unique
+        # Generer un nom de fichier unique
         import uuid
         unique_filename = f"product_{product_id}_{uuid.uuid4().hex}{file_ext}"
         file_path = upload_dir / unique_filename
@@ -1904,10 +1827,9 @@ async def upload_product_image(
         with file_path.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Mettre à jour le produit avec le chemin de l'image
+        # Mettre a jour le produit avec le chemin de l'image
         product.image_path = str(file_path)
-        db.commit()
-        db.refresh(product)
+        await product.save()
 
         return {
             "message": "Image uploadée avec succès",
@@ -1918,7 +1840,6 @@ async def upload_product_image(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de l'upload de l'image: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de l'upload de l'image")
 
@@ -1926,12 +1847,11 @@ async def upload_product_image(
 @router.delete("/id/{product_id}/delete-image")
 async def delete_product_image(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(require_any_role(["manager"]))
 ):
     """Supprimer l'image d'un produit"""
     try:
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
 
@@ -1946,140 +1866,134 @@ async def delete_product_image(
             except Exception as e:
                 logging.warning(f"Impossible de supprimer le fichier image: {e}")
 
-        # Mettre à jour le produit
+        # Mettre a jour le produit
         product.image_path = None
-        db.commit()
+        await product.save()
 
         return {"message": "Image supprimée avec succès"}
 
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de la suppression de l'image: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la suppression de l'image")
 
 @router.put("/{product_id}/archive")
 async def archive_product(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Archiver un produit (le masquer de la liste par défaut)"""
+    """Archiver un produit (le masquer de la liste par defaut)"""
     try:
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
+
         product.is_archived = True
-        db.commit()
+        await product.save()
         return {"message": "Produit archivé avec succès", "is_archived": True}
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de l'archivage du produit: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de l'archivage")
 
 @router.put("/{product_id}/unarchive")
 async def unarchive_product(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Désarchiver un produit (le rendre visible à nouveau)"""
+    """Desarchiver un produit (le rendre visible a nouveau)"""
     try:
-        product = db.query(Product).filter(Product.product_id == product_id).first()
+        product = await Product.find_one(Product.product_id == product_id)
         if not product:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
+
         product.is_archived = False
-        db.commit()
+        await product.save()
         return {"message": "Produit désarchivé avec succès", "is_archived": False}
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors du désarchivage du produit: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors du désarchivage")
 
 @router.post("/archive-sold")
 async def archive_sold_products(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Archiver tous les produits vendus (stock = 0 et toutes variantes vendues)"""
     try:
-        # Trouver les produits sans stock et sans variantes non vendues
-        products = db.query(Product).filter(
-            or_(Product.is_archived == False, Product.is_archived.is_(None))
-        ).all()
-        
+        # Trouver les produits non archives
+        products = await Product.find(
+            {"$or": [{"is_archived": False}, {"is_archived": None}, {"is_archived": {"$exists": False}}]}
+        ).to_list()
+
         archived_count = 0
         for product in products:
-            # Vérifier si le produit a des variantes
-            variants = db.query(ProductVariant).filter(
+            # Verifier si le produit a des variantes
+            variants = await ProductVariant.find(
                 ProductVariant.product_id == product.product_id
-            ).all()
-            
+            ).to_list()
+
             if variants:
                 # Si toutes les variantes sont vendues, archiver
                 all_sold = all(v.is_sold for v in variants)
                 if all_sold:
                     product.is_archived = True
+                    await product.save()
                     archived_count += 1
             else:
-                # Pas de variantes, vérifier le stock
+                # Pas de variantes, verifier le stock
                 if product.quantity == 0:
                     product.is_archived = True
+                    await product.save()
                     archived_count += 1
-        
-        db.commit()
+
         return {"message": f"{archived_count} produit(s) archivé(s)", "archived_count": archived_count}
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de l'archivage des produits vendus: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de l'archivage")
 
 @router.post("/{product_id}/duplicate", response_model=ProductResponse)
 async def duplicate_product(
     product_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Dupliquer un produit existant avec toutes ses propriétés (sans les variantes)"""
+    """Dupliquer un produit existant avec toutes ses proprietes (sans les variantes)"""
     try:
-        original = db.query(Product).filter(Product.product_id == product_id).first()
+        original = await Product.find_one(Product.product_id == product_id)
         if not original:
             raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
-        # Créer une copie du produit
+
+        # Creer une copie du produit
+        new_product_id = await get_next_id("products")
         new_product = Product(
+            product_id=new_product_id,
             name=f"{original.name} (copie)",
             description=original.description,
-            quantity=0,  # Stock à 0 pour la copie
+            quantity=0,  # Stock a 0 pour la copie
             price=original.price,
             wholesale_price=original.wholesale_price,
             purchase_price=original.purchase_price,
             category=original.category,
             brand=original.brand,
             model=original.model,
-            barcode=None,  # Pas de code-barres pour éviter les doublons
+            barcode=None,  # Pas de code-barres pour eviter les doublons
             condition=original.condition,
             has_unique_serial=original.has_unique_serial,
             notes=original.notes,
             image_path=original.image_path,
             is_archived=False,
         )
-        
-        db.add(new_product)
-        db.commit()
-        db.refresh(new_product)
-        
+
+        await new_product.insert()
+
+        # Enrich with empty variants for response
+        new_product.variants = []
         return new_product
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de la duplication du produit: {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la duplication")

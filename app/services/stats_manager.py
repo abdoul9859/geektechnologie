@@ -1,74 +1,103 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 from datetime import date
+import json
 
-from ..database import AppCache, Invoice, SupplierInvoice, Quotation
+from ..database import AppCache, Invoice, SupplierInvoice, Quotation, get_next_id
 
 
-def _get_cache(db: Session, key: str) -> Optional[Dict[str, Any]]:
+async def _get_cache(key: str) -> Optional[Dict[str, Any]]:
     try:
-        row = db.query(AppCache).filter(AppCache.cache_key == key).first()
+        row = await AppCache.find_one(AppCache.cache_key == key)
         if not row:
             return None
-        import json
         return json.loads(row.cache_value or "{}")
     except Exception:
         return None
 
 
-def _set_cache(db: Session, key: str, value: Dict[str, Any]) -> None:
+async def _set_cache(key: str, value: Dict[str, Any]) -> None:
     try:
-        import json
         payload = json.dumps(value, default=str)
-        existing = db.query(AppCache).filter(AppCache.cache_key == key).first()
+        existing = await AppCache.find_one(AppCache.cache_key == key)
         if existing:
             existing.cache_value = payload
+            await existing.save()
         else:
-            db.add(AppCache(cache_key=key, cache_value=payload, expires_at=None))
-        db.commit()
+            new_id = await get_next_id("app_cache")
+            rec = AppCache(cache_id=new_id, cache_key=key, cache_value=payload, expires_at=None)
+            await rec.insert()
     except Exception:
-        db.rollback()
+        pass
 
 
 INVOICES_STATS_KEY = "invoices_stats"
 QUOTATIONS_STATS_KEY = "quotations_stats"
 
 
-def get_invoices_stats(db: Session) -> Dict[str, Any]:
-    cached = _get_cache(db, INVOICES_STATS_KEY)
+async def get_invoices_stats() -> Dict[str, Any]:
+    cached = await _get_cache(INVOICES_STATS_KEY)
     if cached:
         return cached
-    return recompute_invoices_stats(db)
+    return await recompute_invoices_stats()
 
 
-def recompute_invoices_stats(db: Session) -> Dict[str, Any]:
+async def recompute_invoices_stats() -> Dict[str, Any]:
     today = date.today()
 
-    total_invoices = db.query(func.count(Invoice.invoice_id)).scalar() or 0
-    paid_invoices = db.query(func.count(Invoice.invoice_id)).filter(Invoice.status.in_(["payée", "PAID"])) .scalar() or 0
-    pending_invoices = db.query(func.count(Invoice.invoice_id)).filter(Invoice.status.in_(["en attente", "SENT", "DRAFT", "OVERDUE", "partiellement payée"])) .scalar() or 0
+    total_invoices = await Invoice.find().count()
+    paid_invoices = await Invoice.find({"status": {"$in": ["payée", "PAID"]}}).count()
+    pending_invoices = await Invoice.find({"status": {"$in": ["en attente", "SENT", "DRAFT", "OVERDUE", "partiellement payée"]}}).count()
 
-    # Revenus
-    monthly_revenue_gross = db.query(func.coalesce(func.sum(Invoice.total), 0)).filter(
-        func.extract('month', Invoice.date) == today.month,
-        func.extract('year', Invoice.date) == today.year,
-        Invoice.status.in_(["payée", "PAID"])  # payées uniquement
-    ).scalar() or 0
+    # Monthly revenue (paid invoices this month)
+    pipeline_monthly = [
+        {"$match": {
+            "status": {"$in": ["payée", "PAID"]},
+            "$expr": {
+                "$and": [
+                    {"$eq": [{"$month": "$date"}, today.month]},
+                    {"$eq": [{"$year": "$date"}, today.year]},
+                ]
+            }
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]
+    monthly_result = await Invoice.aggregate(pipeline_monthly).to_list()
+    monthly_revenue_gross = float(monthly_result[0]["total"]) if monthly_result else 0.0
 
-    monthly_supplier_payments = db.query(func.coalesce(func.sum(SupplierInvoice.paid_amount), 0)).filter(
-        func.extract('month', SupplierInvoice.invoice_date) == today.month,
-        func.extract('year', SupplierInvoice.invoice_date) == today.year
-    ).scalar() or 0
+    # Monthly supplier payments
+    pipeline_supplier = [
+        {"$match": {
+            "$expr": {
+                "$and": [
+                    {"$eq": [{"$month": "$invoice_date"}, today.month]},
+                    {"$eq": [{"$year": "$invoice_date"}, today.year]},
+                ]
+            }
+        }},
+        {"$group": {"_id": None, "total": {"$sum": "$paid_amount"}}}
+    ]
+    supplier_result = await SupplierInvoice.aggregate(pipeline_supplier).to_list()
+    monthly_supplier_payments = float(supplier_result[0]["total"]) if supplier_result else 0.0
 
-    monthly_revenue = float(monthly_revenue_gross) - float(monthly_supplier_payments)
+    monthly_revenue = monthly_revenue_gross - monthly_supplier_payments
 
-    total_revenue_gross = db.query(func.coalesce(func.sum(Invoice.total), 0)).filter(Invoice.status.in_(["payée", "PAID"])) .scalar() or 0
-    total_revenue = float(total_revenue_gross)
+    # Total revenue (all paid invoices)
+    pipeline_total_rev = [
+        {"$match": {"status": {"$in": ["payée", "PAID"]}}},
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]
+    total_rev_result = await Invoice.aggregate(pipeline_total_rev).to_list()
+    total_revenue = float(total_rev_result[0]["total"]) if total_rev_result else 0.0
 
-    unpaid_amount = db.query(func.coalesce(func.sum(Invoice.remaining_amount), 0)).filter(Invoice.status.in_(["en attente", "partiellement payée", "OVERDUE"])) .scalar() or 0
+    # Unpaid amount
+    pipeline_unpaid = [
+        {"$match": {"status": {"$in": ["en attente", "partiellement payée", "OVERDUE"]}}},
+        {"$group": {"_id": None, "total": {"$sum": "$remaining_amount"}}}
+    ]
+    unpaid_result = await Invoice.aggregate(pipeline_unpaid).to_list()
+    unpaid_amount = float(unpaid_result[0]["total"]) if unpaid_result else 0.0
 
     result = {
         "total_invoices": int(total_invoices),
@@ -78,22 +107,27 @@ def recompute_invoices_stats(db: Session) -> Dict[str, Any]:
         "total_revenue": float(total_revenue),
         "unpaid_amount": float(unpaid_amount),
     }
-    _set_cache(db, INVOICES_STATS_KEY, result)
+    await _set_cache(INVOICES_STATS_KEY, result)
     return result
 
 
-def get_quotations_stats(db: Session) -> Dict[str, Any]:
-    cached = _get_cache(db, QUOTATIONS_STATS_KEY)
+async def get_quotations_stats() -> Dict[str, Any]:
+    cached = await _get_cache(QUOTATIONS_STATS_KEY)
     if cached:
         return cached
-    return recompute_quotations_stats(db)
+    return await recompute_quotations_stats()
 
 
-def recompute_quotations_stats(db: Session) -> Dict[str, Any]:
-    total = db.query(func.count(Quotation.quotation_id)).scalar() or 0
-    total_accepted = db.query(func.count(Quotation.quotation_id)).filter(Quotation.status == 'accepté').scalar() or 0
-    total_pending = db.query(func.count(Quotation.quotation_id)).filter(Quotation.status == 'en attente').scalar() or 0
-    total_value = db.query(func.coalesce(func.sum(Quotation.total), 0)).scalar() or 0
+async def recompute_quotations_stats() -> Dict[str, Any]:
+    total = await Quotation.find().count()
+    total_accepted = await Quotation.find(Quotation.status == 'accepté').count()
+    total_pending = await Quotation.find(Quotation.status == 'en attente').count()
+
+    pipeline_value = [
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]
+    value_result = await Quotation.aggregate(pipeline_value).to_list()
+    total_value = float(value_result[0]["total"]) if value_result else 0.0
 
     result = {
         "total": int(total),
@@ -101,7 +135,5 @@ def recompute_quotations_stats(db: Session) -> Dict[str, Any]:
         "total_pending": int(total_pending),
         "total_value": float(total_value),
     }
-    _set_cache(db, QUOTATIONS_STATS_KEY, result)
+    await _set_cache(QUOTATIONS_STATS_KEY, result)
     return result
-
-

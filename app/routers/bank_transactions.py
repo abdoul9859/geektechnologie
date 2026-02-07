@@ -1,46 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import text
 from typing import Optional
 from datetime import date
 
-from ..database import get_db, User, BankTransaction
+from ..database import BankTransaction, get_next_id
 from ..auth import get_current_user
 from ..schemas import BankTransactionCreate, BankTransactionResponse
 
 router = APIRouter(prefix="/api/bank-transactions", tags=["bank_transactions"])
 
-# Sécurité: s'assurer que la table existe (utile si l'ordre d'import diffère)
-def _ensure_table_exists(db: Session):
-    try:
-        bind = db.get_bind()
-        BankTransaction.__table__.create(bind=bind, checkfirst=True)
-    except Exception:
-        # Ne pas bloquer si un souci de concurrence survient
-        pass
-
-def _ensure_reference_column(db: Session):
-    """Ajoute la colonne 'reference' si elle n'existe pas (utile après mise à jour)."""
-    try:
-        bind = db.get_bind()
-        dialect = bind.dialect.name
-        if dialect == 'sqlite':
-            # Vérifier via PRAGMA
-            res = db.execute(text("PRAGMA table_info(bank_transactions)"))
-            cols = [row[1] for row in res]
-            if 'reference' not in cols:
-                db.execute(text("ALTER TABLE bank_transactions ADD COLUMN reference VARCHAR(255)"))
-                db.commit()
-        else:
-            # Tentative générique, ignorée si déjà existante
-            try:
-                db.execute(text("ALTER TABLE bank_transactions ADD COLUMN reference VARCHAR(255)"))
-                db.commit()
-            except Exception:
-                db.rollback()
-    except Exception:
-        # Ne pas bloquer l'exécution
-        pass
 
 @router.get("/", response_model=dict)
 async def get_transactions(
@@ -51,39 +18,44 @@ async def get_transactions(
     method: Optional[str] = None,  # 'virement' | 'cheque'
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Récupérer la liste des transactions bancaires (DB)."""
+    """Recuperer la liste des transactions bancaires (DB)."""
     try:
-        _ensure_table_exists(db)
-        _ensure_reference_column(db)
-        q = db.query(BankTransaction)
+        filters = {}
 
         if search:
-            s = f"%{search.lower()}%"
-            # filtrer sur motif et description (case-insensitive)
-            from sqlalchemy import or_, func as sa_func
-            q = q.filter(or_(sa_func.lower(BankTransaction.motif).like(s), sa_func.lower(BankTransaction.description).like(s)))
+            # Build an $or filter for motif and description
+            pattern = {"$regex": search, "$options": "i"}
+            filters["$or"] = [
+                {"motif": pattern},
+                {"description": pattern},
+            ]
 
         if type:
-            q = q.filter(BankTransaction.type == type)
+            filters["type"] = type
 
         if method:
-            q = q.filter(BankTransaction.method == method)
+            filters["method"] = method
 
         if start_date:
-            q = q.filter(BankTransaction.date >= start_date)
+            filters.setdefault("date", {})["$gte"] = start_date
         if end_date:
-            q = q.filter(BankTransaction.date <= end_date)
+            filters.setdefault("date", {})["$lte"] = end_date
 
-        total = q.count()
-        items = q.order_by(BankTransaction.date.desc(), BankTransaction.id.desc()).offset(skip).limit(limit).all()
+        total = await BankTransaction.find(filters).count()
+        items = (
+            await BankTransaction.find(filters)
+            .sort([("date", -1), ("transaction_id", -1)])
+            .skip(skip)
+            .limit(limit)
+            .to_list()
+        )
 
         return {
             "transactions": [
                 BankTransactionResponse(
-                    id=item.id,
+                    id=item.transaction_id,
                     type=item.type,
                     motif=item.motif,
                     description=item.description,
@@ -91,7 +63,8 @@ async def get_transactions(
                     date=item.date,
                     method=item.method,
                     reference=item.reference,
-                ) for item in items
+                )
+                for item in items
             ],
             "total": total,
             "page": (skip // limit) + 1,
@@ -100,21 +73,30 @@ async def get_transactions(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/stats/summary")
 async def get_transactions_stats(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
     """Statistiques sur les transactions (DB)."""
     try:
-        _ensure_table_exists(db)
-        _ensure_reference_column(db)
-        from sqlalchemy import func as sa_func
-        total_entries = db.query(sa_func.coalesce(sa_func.sum(BankTransaction.amount), 0)).filter(BankTransaction.type == "entry").scalar() or 0
-        total_exits = db.query(sa_func.coalesce(sa_func.sum(BankTransaction.amount), 0)).filter(BankTransaction.type == "exit").scalar() or 0
+        pipeline_entries = [
+            {"$match": {"type": "entry"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+        ]
+        pipeline_exits = [
+            {"$match": {"type": "exit"}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+        ]
+
+        entries_result = await BankTransaction.aggregate(pipeline_entries).to_list()
+        exits_result = await BankTransaction.aggregate(pipeline_exits).to_list()
+
+        total_entries = entries_result[0]["total"] if entries_result else 0
+        total_exits = exits_result[0]["total"] if exits_result else 0
         current_balance = total_entries - total_exits
 
-        tx_count = db.query(sa_func.count(BankTransaction.id)).scalar() or 0
+        tx_count = await BankTransaction.count()
 
         return {
             "current_balance": current_balance,
@@ -125,23 +107,20 @@ async def get_transactions_stats(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/", response_model=BankTransactionResponse)
 async def create_transaction(
     transaction_data: BankTransactionCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Créer une transaction (persistée en DB)."""
+    """Creer une transaction (persistee en DB)."""
     try:
-        _ensure_table_exists(db)
-        _ensure_reference_column(db)
-        payload = transaction_data.model_dict() if hasattr(transaction_data, 'model_dict') else transaction_data.dict()
-        tx = BankTransaction(**payload)
-        db.add(tx)
-        db.commit()
-        db.refresh(tx)
+        payload = transaction_data.model_dump() if hasattr(transaction_data, "model_dump") else transaction_data.dict()
+        new_id = await get_next_id("bank_transactions")
+        tx = BankTransaction(transaction_id=new_id, **payload)
+        await tx.insert()
         return BankTransactionResponse(
-            id=tx.id,
+            id=tx.transaction_id,
             type=tx.type,
             motif=tx.motif,
             description=tx.description,
@@ -151,31 +130,27 @@ async def create_transaction(
             reference=tx.reference,
         )
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.put("/{transaction_id}", response_model=BankTransactionResponse)
 async def update_transaction(
     transaction_id: int,
     transaction_data: BankTransactionCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Mettre à jour une transaction existante (tous les champs)."""
+    """Mettre a jour une transaction existante (tous les champs)."""
     try:
-        _ensure_table_exists(db)
-        _ensure_reference_column(db)
-        tx: BankTransaction | None = db.query(BankTransaction).filter(BankTransaction.id == transaction_id).first()
+        tx = await BankTransaction.find_one(BankTransaction.transaction_id == transaction_id)
         if not tx:
-            raise HTTPException(status_code=404, detail="Transaction non trouvée")
+            raise HTTPException(status_code=404, detail="Transaction non trouvee")
 
-        payload = transaction_data.model_dict() if hasattr(transaction_data, 'model_dict') else transaction_data.dict()
+        payload = transaction_data.model_dump() if hasattr(transaction_data, "model_dump") else transaction_data.dict()
         for k, v in payload.items():
             setattr(tx, k, v)
-        db.commit()
-        db.refresh(tx)
+        await tx.save()
         return BankTransactionResponse(
-            id=tx.id,
+            id=tx.transaction_id,
             type=tx.type,
             motif=tx.motif,
             description=tx.description,
@@ -187,26 +162,22 @@ async def update_transaction(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.delete("/{transaction_id}")
 async def delete_transaction(
     transaction_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
     """Supprimer une transaction."""
     try:
-        _ensure_table_exists(db)
-        tx = db.query(BankTransaction).filter(BankTransaction.id == transaction_id).first()
+        tx = await BankTransaction.find_one(BankTransaction.transaction_id == transaction_id)
         if not tx:
-            raise HTTPException(status_code=404, detail="Transaction non trouvée")
-        db.delete(tx)
-        db.commit()
+            raise HTTPException(status_code=404, detail="Transaction non trouvee")
+        await tx.delete()
         return {"status": "success"}
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

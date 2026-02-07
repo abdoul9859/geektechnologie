@@ -1,25 +1,33 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
 from typing import List, Optional
 from datetime import datetime, timedelta, date
+from collections import defaultdict
 import json
 
-from ..database import get_db, User
+from ..database import User
 from ..database import Invoice, InvoiceItem, InvoicePayment, Quotation, Product, Client
 from ..auth import get_current_user
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
+def _safe_date(v):
+    """Extract date from datetime-like or return as-is."""
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    return v
+
 @router.get("/overview")
 async def get_overview_report(
     period: str = "month",
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
     """Rapport de vue d'ensemble"""
     try:
-        # Données simulées pour le rapport d'ensemble
+        # Donnees simulees pour le rapport d'ensemble
         return {
             "sales": {
                 "total": 2500000,
@@ -62,91 +70,90 @@ async def get_overview_report(
 @router.get("/dashboard")
 async def get_dashboard_metrics(
     days: int = 30,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """KPI réels pour le tableau de bord, calculés depuis SQLite.
-    - Panier moyen (factures payées sur N derniers jours)
+    """KPI reels pour le tableau de bord, calcules depuis MongoDB.
+    - Panier moyen (factures payees sur N derniers jours)
     - Taux de conversion devis -> factures (N jours)
     - Stock critique (<=3) + en rupture (=0)
     - Clients actifs (90 jours)
-    - Répartition des paiements (N jours)
+    - Repartition des paiements (N jours)
     - Top produits par CA (N jours)
     """
     try:
         now = datetime.now()
         since = now - timedelta(days=max(1, days))
+        since_date = since.date()
 
-        # Panier moyen sur factures payées (FR/EN)
-        paid_statuses = ["payée", "PAID"]
-        invoices_q = (
-            db.query(Invoice)
-            .filter(func.date(Invoice.date) >= since.date())
-            .filter(Invoice.status.in_(paid_statuses))
-        )
-        num_invoices = invoices_q.count()
-        total_revenue = float(
-            db.query(func.coalesce(func.sum(Invoice.total), 0))
-            .filter(func.date(Invoice.date) >= since.date())
-            .filter(Invoice.status.in_(paid_statuses))
-            .scalar()
-            or 0
-        )
+        # Pre-fetch all necessary data
+        all_invoices = await Invoice.find().to_list()
+        paid_statuses = ["payee", "PAID"]
+
+        # Panier moyen sur factures payees (FR/EN)
+        paid_invoices_period = [
+            inv for inv in all_invoices
+            if inv.status in paid_statuses and inv.date
+            and _safe_date(inv.date) and _safe_date(inv.date) >= since_date
+        ]
+        num_invoices = len(paid_invoices_period)
+        total_revenue = sum(float(inv.total or 0) for inv in paid_invoices_period)
         avg_ticket = float(total_revenue / num_invoices) if num_invoices else 0.0
 
         # Conversion devis -> factures (N jours)
-        quotes_total = db.query(func.count(Quotation.quotation_id)).filter(func.date(Quotation.date) >= since.date()).scalar() or 0
-        converted_quotes = (
-            db.query(func.count(func.distinct(Invoice.quotation_id)))
-            .filter(Invoice.quotation_id.isnot(None))
-            .filter(func.date(Invoice.date) >= since.date())
-            .scalar()
-            or 0
+        all_quotations = await Quotation.find().to_list()
+        quotes_total = sum(
+            1 for q in all_quotations
+            if q.date and _safe_date(q.date) and _safe_date(q.date) >= since_date
         )
+        converted_quotes = len(set(
+            inv.quotation_id for inv in all_invoices
+            if inv.quotation_id is not None and inv.date
+            and _safe_date(inv.date) and _safe_date(inv.date) >= since_date
+        ))
         conversion_rate = float((converted_quotes / quotes_total) * 100) if quotes_total else 0.0
 
         # Stock critique
-        out_of_stock = db.query(func.count(Product.product_id)).filter((Product.quantity == 0) | (Product.quantity.is_(None))).scalar() or 0
-        low_stock = db.query(func.count(Product.product_id)).filter(Product.quantity > 0, Product.quantity <= 3).scalar() or 0
+        all_products = await Product.find().to_list()
+        out_of_stock = sum(1 for p in all_products if (p.quantity or 0) == 0 or p.quantity is None)
+        low_stock = sum(1 for p in all_products if (p.quantity or 0) > 0 and (p.quantity or 0) <= 3)
 
         # Clients actifs (90 jours)
         since_90 = now - timedelta(days=90)
-        active_customers = (
-            db.query(func.count(func.distinct(Invoice.client_id)))
-            .filter(Invoice.client_id.isnot(None))
-            .filter(func.date(Invoice.date) >= since_90.date())
-            .scalar()
-            or 0
-        )
+        active_customers = len(set(
+            inv.client_id for inv in all_invoices
+            if inv.client_id is not None and inv.date
+            and _safe_date(inv.date) and _safe_date(inv.date) >= since_90.date()
+        ))
 
-        # Répartition des paiements (N jours)
-        payments = (
-            db.query(InvoicePayment.payment_method, func.coalesce(func.sum(InvoicePayment.amount), 0).label("amount"))
-            .filter(func.date(InvoicePayment.payment_date) >= since.date())
-            .group_by(InvoicePayment.payment_method)
-            .order_by(desc("amount"))
-            .all()
+        # Repartition des paiements (N jours)
+        all_payments = await InvoicePayment.find().to_list()
+        method_amounts = defaultdict(float)
+        for pay in all_payments:
+            if pay.payment_date and _safe_date(pay.payment_date) and _safe_date(pay.payment_date) >= since_date:
+                method_amounts[pay.payment_method or "Non specifie"] += float(pay.amount or 0)
+
+        payments_breakdown = sorted(
+            [{"method": method, "amount": amt} for method, amt in method_amounts.items()],
+            key=lambda x: x["amount"],
+            reverse=True
         )
-        payments_breakdown = [
-            {"method": (pm or "Non spécifié"), "amount": float(am or 0)} for pm, am in payments
-        ]
 
         # Top produits par CA (N jours)
-        top_products_rows = (
-            db.query(
-                InvoiceItem.product_name,
-                func.coalesce(func.sum(InvoiceItem.total), 0).label("revenue"),
-            )
-            .join(Invoice, InvoiceItem.invoice_id == Invoice.invoice_id)
-            .filter(func.date(Invoice.date) >= since.date())
-            .group_by(InvoiceItem.product_name)
-            .order_by(desc("revenue"))
-            .limit(5)
-            .all()
+        inv_ids_in_period = set(
+            inv.invoice_id for inv in all_invoices
+            if inv.date and _safe_date(inv.date) and _safe_date(inv.date) >= since_date
         )
-        top_products = [
-            {"name": (name or "-"), "revenue": float(rev or 0)} for name, rev in top_products_rows
-        ]
+        all_items = await InvoiceItem.find().to_list()
+        product_revenue = defaultdict(float)
+        for item in all_items:
+            if item.invoice_id in inv_ids_in_period:
+                product_revenue[item.product_name or "-"] += float(item.total or 0)
+
+        top_products = sorted(
+            [{"name": name, "revenue": rev} for name, rev in product_revenue.items()],
+            key=lambda x: x["revenue"],
+            reverse=True
+        )[:5]
 
         return {
             "avg_ticket": avg_ticket,
@@ -170,26 +177,25 @@ async def get_sales_report(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
     """Rapport des ventes"""
     try:
-        # Générer des données de ventes simulées
+        # Generer des donnees de ventes simulees
         sales_data = []
         chart_data = []
-        
-        # Données par jour pour les 30 derniers jours
+
+        # Donnees par jour pour les 30 derniers jours
         for i in range(30):
-            date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
-            amount = 50000 + (i * 10000) + (i % 7 * 25000)  # Variation simulée
+            d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+            amount = 50000 + (i * 10000) + (i % 7 * 25000)  # Variation simulee
             sales_data.append({
-                "date": date,
+                "date": d,
                 "amount": amount,
                 "transactions": 2 + (i % 5),
                 "average_ticket": amount / (2 + (i % 5))
             })
-            chart_data.append({"date": date, "value": amount})
-        
+            chart_data.append({"date": d, "value": amount})
+
         return {
             "summary": {
                 "total_sales": sum(s["amount"] for s in sales_data),
@@ -214,7 +220,6 @@ async def get_sales_report(
 @router.get("/stock")
 async def get_stock_report(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
     """Rapport de stock"""
     try:
@@ -249,7 +254,6 @@ async def get_stock_report(
 async def get_financial_report(
     period: str = "month",
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
     """Rapport financier"""
     try:
@@ -274,7 +278,7 @@ async def get_financial_report(
             ],
             "monthly_trend": [
                 {"month": "Jan", "revenue": 2500000, "expenses": 800000, "profit": 1700000},
-                {"month": "Déc", "revenue": 2200000, "expenses": 750000, "profit": 1450000},
+                {"month": "Dec", "revenue": 2200000, "expenses": 750000, "profit": 1450000},
                 {"month": "Nov", "revenue": 2100000, "expenses": 700000, "profit": 1400000},
                 {"month": "Oct", "revenue": 1900000, "expenses": 650000, "profit": 1250000}
             ],
@@ -291,7 +295,6 @@ async def get_financial_report(
 @router.get("/customers")
 async def get_customers_report(
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
     """Rapport clients"""
     try:
@@ -307,17 +310,17 @@ async def get_customers_report(
                 {"name": "Amadou Ba", "orders": 12, "total_spent": 1800000, "last_order": "2024-01-20"},
                 {"name": "Fatou Diop", "orders": 8, "total_spent": 1200000, "last_order": "2024-01-18"},
                 {"name": "Moussa Ndiaye", "orders": 6, "total_spent": 950000, "last_order": "2024-01-15"},
-                {"name": "Aïcha Sow", "orders": 5, "total_spent": 750000, "last_order": "2024-01-12"},
+                {"name": "Aisha Sow", "orders": 5, "total_spent": 750000, "last_order": "2024-01-12"},
                 {"name": "Omar Fall", "orders": 4, "total_spent": 600000, "last_order": "2024-01-10"}
             ],
             "customer_segments": [
                 {"segment": "VIP (>1M)", "count": 5, "percentage": 11.1, "revenue": 6500000},
-                {"segment": "Réguliers (500K-1M)", "count": 12, "percentage": 26.7, "revenue": 8400000},
+                {"segment": "Reguliers (500K-1M)", "count": 12, "percentage": 26.7, "revenue": 8400000},
                 {"segment": "Occasionnels (<500K)", "count": 28, "percentage": 62.2, "revenue": 4100000}
             ],
             "acquisition_trend": [
                 {"month": "Jan", "new_customers": 8, "retained": 24},
-                {"month": "Déc", "new_customers": 6, "retained": 22},
+                {"month": "Dec", "new_customers": 6, "retained": 22},
                 {"month": "Nov", "new_customers": 5, "retained": 20},
                 {"month": "Oct", "new_customers": 7, "retained": 18}
             ]

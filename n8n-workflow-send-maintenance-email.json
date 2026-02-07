@@ -28,12 +28,44 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://72.62.22.52:3001/api/generatePdf",
+        "url": "http://gotenberg:3000/forms/chromium/convert/url",
         "authentication": "none",
         "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={\"htmlUrl\": \"{{ $json.htmlUrl }}\", \"filename\": \"Maintenance-{{ $json.maintenanceNumber }}-{{ $json.kind }}.pdf\"}",
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formData",
+              "name": "url",
+              "value": "={{ $json.htmlUrl }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginTop",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginBottom",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginLeft",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginRight",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "printBackground",
+              "value": "true"
+            }
+          ]
+        },
         "options": {
           "response": {
             "response": {
@@ -154,7 +186,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "1",
+  "versionId": "2",
   "meta": {
     "instanceId": "geektechnologie"
   },

@@ -1,219 +1,201 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import or_, desc, func
 from typing import Optional, List
-from decimal import Decimal
 
-from ..database import get_db, Supplier
+from ..database import Supplier, SupplierInvoice, get_next_id
 from ..schemas import SupplierQuickCreate, SupplierResponse
 from ..auth import get_current_user, User
 
 router = APIRouter(
     prefix="/api/suppliers",
     tags=["suppliers"],
-    dependencies=[Depends(get_current_user)]
+    dependencies=[Depends(get_current_user)],
 )
+
 
 @router.get("/", response_model=List[SupplierResponse])
 async def get_suppliers(
-    skip: int = Query(0, ge=0, description="Nombre d'éléments à ignorer"),
-    limit: int = Query(100, ge=1, le=1000, description="Nombre d'éléments à récupérer"),
-    search: Optional[str] = Query(None, description="Recherche par nom, téléphone ou email"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    skip: int = Query(0, ge=0, description="Nombre d'elements a ignorer"),
+    limit: int = Query(100, ge=1, le=1000, description="Nombre d'elements a recuperer"),
+    search: Optional[str] = Query(None, description="Recherche par nom, telephone ou email"),
+    current_user: User = Depends(get_current_user),
 ):
-    """Récupérer la liste des fournisseurs avec pagination et recherche"""
-    
+    """Recuperer la liste des fournisseurs avec pagination et recherche"""
     try:
-        query = db.query(Supplier)
-        
-        # Appliquer les filtres de recherche
+        filters = {}
+
         if search and search.strip():
-            search_term = f"%{search.strip().lower()}%"
-            query = query.filter(
-                or_(
-                    func.lower(Supplier.name).like(search_term),
-                    func.lower(Supplier.phone).like(search_term),
-                    func.lower(Supplier.email).like(search_term)
-                )
-            )
-        
-        # Trier par nom
-        query = query.order_by(Supplier.name)
-        
-        # Appliquer pagination
-        suppliers = query.offset(skip).limit(limit).all()
-        
+            pattern = {"$regex": search.strip(), "$options": "i"}
+            filters["$or"] = [
+                {"name": pattern},
+                {"phone": pattern},
+                {"email": pattern},
+            ]
+
+        suppliers = (
+            await Supplier.find(filters)
+            .sort("+name")
+            .skip(skip)
+            .limit(limit)
+            .to_list()
+        )
+
         return suppliers
-        
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la recuperation: {str(e)}")
+
 
 @router.get("/{supplier_id}", response_model=SupplierResponse)
 async def get_supplier(
     supplier_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """Récupérer un fournisseur spécifique"""
-    
-    supplier = db.query(Supplier).filter(Supplier.supplier_id == supplier_id).first()
+    """Recuperer un fournisseur specifique"""
+    supplier = await Supplier.find_one(Supplier.supplier_id == supplier_id)
     if not supplier:
         raise HTTPException(status_code=404, detail="Fournisseur introuvable")
-    
+
     return supplier
+
 
 @router.post("/", response_model=SupplierResponse)
 async def create_supplier(
     supplier_data: SupplierQuickCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """Créer un nouveau fournisseur"""
-    
+    """Creer un nouveau fournisseur"""
     try:
-        # Vérifier si un fournisseur avec ce nom existe déjà
-        existing = db.query(Supplier).filter(
-            func.lower(Supplier.name) == func.lower(supplier_data.name)
-        ).first()
-        
+        # Verifier si un fournisseur avec ce nom existe deja (case-insensitive)
+        existing = await Supplier.find_one(
+            {"name": {"$regex": f"^{supplier_data.name}$", "$options": "i"}}
+        )
+
         if existing:
             raise HTTPException(
-                status_code=400, 
-                detail=f"Un fournisseur avec le nom '{supplier_data.name}' existe déjà"
+                status_code=400,
+                detail=f"Un fournisseur avec le nom '{supplier_data.name}' existe deja",
             )
-        
-        # Créer le nouveau fournisseur
+
+        new_id = await get_next_id("suppliers")
         db_supplier = Supplier(
+            supplier_id=new_id,
             name=supplier_data.name,
             phone=supplier_data.phone,
             email=supplier_data.email,
-            address=supplier_data.address
+            address=supplier_data.address,
         )
-        
-        db.add(db_supplier)
-        db.commit()
-        db.refresh(db_supplier)
-        
+
+        await db_supplier.insert()
+
         return db_supplier
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la création: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la creation: {str(e)}")
+
 
 @router.put("/{supplier_id}", response_model=SupplierResponse)
 async def update_supplier(
     supplier_id: int,
     supplier_data: SupplierQuickCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """Mettre à jour un fournisseur"""
-    
+    """Mettre a jour un fournisseur"""
     try:
-        # Récupérer le fournisseur existant
-        supplier = db.query(Supplier).filter(Supplier.supplier_id == supplier_id).first()
+        supplier = await Supplier.find_one(Supplier.supplier_id == supplier_id)
         if not supplier:
             raise HTTPException(status_code=404, detail="Fournisseur introuvable")
-        
-        # Vérifier les doublons de nom (sauf pour le fournisseur actuel)
-        existing = db.query(Supplier).filter(
-            Supplier.supplier_id != supplier_id,
-            func.lower(Supplier.name) == func.lower(supplier_data.name)
-        ).first()
-        
+
+        # Verifier les doublons de nom (sauf pour le fournisseur actuel)
+        existing = await Supplier.find_one(
+            {
+                "supplier_id": {"$ne": supplier_id},
+                "name": {"$regex": f"^{supplier_data.name}$", "$options": "i"},
+            }
+        )
+
         if existing:
             raise HTTPException(
                 status_code=400,
-                detail=f"Un autre fournisseur avec le nom '{supplier_data.name}' existe déjà"
+                detail=f"Un autre fournisseur avec le nom '{supplier_data.name}' existe deja",
             )
-        
-        # Mettre à jour les champs
+
         supplier.name = supplier_data.name
         supplier.phone = supplier_data.phone
         supplier.email = supplier_data.email
         supplier.address = supplier_data.address
-        
-        db.commit()
-        db.refresh(supplier)
-        
+
+        await supplier.save()
+
         return supplier
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la mise à jour: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la mise a jour: {str(e)}")
+
 
 @router.delete("/{supplier_id}")
 async def delete_supplier(
     supplier_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
     """Supprimer un fournisseur"""
-    
     try:
-        # Récupérer le fournisseur
-        supplier = db.query(Supplier).filter(Supplier.supplier_id == supplier_id).first()
+        supplier = await Supplier.find_one(Supplier.supplier_id == supplier_id)
         if not supplier:
             raise HTTPException(status_code=404, detail="Fournisseur introuvable")
-        
-        # Vérifier s'il y a des factures liées
-        from ..database import SupplierInvoice
-        invoice_count = db.query(SupplierInvoice).filter(
+
+        # Verifier s'il y a des factures liees
+        invoice_count = await SupplierInvoice.find(
             SupplierInvoice.supplier_id == supplier_id
         ).count()
-        
+
         if invoice_count > 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"Impossible de supprimer: {invoice_count} facture(s) sont liées à ce fournisseur"
+                detail=f"Impossible de supprimer: {invoice_count} facture(s) sont liees a ce fournisseur",
             )
-        
-        # Supprimer le fournisseur
-        db.delete(supplier)
-        db.commit()
-        
-        return {"message": "Fournisseur supprimé avec succès"}
-        
+
+        await supplier.delete()
+
+        return {"message": "Fournisseur supprime avec succes"}
+
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=f"Erreur lors de la suppression: {str(e)}")
+
 
 @router.get("/search/suggestions")
 async def get_supplier_suggestions(
     q: str = Query(..., min_length=2, description="Terme de recherche"),
     limit: int = Query(10, ge=1, le=50, description="Nombre de suggestions"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
 ):
-    """Récupérer des suggestions de fournisseurs pour l'autocomplétion"""
-    
+    """Recuperer des suggestions de fournisseurs pour l'autocompletion"""
     try:
-        search_term = f"%{q.strip().lower()}%"
-        
-        suppliers = db.query(Supplier).filter(
-            or_(
-                func.lower(Supplier.name).like(search_term),
-                func.lower(Supplier.phone).like(search_term),
-                func.lower(Supplier.email).like(search_term)
+        pattern = {"$regex": q.strip(), "$options": "i"}
+
+        suppliers = (
+            await Supplier.find(
+                {"$or": [{"name": pattern}, {"phone": pattern}, {"email": pattern}]}
             )
-        ).order_by(Supplier.name).limit(limit).all()
-        
+            .sort("+name")
+            .limit(limit)
+            .to_list()
+        )
+
         return [
             {
                 "id": supplier.supplier_id,
                 "name": supplier.name,
                 "phone": supplier.phone,
-                "email": supplier.email
+                "email": supplier.email,
             }
             for supplier in suppliers
         ]
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la recherche: {str(e)}")

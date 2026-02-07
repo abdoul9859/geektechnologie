@@ -4,9 +4,6 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, FileResponse, Response, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from io import BytesIO
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from sqlalchemy.orm import joinedload
 import uvicorn
 import os
 from dotenv import load_dotenv
@@ -25,7 +22,7 @@ def get_asset_version():
     commit_sha = os.getenv("GIT_COMMIT_SHA") or os.getenv("KOYEB_COMMIT_SHA") or os.getenv("ASSET_VERSION")
     if commit_sha:
         return commit_sha[:12]
-    
+
     # En développement, utiliser le timestamp de modification le plus récent parmi static/js, static/css et templates
     try:
         latest_mtime = 0
@@ -46,22 +43,27 @@ def get_asset_version():
             return str(int(latest_mtime))
     except Exception:
         pass
-    
+
     # Fallback: timestamp actuel
     return str(int(datetime.now().timestamp()))
 
 ASSET_VERSION = get_asset_version()
 
-# Imports de l'application
-from app.database import get_db
-from app.database import Invoice, UserSettings, Product, DeliveryNote, DeliveryNoteItem, Client
-import re
-try:
-    # Legacy settings model (template-application) for fallback of company info/logo
-    from app.models.models import Settings as LegacySettings  # type: ignore
-except Exception:
-    LegacySettings = None  # type: ignore
-from app.routers import auth, products, clients, stock_movements, invoices, quotations, suppliers, debts, delivery_notes, bank_transactions, reports, user_settings, migrations, cache, dashboard, supplier_invoices, daily_recap, daily_purchases, daily_requests, daily_sales, google_sheets, client_debts, backup, maintenances
+# Imports de l'application — MongoDB / Beanie
+from app.database import (
+    init_db,
+    Invoice, InvoiceItem, InvoicePayment,
+    UserSettings, Product, DeliveryNote, DeliveryNoteItem,
+    Client, ClientDebt,
+    Quotation, QuotationItem,
+)
+from app.routers import (
+    auth, products, clients, stock_movements, invoices, quotations,
+    suppliers, debts, delivery_notes, bank_transactions, reports,
+    user_settings, migrations, cache, dashboard, supplier_invoices,
+    daily_recap, daily_purchases, daily_requests, daily_sales,
+    google_sheets, client_debts, backup, maintenances,
+)
 from app.init_db import init_database
 from app.auth import get_current_user
 from app.services.migration_processor import migration_processor
@@ -103,8 +105,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# (Optionnel) Middleware proxy enlevé pour compatibilité starlette; la baseURL côté frontend force déjà HTTPS
-
 # Middleware de gestion du cache: HTML non cache, assets statiques fortement cacheés
 @app.middleware("http")
 async def cache_headers_middleware(request, call_next):
@@ -118,31 +118,34 @@ async def cache_headers_middleware(request, call_next):
             response.headers["Cache-Control"] = "no-store"
         # Help browsers auto-upgrade any stray http resources to https and enable HSTS
         # Only apply security headers in production (not on localhost)
-        if not (path.startswith("/") and (request.client.host in ["127.0.0.1", "localhost"] or 
+        if not (path.startswith("/") and (request.client.host in ["127.0.0.1", "localhost"] or
                 request.headers.get("host", "").startswith(("localhost:", "127.0.0.1:")))):
             # Autoriser frame-ancestors '*' pour le diagnostic et s'assurer que l'iframe peut charger des scripts externes
             response.headers["Content-Security-Policy"] = "upgrade-insecure-requests; frame-ancestors *; frame-src *; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'"
             response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
-        
+
         # Désactiver temporairement X-Frame-Options pour lever tout blocage résiduel
         if "X-Frame-Options" in response.headers:
             del response.headers["X-Frame-Options"]
-        # response.headers["X-Frame-Options"] = "ALLOWALL" # Option non standard mais testée par certains navigateurs
     except Exception:
         # En cas de souci, on n'empêche pas la réponse de sortir
         pass
     return response
 
-# Initialiser la base de données au démarrage (désactivé par défaut en déploiement)
+# Initialiser la base de données au démarrage
 @app.on_event("startup")
 async def startup_event():
     try:
+        # Initialise MongoDB/Beanie connection + optional seeding
         should_init = os.getenv("INIT_DB_ON_STARTUP", "false").lower() == "true"
         if should_init:
             print("⚙️ INIT_DB_ON_STARTUP=true → initialisation de la base autorisée")
-            init_database()
+            await init_database()
         else:
-            print("⏭️ INIT_DB_ON_STARTUP!=true → saut de l'initialisation de la base (aucune écriture)")
+            # Always connect to MongoDB, just skip seeding
+            await init_db()
+            print("⏭️ INIT_DB_ON_STARTUP!=true → saut du semis de données")
+
         # Démarrer le processeur de migrations en arrière-plan (désactivé par défaut)
         if os.getenv("ENABLE_MIGRATIONS_WORKER", "false").lower() == "true":
             migration_processor.start_background_processor()
@@ -275,21 +278,6 @@ app.include_router(daily_sales.router)
 app.include_router(google_sheets.router)
 app.include_router(maintenances.router)
 
-# Inclure les routers API de la boutique en ligne (API publique)
-# TODO: Activer quand le module boutique sera disponible
-# from boutique.backend.routers import (
-#     products_router,
-#     customers_router,
-#     cart_router,
-#     orders_router,
-#     payments_router
-# )
-# app.include_router(products_router)
-# app.include_router(customers_router)
-# app.include_router(cart_router)
-# app.include_router(orders_router)
-# app.include_router(payments_router)
-
 # Route pour le favicon
 @app.get("/favicon.ico")
 async def favicon():
@@ -313,74 +301,62 @@ async def live_version():
 # Routes pour l'interface web
 # Page d'accueil: Dashboard classique avec barre de navigation
 @app.get("/", response_class=HTMLResponse)
-async def dashboard_home(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("dashboard.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def dashboard_home(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request, "global_settings": await _load_company_settings()})
 
 # Interface Desktop accessible via /desktop (interface avec fenêtres type macOS)
 @app.get("/desktop", response_class=HTMLResponse)
-async def desktop_page(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("desktop.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def desktop_page(request: Request):
+    return templates.TemplateResponse("desktop.html", {"request": request, "global_settings": await _load_company_settings()})
 
 # Alias /dashboard pour compatibilité
 @app.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_alias(request: Request, db: Session = Depends(get_db)):
-    return templates.TemplateResponse("dashboard.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def dashboard_alias(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, db: Session = Depends(get_db)):
-    """Page de connexion"""
-    return templates.TemplateResponse("login.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/products", response_class=HTMLResponse)
-async def products_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des produits"""
-    return templates.TemplateResponse("products.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def products_page(request: Request):
+    return templates.TemplateResponse("products.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/clients", response_class=HTMLResponse)
-async def clients_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des clients"""
-    return templates.TemplateResponse("clients.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def clients_page(request: Request):
+    return templates.TemplateResponse("clients.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/clients/detail", response_class=HTMLResponse)
-async def client_detail_page(request: Request, db: Session = Depends(get_db)):
-    """Page de détail d'un client"""
-    return templates.TemplateResponse("clients_detail.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def client_detail_page(request: Request):
+    return templates.TemplateResponse("clients_detail.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/clients/debts", response_class=HTMLResponse)
-async def client_debts_page(request: Request, db: Session = Depends(get_db)):
-    """Page des créances d'un client (agrégées)"""
-    return templates.TemplateResponse("client_debts.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def client_debts_page(request: Request):
+    return templates.TemplateResponse("client_debts.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/clients/debts/print/{client_id}", response_class=HTMLResponse)
-async def client_debts_print_page(request: Request, client_id: int, db: Session = Depends(get_db)):
-    """Page imprimable du récapitulatif des créances d'un client"""
-    # Construire le même agrégat que l'API JSON pour le rendu
-    from datetime import date as _date
-    from sqlalchemy.orm import joinedload
-    from app.database import Client as _Client, Invoice as _Invoice, ClientDebt as _ClientDebt
-    cl = db.query(_Client).filter(_Client.client_id == client_id).first()
+async def client_debts_print_page(request: Request, client_id: int):
+    cl = await Client.find_one(Client.client_id == client_id)
     if not cl:
         raise HTTPException(status_code=404, detail="Client non trouvé")
-    today = _date.today()
-    remaining_sql = func.coalesce(_Invoice.remaining_amount, _Invoice.total - func.coalesce(_Invoice.paid_amount, 0))
-    invs = (
-        db.query(_Invoice)
-        .options(joinedload(_Invoice.items))
-        .filter(_Invoice.client_id == client_id)
-        .filter(remaining_sql > 0)
-        .order_by(_Invoice.date.desc())
-        .all()
-    )
-    def inv_status(inv):
+    today = date.today()
+
+    # Invoices with remaining > 0
+    all_invoices = await Invoice.find(Invoice.client_id == client_id).sort(-Invoice.date).to_list()
+    inv_data = []
+    for inv in all_invoices:
         amount = float(inv.total or 0)
         paid = float(inv.paid_amount or 0)
         remaining = float(inv.remaining_amount if inv.remaining_amount is not None else max(0.0, amount - paid))
-        overdue = bool(inv.due_date and getattr(inv.due_date, 'date', lambda: inv.due_date)() < today and remaining > 0)
+        if remaining <= 0:
+            continue
+        dd = inv.due_date
+        if hasattr(dd, 'date'):
+            dd = dd.date()
+        overdue = bool(dd and dd < today and remaining > 0)
         st = "paid" if remaining <= 0 else ("overdue" if overdue else ("partial" if paid > 0 else "pending"))
-        return amount, paid, remaining, st
-    inv_data = []
-    for inv in invs:
-        amount, paid, remaining, st = inv_status(inv)
+        # Fetch items for this invoice
+        items = await InvoiceItem.find(InvoiceItem.invoice_id == inv.invoice_id).to_list()
         inv_data.append({
             "id": int(inv.invoice_id),
             "invoice_number": inv.invoice_number,
@@ -396,23 +372,23 @@ async def client_debts_print_page(request: Request, client_id: int, db: Session 
                     "quantity": int(it.quantity or 0),
                     "price": float(it.price or 0),
                     "total": float(it.total or 0),
-                } for it in (inv.items or [])
+                } for it in (items or [])
             ]
         })
-    remaining_cd = func.coalesce(_ClientDebt.remaining_amount, _ClientDebt.amount - func.coalesce(_ClientDebt.paid_amount, 0))
-    cds = (
-        db.query(_ClientDebt)
-        .filter(_ClientDebt.client_id == client_id)
-        .filter(remaining_cd > 0)
-        .order_by(_ClientDebt.date.desc())
-        .all()
-    )
+
+    # Manual debts with remaining > 0
+    all_debts = await ClientDebt.find(ClientDebt.client_id == client_id).sort(-ClientDebt.date).to_list()
     md_data = []
-    for d in cds:
+    for d in all_debts:
         amount = float(d.amount or 0)
         paid = float(d.paid_amount or 0)
         remaining = float(d.remaining_amount if d.remaining_amount is not None else amount - paid)
-        overdue = bool(d.due_date and getattr(d.due_date, 'date', lambda: d.due_date)() < today and remaining > 0)
+        if remaining <= 0:
+            continue
+        dd = d.due_date
+        if hasattr(dd, 'date'):
+            dd = dd.date()
+        overdue = bool(dd and dd < today and remaining > 0)
         st = d.status or ("paid" if remaining <= 0 else ("overdue" if overdue else ("partial" if paid > 0 else "pending")))
         md_data.append({
             "id": int(d.debt_id),
@@ -425,11 +401,12 @@ async def client_debts_print_page(request: Request, client_id: int, db: Session 
             "status": st,
             "description": d.description,
         })
+
     total_amount = sum(x.get("amount", 0.0) for x in inv_data) + sum(x.get("amount", 0.0) for x in md_data)
     total_paid = sum(x.get("paid_amount", 0.0) for x in inv_data) + sum(x.get("paid_amount", 0.0) for x in md_data)
     total_remaining = sum(x.get("remaining_amount", 0.0) for x in inv_data) + sum(x.get("remaining_amount", 0.0) for x in md_data)
 
-    company_settings = _load_company_settings(db)
+    company_settings = await _load_company_settings()
     context = {
         "request": request,
         "global_settings": company_settings,
@@ -458,187 +435,99 @@ async def client_debts_print_page(request: Request, client_id: int, db: Session 
     return templates.TemplateResponse("print_client_debts.html", context)
 
 @app.get("/stock-movements", response_class=HTMLResponse)
-async def stock_movements_page(request: Request, db: Session = Depends(get_db)):
-    """Page des mouvements de stock"""
-    return templates.TemplateResponse("stock_movements.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def stock_movements_page(request: Request):
+    return templates.TemplateResponse("stock_movements.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/invoices", response_class=HTMLResponse)
-async def invoices_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des factures"""
-    return templates.TemplateResponse("invoices.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def invoices_page(request: Request):
+    return templates.TemplateResponse("invoices.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/quotations", response_class=HTMLResponse)
-async def quotations_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des devis"""
-    return templates.TemplateResponse("quotations.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def quotations_page(request: Request):
+    return templates.TemplateResponse("quotations.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/maintenances", response_class=HTMLResponse)
-async def maintenances_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des maintenances"""
-    return templates.TemplateResponse("maintenances.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def maintenances_page(request: Request):
+    return templates.TemplateResponse("maintenances.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/scan", response_class=HTMLResponse)
-async def scan_page(request: Request, db: Session = Depends(get_db)):
-    """Page de scan de codes-barres"""
-    return templates.TemplateResponse("scan.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def scan_page(request: Request):
+    return templates.TemplateResponse("scan.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page(request: Request, db: Session = Depends(get_db)):
-    """Page des paramètres de l'application"""
-    return templates.TemplateResponse("settings.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def settings_page(request: Request):
+    return templates.TemplateResponse("settings.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/suppliers", response_class=HTMLResponse)
-async def suppliers_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des fournisseurs"""
-    return templates.TemplateResponse("suppliers.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def suppliers_page(request: Request):
+    return templates.TemplateResponse("suppliers.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/delivery-notes", response_class=HTMLResponse)
-async def delivery_notes_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des bons de livraison"""
-    return templates.TemplateResponse("delivery_notes.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def delivery_notes_page(request: Request):
+    return templates.TemplateResponse("delivery_notes.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/bank-transactions", response_class=HTMLResponse)
-async def bank_transactions_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des transactions bancaires"""
-    return templates.TemplateResponse("bank_transactions.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def bank_transactions_page(request: Request):
+    return templates.TemplateResponse("bank_transactions.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/reports", response_class=HTMLResponse)
-async def reports_page(request: Request, db: Session = Depends(get_db)):
-    """Page des rapports"""
-    return templates.TemplateResponse("reports.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def reports_page(request: Request):
+    return templates.TemplateResponse("reports.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/supplier-invoices", response_class=HTMLResponse)
-async def supplier_invoices_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des factures fournisseur"""
-    return templates.TemplateResponse("supplier_invoices.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def supplier_invoices_page(request: Request):
+    return templates.TemplateResponse("supplier_invoices.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/debts", response_class=HTMLResponse)
-async def debts_page(request: Request, db: Session = Depends(get_db)):
-    """Page de gestion des dettes"""
-    return templates.TemplateResponse("debts.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def debts_page(request: Request):
+    return templates.TemplateResponse("debts.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/barcode-generator", response_class=HTMLResponse)
-async def barcode_generator_page(request: Request, db: Session = Depends(get_db)):
-    """Page du générateur de codes-barres"""
-    return templates.TemplateResponse("barcode_generator.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def barcode_generator_page(request: Request):
+    return templates.TemplateResponse("barcode_generator.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/guide", response_class=HTMLResponse)
-async def guide_page(request: Request, db: Session = Depends(get_db)):
-    """Page du guide utilisateur"""
-    return templates.TemplateResponse("guide.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def guide_page(request: Request):
+    return templates.TemplateResponse("guide.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/migration-manager", response_class=HTMLResponse)
-async def migration_manager_page(request: Request, db: Session = Depends(get_db)):
-    """Page du gestionnaire de migration"""
-    return templates.TemplateResponse("migration_manager.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def migration_manager_page(request: Request):
+    return templates.TemplateResponse("migration_manager.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/cache-manager", response_class=HTMLResponse)
-async def cache_manager_page(request: Request, db: Session = Depends(get_db)):
-    """Page du gestionnaire de cache"""
-    return templates.TemplateResponse("cache_manager.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def cache_manager_page(request: Request):
+    return templates.TemplateResponse("cache_manager.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/daily-recap", response_class=HTMLResponse)
-async def daily_recap_page(request: Request, db: Session = Depends(get_db)):
-    """Page du récap quotidien"""
-    return templates.TemplateResponse("daily_recap.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def daily_recap_page(request: Request):
+    return templates.TemplateResponse("daily_recap.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/daily-purchases", response_class=HTMLResponse)
-async def daily_purchases_page(request: Request, db: Session = Depends(get_db)):
-    """Page des achats quotidiens"""
-    return templates.TemplateResponse("daily_purchases.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def daily_purchases_page(request: Request):
+    return templates.TemplateResponse("daily_purchases.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/daily-requests", response_class=HTMLResponse)
-async def daily_requests_page(request: Request, db: Session = Depends(get_db)):
-    """Page des demandes quotidiennes des clients"""
-    return templates.TemplateResponse("daily_requests.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def daily_requests_page(request: Request):
+    return templates.TemplateResponse("daily_requests.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/daily-sales", response_class=HTMLResponse)
-async def daily_sales_page(request: Request, db: Session = Depends(get_db)):
-    """Page des ventes quotidiennes"""
-    return templates.TemplateResponse("daily_sales.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def daily_sales_page(request: Request):
+    return templates.TemplateResponse("daily_sales.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/google-sheets-sync", response_class=HTMLResponse)
-async def google_sheets_sync_page(request: Request, db: Session = Depends(get_db)):
-    """Page de synchronisation Google Sheets"""
-    return templates.TemplateResponse("google_sheets_sync.html", {"request": request, "global_settings": _load_company_settings(db)})
+async def google_sheets_sync_page(request: Request):
+    return templates.TemplateResponse("google_sheets_sync.html", {"request": request, "global_settings": await _load_company_settings()})
 
 @app.get("/whatsapp", response_class=HTMLResponse)
-async def whatsapp_page(request: Request, db: Session = Depends(get_db)):
-    # Déterminer l'URL du service WhatsApp pour l'iframe
-    # En local, on peut utiliser localhost:3001, mais en prod il faut l'URL publique
-    wa_url = os.getenv("WHATSAPP_SERVICE_PUBLIC_URL")
-    if not wa_url:
-        # Fallback intelligent basé sur l'URL de la requête
-        host = request.url.hostname
-        protocol = request.url.scheme
-        wa_url = f"{protocol}://{host}:3001/whatsapp"
-    
+async def whatsapp_page(request: Request):
     return templates.TemplateResponse("whatsapp.html", {
-        "request": request, 
-        "global_settings": _load_company_settings(db),
-        "whatsapp_service_url": wa_url
+        "request": request,
+        "global_settings": await _load_company_settings(),
     })
-
-@app.get("/whatsapp/proxy")
-async def whatsapp_proxy():
-    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp:3001")
-    url = f"{base_url.rstrip('/')}/whatsapp"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            
-            # Modifier le HTML pour que les appels API passent aussi par le proxy local
-            content = r.text
-
-            # 1) Tentative de remplacement direct de la fonction getJson si présente
-            try:
-                replacement_script = (
-                    "\n    async function getJson(url) {\n"
-                    "      let targetUrl = url;\n"
-                    "      if (url === '/api/qr') targetUrl = '/api/whatsapp/qr';\n"
-                    "      if (url === '/api/status') targetUrl = '/api/whatsapp/status';\n"
-                    "      const res = await fetch(targetUrl, { cache: 'no-store' });\n"
-                    "      const data = await res.json().catch(() => ({}));\n"
-                    "      return { ok: res.ok, status: res.status, data };\n"
-                    "    }\n"
-                )
-                import re as _re
-                content2 = _re.sub(r"async function getJson\(url\) \{.*?\}", replacement_script, content, flags=_re.DOTALL)
-                content = content2 if content2 else content
-            except Exception:
-                pass
-
-            # 2) Filet de sécurité: override global de window.fetch pour réécrire toutes les URLs /api/*
-            inject = (
-                "<script>(function(){try{var _origFetch=window.fetch;"
-                "window.fetch=function(input, init){try{var u=(typeof input==='string')?input:(input && input.url)||'';"
-                "if(u && u.indexOf('/api/')===0){input='/api/whatsapp'+u.substring(4);} }catch(e){} return _origFetch(input, init);};"
-                "}catch(e){}})();</script>"
-            )
-
-            # Injecter le script le plus tôt possible (juste après <head>) pour qu'il soit actif avant les autres scripts
-            if '<head>' in content:
-                content = content.replace('<head>', '<head>' + inject)
-            elif '</body>' in content:
-                content = content.replace('</body>', inject + '</body>')
-            else:
-                content = inject + content
-
-            # 3) Fallback: remplacements larges de littéraux '/api/...'
-            try:
-                content = content.replace("/api/status", "/api/whatsapp/status")
-                content = content.replace("/api/qr", "/api/whatsapp/qr")
-            except Exception:
-                pass
-
-            return HTMLResponse(content=content)
-    except Exception as e:
-        return HTMLResponse(content=f"Erreur proxy WhatsApp: {str(e)}", status_code=503)
 
 @app.get("/api/whatsapp/qr")
 async def whatsapp_qr_proxy():
-    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp:3001")
+    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp_baileys:3002")
     url = f"{base_url.rstrip('/')}/api/qr"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -650,7 +539,7 @@ async def whatsapp_qr_proxy():
 
 @app.get("/api/whatsapp/status")
 async def whatsapp_status_proxy():
-    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp:3001")
+    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp_baileys:3002")
     url = f"{base_url.rstrip('/')}/api/status"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -660,7 +549,19 @@ async def whatsapp_status_proxy():
     except Exception:
         return JSONResponse(status_code=503, content={"status": "not_ready", "qrCode": False})
 
-# ===== Legacy compatibility endpoints (some clients still call /api/status and /api/qr) =====
+@app.get("/api/whatsapp/restart")
+async def whatsapp_restart_proxy():
+    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp_baileys:3002")
+    url = f"{base_url.rstrip('/')}/api/restart"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(url)
+            r.raise_for_status()
+            return JSONResponse(content=r.json())
+    except Exception:
+        return JSONResponse(status_code=503, content={"success": False, "error": "Service indisponible"})
+
+# ===== Legacy compatibility endpoints =====
 @app.get("/api/status")
 async def whatsapp_status_legacy():
     return await whatsapp_status_proxy()
@@ -671,12 +572,12 @@ async def whatsapp_qr_legacy():
 
 # ===================== PRINT ROUTES (Invoice, Delivery Note) =====================
 
-def _load_company_settings(db: Session) -> dict:
+async def _load_company_settings() -> dict:
     result = {}
 
     # Load company settings from INVOICE_COMPANY
     try:
-        s = db.query(UserSettings).filter(UserSettings.setting_key == "INVOICE_COMPANY").order_by(UserSettings.updated_at.desc()).first()
+        s = await UserSettings.find_one(UserSettings.setting_key == "INVOICE_COMPANY")
         if s and s.setting_value:
             result = json.loads(s.setting_value)
     except Exception:
@@ -685,12 +586,7 @@ def _load_company_settings(db: Session) -> dict:
     # Fallback: read from consolidated appSettings.company if present
     if not result:
         try:
-            legacy_us = (
-                db.query(UserSettings)
-                .filter(UserSettings.setting_key == "appSettings")
-                .order_by(UserSettings.updated_at.desc())
-                .first()
-            )
+            legacy_us = await UserSettings.find_one(UserSettings.setting_key == "appSettings")
             if legacy_us and legacy_us.setting_value:
                 data = json.loads(legacy_us.setting_value)
                 comp = (data or {}).get("company") or {}
@@ -708,12 +604,7 @@ def _load_company_settings(db: Session) -> dict:
 
     # Load favicon from appSettings.general.faviconUrl
     try:
-        app_settings_record = (
-            db.query(UserSettings)
-            .filter(UserSettings.setting_key == "appSettings")
-            .order_by(UserSettings.updated_at.desc())
-            .first()
-        )
+        app_settings_record = await UserSettings.find_one(UserSettings.setting_key == "appSettings")
         if app_settings_record and app_settings_record.setting_value:
             app_data = json.loads(app_settings_record.setting_value)
             general = (app_data or {}).get("general") or {}
@@ -722,48 +613,25 @@ def _load_company_settings(db: Session) -> dict:
                 result["favicon"] = favicon_url
     except Exception:
         pass
-    # Fallback: pull from legacy Settings table if available (only if result is still empty)
-    if not result:
-        try:
-            if LegacySettings is not None:
-                legacy = db.query(LegacySettings).first()
-                if legacy:
-                    result = {
-                        "name": getattr(legacy, "company_name", None),
-                        "address": getattr(legacy, "address", None),
-                        "city": getattr(legacy, "city", None),
-                        "email": getattr(legacy, "email", None),
-                        "phone": getattr(legacy, "phone", None),
-                        "phone2": getattr(legacy, "phone2", None),
-                        "whatsapp": getattr(legacy, "whatsapp", None),
-                        "instagram": getattr(legacy, "instagram", None),
-                        "website": getattr(legacy, "website", None),
-                        # Prefer unified key 'logo' for templates; keep 'logo_path' for compatibility
-                        "logo": getattr(legacy, "logo_path", None),
-                        "logo_path": getattr(legacy, "logo_path", None),
-                        "footer_text": getattr(legacy, "footer_text", None),
-                    }
-        except Exception:
-            pass
+
     return result
 
 
 @app.get("/invoices/print/{invoice_id}", response_class=HTMLResponse)
-async def print_invoice_page(request: Request, invoice_id: int, db: Session = Depends(get_db)):
-    inv = (
-        db.query(Invoice)
-        .options(joinedload(Invoice.items), joinedload(Invoice.client), joinedload(Invoice.payments))
-        .filter(Invoice.invoice_id == invoice_id)
-        .first()
-    )
+async def print_invoice_page(request: Request, invoice_id: int):
+    inv = await Invoice.find_one(Invoice.invoice_id == invoice_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Facture non trouvée")
+
+    # Fetch related data
+    items = await InvoiceItem.find(InvoiceItem.invoice_id == invoice_id).to_list()
+    inv_client = await Client.find_one(Client.client_id == inv.client_id) if inv.client_id else None
+    payments = await InvoicePayment.find(InvoicePayment.invoice_id == invoice_id).to_list()
 
     # Parse IMEIs from notes meta (if present)
     imeis_by_product_id = {}
     try:
         if inv.notes:
-            # Be robust: stop at next meta marker (e.g., __SIGNATURE__) or end of string
             txt = str(inv.notes)
             if "__SERIALS__=" in txt:
                 sub = txt.split("__SERIALS__=", 1)[1]
@@ -774,7 +642,6 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
                 try:
                     arr = json.loads(sub)
                 except Exception:
-                    # Fallback: non-greedy regex inside brackets
                     m = re.search(r"__SERIALS__=(\[.*?\])", txt, flags=re.S)
                     arr = json.loads(m.group(1)) if m else []
                 for entry in (arr or []):
@@ -812,26 +679,25 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
     # Build product descriptions map for involved products
     product_descriptions = {}
     try:
-        product_ids = sorted({int(it.product_id) for it in (inv.items or []) if it.product_id is not None})
+        product_ids = sorted({int(it.product_id) for it in (items or []) if it.product_id is not None})
         if product_ids:
-            for p in db.query(Product).filter(Product.product_id.in_(product_ids)).all():
+            prods = await Product.find({"product_id": {"$in": product_ids}}).to_list()
+            for p in prods:
                 product_descriptions[str(p.product_id)] = (p.description or "")
     except Exception:
         product_descriptions = {}
 
-    # Group items by product_id + price and attach IMEIs (from notes or inline fallback)
-    # Tout en supportant des "sections" personnalisées encodées comme items sans produit
+    # Group items by product_id + price and attach IMEIs
     grouped_by_key: dict[str, dict] = {}
     item_to_key: dict[int, str] = {}
 
-    for it in (inv.items or []):
+    for it in (items or []):
         name = it.product_name or ""
 
         # Sections: product_id nul et libellé commençant par [SECTION]
         if it.product_id is None and isinstance(name, str) and name.strip().startswith("[SECTION]"):
             key = f"SECTION|{getattr(it, 'item_id', id(it))}"
             raw = name.strip()
-            # Extraire le titre après le préfixe
             title = raw[len("[SECTION]"):].strip(" :-") or raw[len("[SECTION]"):].strip()
             grouped_by_key[key] = {
                 "product_id": None,
@@ -876,7 +742,7 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
                 "price": float(it.price or 0),
                 "qty": 0,
                 "total": 0.0,
-                "imeis": [],  # list of IMEIs to render on separate lines
+                "imeis": [],
                 "quote_qty": None,
                 "is_section": False,
             }
@@ -897,13 +763,11 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
         except Exception:
             pass
 
-    # Replace qty/total with IMEIs count when available (notes meta has priority; fallback to inline parsed)
+    # Replace qty/total with IMEIs count when available
     for g in grouped_by_key.values():
-        # Ne pas toucher aux sections
         if g.get("is_section"):
             continue
         lst = imeis_by_product_id.get(str(g["product_id"])) or []
-        # Attach original quotation quantity if available
         try:
             g["quote_qty"] = quote_qty_by_product_id.get(str(g["product_id"]))
         except Exception:
@@ -926,14 +790,14 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
     except Exception:
         pass
 
-    company_settings = _load_company_settings(db)
+    company_settings = await _load_company_settings()
 
     # Resolve payment method: invoice.payment_method or latest payment's method
     resolved_payment_method = getattr(inv, "payment_method", None)
     try:
-        if not resolved_payment_method and getattr(inv, "payments", None):
+        if not resolved_payment_method and payments:
             latest = None
-            for p in inv.payments:
+            for p in payments:
                 if not latest:
                     latest = p
                 else:
@@ -946,6 +810,7 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
                 resolved_payment_method = latest.payment_method
     except Exception:
         pass
+
     # Déterminer si on doit afficher la garantie (certificat)
     warranty_certificate = None
     try:
@@ -955,7 +820,7 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
                 "start_date": getattr(inv, "warranty_start_date", None),
                 "end_date": getattr(inv, "warranty_end_date", None),
                 "invoice_number": inv.invoice_number,
-                "client_name": (inv.client.name if getattr(inv, "client", None) else ""),
+                "client_name": (inv_client.name if inv_client else ""),
                 "date": inv.date,
                 "products": [item["name"] for item in grouped_by_key.values() if not item.get("is_section")],
             }
@@ -965,7 +830,7 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
     # Reconstituer la liste ordonnée en respectant l'ordre d'origine des items
     ordered_items = []
     seen_keys = set()
-    for it in (inv.items or []):
+    for it in (items or []):
         key = item_to_key.get(getattr(it, "item_id", -1))
         if not key or key in seen_keys:
             continue
@@ -982,7 +847,6 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
         "signature_data_url": signature_data_url,
         "resolved_payment_method": resolved_payment_method,
         "warranty_certificate": warranty_certificate,
-        # Pass through the whole company settings dict to let the template use additional fields
         "settings": {
             "company_name": company_settings.get("name"),
             "address": company_settings.get("address"),
@@ -996,7 +860,6 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
             "logo": _normalize_logo(company_settings.get("logo") or company_settings.get("logo_path")),
             "logo_path": company_settings.get("logo_path"),
             "footer_text": company_settings.get("footer_text"),
-            # Optional legal fields
             "rc_number": company_settings.get("rc_number"),
             "ninea_number": company_settings.get("ninea_number"),
         },
@@ -1009,34 +872,28 @@ async def print_invoice_page(request: Request, invoice_id: int, db: Session = De
 
 
 @app.get("/invoices/pdf/{invoice_id}")
-async def get_invoice_pdf(request: Request, invoice_id: int, db: Session = Depends(get_db)):
+async def get_invoice_pdf(request: Request, invoice_id: int):
     """Génère et retourne le PDF de la facture"""
     try:
         import pdfkit
     except ImportError:
         raise HTTPException(status_code=500, detail="pdfkit non installé")
-    
-    # Récupérer le HTML de la facture en réutilisant la logique existante
-    inv = (
-        db.query(Invoice)
-        .options(joinedload(Invoice.items), joinedload(Invoice.client), joinedload(Invoice.payments))
-        .filter(Invoice.invoice_id == invoice_id)
-        .first()
-    )
+
+    inv = await Invoice.find_one(Invoice.invoice_id == invoice_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Facture non trouvée")
-    
-    # Générer le HTML via le template
+
+    # Fetch items
+    items = await InvoiceItem.find(InvoiceItem.invoice_id == invoice_id).to_list()
+
     template_name = "print_invoice.html"
     if getattr(inv, "has_warranty", False) and getattr(inv, "warranty_duration", None):
         template_name = "print_invoice_with_warranty.html"
-    
-    # Construire le contexte (simplifié - réutiliser la logique de print_invoice_page)
-    company_settings = _load_company_settings(db)
-    
-    # Grouper les items
+
+    company_settings = await _load_company_settings()
+
     grouped_items = []
-    for it in (inv.items or []):
+    for it in (items or []):
         grouped_items.append({
             "product_id": it.product_id,
             "name": it.product_name,
@@ -1047,7 +904,7 @@ async def get_invoice_pdf(request: Request, invoice_id: int, db: Session = Depen
             "imeis": [],
             "is_section": False,
         })
-    
+
     context = {
         "request": request,
         "invoice": inv,
@@ -1072,11 +929,9 @@ async def get_invoice_pdf(request: Request, invoice_id: int, db: Session = Depen
             "ninea_number": company_settings.get("ninea_number"),
         },
     }
-    
-    # Rendre le HTML
+
     html_content = templates.get_template(template_name).render(context)
-    
-    # Convertir en PDF avec pdfkit
+
     options = {
         'page-size': 'A4',
         'encoding': 'UTF-8',
@@ -1084,8 +939,7 @@ async def get_invoice_pdf(request: Request, invoice_id: int, db: Session = Depen
         'no-stop-slow-scripts': None,
     }
     pdf_bytes = pdfkit.from_string(html_content, False, options=options)
-    
-    # Retourner le PDF
+
     filename = f"Facture_{inv.invoice_number}.pdf"
     return Response(
         content=pdf_bytes,
@@ -1095,26 +949,23 @@ async def get_invoice_pdf(request: Request, invoice_id: int, db: Session = Depen
 
 
 @app.get("/quotations/pdf/{quotation_id}")
-async def get_quotation_pdf(request: Request, quotation_id: int, db: Session = Depends(get_db)):
+async def get_quotation_pdf(request: Request, quotation_id: int):
     """Génère et retourne le PDF du devis"""
     try:
         import pdfkit
     except ImportError:
         raise HTTPException(status_code=500, detail="pdfkit non installé")
-    
-    from app.database import Quotation
-    
-    q = (
-        db.query(Quotation)
-        .options(joinedload(Quotation.items), joinedload(Quotation.client))
-        .filter(Quotation.quotation_id == quotation_id)
-        .first()
-    )
+
+    q = await Quotation.find_one(Quotation.quotation_id == quotation_id)
     if not q:
         raise HTTPException(status_code=404, detail="Devis non trouvé")
-    
-    company_settings = _load_company_settings(db)
-    
+
+    q_client = await Client.find_one(Client.client_id == q.client_id) if q.client_id else None
+    q_items = await QuotationItem.find(QuotationItem.quotation_id == quotation_id).to_list()
+
+    company_settings = await _load_company_settings()
+
+    # Attach items and client for template compatibility
     context = {
         "request": request,
         "quotation": q,
@@ -1136,12 +987,12 @@ async def get_quotation_pdf(request: Request, quotation_id: int, db: Session = D
             "ninea_number": company_settings.get("ninea_number"),
         },
         "product_descriptions": {},
+        "items": q_items,
+        "client": q_client,
     }
-    
-    # Rendre le HTML
+
     html_content = templates.get_template("print_quotation.html").render(context)
-    
-    # Convertir en PDF avec pdfkit
+
     options = {
         'page-size': 'A4',
         'encoding': 'UTF-8',
@@ -1156,8 +1007,7 @@ async def get_quotation_pdf(request: Request, quotation_id: int, db: Session = D
         'margin-right': '10mm',
     }
     pdf_bytes = pdfkit.from_string(html_content, False, options=options)
-    
-    # Retourner le PDF
+
     filename = f"Devis_{q.quotation_number}.pdf"
     return Response(
         content=pdf_bytes,
@@ -1167,16 +1017,13 @@ async def get_quotation_pdf(request: Request, quotation_id: int, db: Session = D
 
 
 @app.get("/quotations/print/{quotation_id}", response_class=HTMLResponse)
-async def print_quotation_page(request: Request, quotation_id: int, db: Session = Depends(get_db)):
-    from app.database import Quotation, Client
-    q = (
-        db.query(Quotation)
-        .options(joinedload(Quotation.items), joinedload(Quotation.client))
-        .filter(Quotation.quotation_id == quotation_id)
-        .first()
-    )
+async def print_quotation_page(request: Request, quotation_id: int):
+    q = await Quotation.find_one(Quotation.quotation_id == quotation_id)
     if not q:
         raise HTTPException(status_code=404, detail="Devis non trouvé")
+
+    q_client = await Client.find_one(Client.client_id == q.client_id) if q.client_id else None
+    q_items = await QuotationItem.find(QuotationItem.quotation_id == quotation_id).to_list()
 
     # Signature depuis notes meta si présente
     signature_data_url = None
@@ -1191,18 +1038,20 @@ async def print_quotation_page(request: Request, quotation_id: int, db: Session 
     # Build product descriptions map
     product_descriptions = {}
     try:
-        product_ids = sorted({int(it.product_id) for it in (q.items or []) if it.product_id is not None})
+        product_ids = sorted({int(it.product_id) for it in (q_items or []) if it.product_id is not None})
         if product_ids:
-            for p in db.query(Product).filter(Product.product_id.in_(product_ids)).all():
+            prods = await Product.find({"product_id": {"$in": product_ids}}).to_list()
+            for p in prods:
                 product_descriptions[str(p.product_id)] = (p.description or "")
     except Exception:
         product_descriptions = {}
 
-    company_settings = _load_company_settings(db)
+    company_settings = await _load_company_settings()
     context = {
         "request": request,
         "quotation": q,
-        "client": q.client,
+        "client": q_client,
+        "items": q_items,
         "settings": {
             **company_settings,
             "logo": _normalize_logo(company_settings.get("logo") or company_settings.get("logo_path")),
@@ -1213,71 +1062,56 @@ async def print_quotation_page(request: Request, quotation_id: int, db: Session 
     return templates.TemplateResponse("print_quotation.html", context)
 
 @app.get("/delivery-notes/print/{note_id}", response_class=HTMLResponse)
-async def print_delivery_note_page(request: Request, note_id: int, db: Session = Depends(get_db)):
-    # Try in-memory demo data first (from router), fallback to DB if needed
-    try:
-        from app.routers.delivery_notes import delivery_notes_data  # type: ignore
-        note = next((n for n in delivery_notes_data if int(n.get("id")) == int(note_id)), None)
-    except Exception:
-        note = None
+async def print_delivery_note_page(request: Request, note_id: int):
+    dn = await DeliveryNote.find_one(DeliveryNote.delivery_note_id == note_id)
+    if not dn:
+        raise HTTPException(status_code=404, detail="Bon de livraison non trouvé")
 
-    # Fallback: charger depuis la base de données réelle
-    if not note:
-        dn = (
-            db.query(DeliveryNote)
-            .filter(DeliveryNote.delivery_note_id == note_id)
-            .first()
-        )
-        if not dn:
-            raise HTTPException(status_code=404, detail="Bon de livraison non trouvé")
-        # Charger relations
-        _ = dn.items
-        _ = dn.client
-        note = {
-            "id": dn.delivery_note_id,
-            "number": dn.delivery_note_number,
-            "client_id": dn.client_id,
-            "client_name": (dn.client.name if dn.client else None),
-            "date": dn.date,
-            "delivery_date": dn.delivery_date,
-            "status": dn.status,
-            "delivery_address": dn.delivery_address,
-            "delivery_contact": dn.delivery_contact,
-            "delivery_phone": dn.delivery_phone,
-            "items": (lambda _items: [
-                (lambda _clean_name, _serials: {
-                    "product_id": it.product_id,
-                    "product_name": _clean_name,
-                    "quantity": it.quantity,
-                    "unit_price": float(it.price or 0),
-                    "serials": _serials
-                })(
-                    # Nettoyer le libellé: retirer un éventuel suffixe "(IMEI: xxx)"
-                    (re.sub(r"\s*\(IMEI:\s*[^)]+\)\s*$", "", (it.product_name or ""), flags=re.I) if 're' in globals() else (it.product_name or "")),
-                    (lambda s: (json.loads(s) if (isinstance(s, str) and s.strip().startswith("[")) else ([])))(it.serial_numbers or "")
-                )
-                for it in _items
-            ])(dn.items or []),
-            "subtotal": float(dn.subtotal or 0),
-            "tax_rate": float(dn.tax_rate or 0),
-            "tax_amount": float(dn.tax_amount or 0),
-            "total": float(dn.total or 0),
-            "notes": dn.notes,
-            "created_at": dn.created_at,
-        }
+    dn_items = await DeliveryNoteItem.find(DeliveryNoteItem.delivery_note_id == note_id).to_list()
+    dn_client = await Client.find_one(Client.client_id == dn.client_id) if dn.client_id else None
 
-    # Construire la map des descriptions produits (clé: str(product_id))
+    note = {
+        "id": dn.delivery_note_id,
+        "number": dn.delivery_note_number,
+        "client_id": dn.client_id,
+        "client_name": (dn_client.name if dn_client else None),
+        "date": dn.date,
+        "delivery_date": dn.delivery_date,
+        "status": dn.status,
+        "delivery_address": dn.delivery_address,
+        "delivery_contact": dn.delivery_contact,
+        "delivery_phone": dn.delivery_phone,
+        "items": [
+            {
+                "product_id": it.product_id,
+                "product_name": re.sub(r"\s*\(IMEI:\s*[^)]+\)\s*$", "", (it.product_name or ""), flags=re.I),
+                "quantity": it.quantity,
+                "unit_price": float(it.price or 0),
+                "serials": (json.loads(it.serial_numbers) if (isinstance(it.serial_numbers, str) and it.serial_numbers.strip().startswith("[")) else []) if it.serial_numbers else []
+            }
+            for it in (dn_items or [])
+        ],
+        "subtotal": float(dn.subtotal or 0),
+        "tax_rate": float(dn.tax_rate or 0),
+        "tax_amount": float(dn.tax_amount or 0),
+        "total": float(dn.total or 0),
+        "notes": dn.notes,
+        "created_at": dn.created_at,
+    }
+
+    # Construire la map des descriptions produits
     product_descriptions = {}
     try:
-        item_list = (note.get("items") if isinstance(note, dict) else []) or []
+        item_list = note.get("items") or []
         product_ids = sorted({int(it.get("product_id")) for it in item_list if it.get("product_id") is not None})
         if product_ids:
-            for p in db.query(Product).filter(Product.product_id.in_(product_ids)).all():
+            prods = await Product.find({"product_id": {"$in": product_ids}}).to_list()
+            for p in prods:
                 product_descriptions[str(p.product_id)] = (p.description or "")
     except Exception:
         product_descriptions = {}
 
-    company_settings = _load_company_settings(db)
+    company_settings = await _load_company_settings()
     context = {
         "request": request,
         "note": note,

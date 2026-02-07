@@ -1,11 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime
-import os
 from pathlib import Path
 
-from ..database import get_db, User, Migration, MigrationLog
+from ..database import Migration, MigrationLog, get_next_id
 from ..auth import get_current_user
 
 router = APIRouter(prefix="/api/migrations", tags=["migrations"])
@@ -45,23 +43,23 @@ async def list_migrations(
     limit: int = 50,
     type: Optional[str] = None,
     status: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Retourne la liste des migrations (triées par date de création DESC)."""
+    """Retourne la liste des migrations (triees par date de creation DESC)."""
     try:
-        query = db.query(Migration)
+        filters: dict = {}
         if type:
-            query = query.filter(Migration.type == type)
+            filters["type"] = type
         if status:
-            query = query.filter(Migration.status == status)
-        total = query.count()
+            filters["status"] = status
+
+        total = await Migration.find(filters).count()
         items = (
-            query
-            .order_by(Migration.created_at.desc())
-            .offset(skip)
+            await Migration.find(filters)
+            .sort(-Migration.created_at)
+            .skip(skip)
             .limit(limit)
-            .all()
+            .to_list()
         )
         return [serialize_migration(m) for m in items]
     except Exception as e:
@@ -71,29 +69,26 @@ async def list_migrations(
 @router.get("/{migration_id}")
 async def get_migration(
     migration_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    m = db.query(Migration).get(migration_id)
+    m = await Migration.find_one(Migration.migration_id == migration_id)
     if not m:
-        raise HTTPException(status_code=404, detail="Migration non trouvée")
+        raise HTTPException(status_code=404, detail="Migration non trouvee")
     return serialize_migration(m)
 
 
 @router.get("/{migration_id}/logs")
 async def get_migration_logs(
     migration_id: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    m = db.query(Migration).get(migration_id)
+    m = await Migration.find_one(Migration.migration_id == migration_id)
     if not m:
-        raise HTTPException(status_code=404, detail="Migration non trouvée")
+        raise HTTPException(status_code=404, detail="Migration non trouvee")
     logs = (
-        db.query(MigrationLog)
-        .filter(MigrationLog.migration_id == migration_id)
-        .order_by(MigrationLog.timestamp.asc())
-        .all()
+        await MigrationLog.find(MigrationLog.migration_id == migration_id)
+        .sort(+MigrationLog.timestamp)
+        .to_list()
     )
     return [serialize_log(l) for l in logs]
 
@@ -101,17 +96,18 @@ async def get_migration_logs(
 @router.post("/")
 async def create_migration(
     payload: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Crée une entrée de migration (déclaration). Le traitement peut être géré ailleurs."""
+    """Cree une entree de migration (declaration)."""
     try:
         name = payload.get("name")
         mtype = payload.get("type")
         if not name or not mtype:
             raise HTTPException(status_code=400, detail="Champs 'name' et 'type' requis")
 
+        new_id = await get_next_id("migrations")
         m = Migration(
+            migration_id=new_id,
             name=name,
             type=mtype,
             status=payload.get("status", "pending"),
@@ -124,26 +120,24 @@ async def create_migration(
             error_message=payload.get("error_message"),
             created_by=current_user.user_id,
         )
-        db.add(m)
-        db.commit()
-        db.refresh(m)
+        await m.insert()
 
         # Optionnel: premier log
         first_log_msg = payload.get("log_message")
         if first_log_msg:
+            log_id = await get_next_id("migration_logs")
             log = MigrationLog(
+                log_id=log_id,
                 migration_id=m.migration_id,
                 level=payload.get("log_level", "info"),
                 message=first_log_msg,
             )
-            db.add(log)
-            db.commit()
+            await log.insert()
 
         return serialize_migration(m)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -151,30 +145,35 @@ async def create_migration(
 async def start_migration(
     migration_id: int,
     payload: dict = {},
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Passe une migration à l'état running et initialise les compteurs si fournis."""
+    """Passe une migration a l'etat running et initialise les compteurs si fournis."""
     try:
-        m = db.query(Migration).get(migration_id)
+        m = await Migration.find_one(Migration.migration_id == migration_id)
         if not m:
-            raise HTTPException(status_code=404, detail="Migration non trouvée")
+            raise HTTPException(status_code=404, detail="Migration non trouvee")
         m.status = "running"
         m.error_message = None
         m.processed_records = payload.get("processed_records", 0)
         m.success_records = payload.get("success_records", 0)
         m.error_records = payload.get("error_records", 0)
         m.total_records = payload.get("total_records", m.total_records)
-        db.add(m)
+        await m.save()
+
         # Log
-        db.add(MigrationLog(migration_id=migration_id, level="info", message=payload.get("message", "Migration démarrée")))
-        db.commit()
-        db.refresh(m)
+        log_id = await get_next_id("migration_logs")
+        log = MigrationLog(
+            log_id=log_id,
+            migration_id=migration_id,
+            level="info",
+            message=payload.get("message", "Migration demarree"),
+        )
+        await log.insert()
+
         return serialize_migration(m)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -182,14 +181,13 @@ async def start_migration(
 async def complete_migration(
     migration_id: int,
     payload: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Clôture une migration: met à jour les compteurs et status completed/failed, et completed_at."""
+    """Cloture une migration."""
     try:
-        m = db.query(Migration).get(migration_id)
+        m = await Migration.find_one(Migration.migration_id == migration_id)
         if not m:
-            raise HTTPException(status_code=404, detail="Migration non trouvée")
+            raise HTTPException(status_code=404, detail="Migration non trouvee")
         m.processed_records = payload.get("processed_records", m.processed_records)
         m.success_records = payload.get("success_records", m.success_records)
         m.error_records = payload.get("error_records", m.error_records)
@@ -197,17 +195,25 @@ async def complete_migration(
         m.error_message = payload.get("error_message")
         m.status = payload.get("status", ("failed" if m.error_message else "completed"))
         m.completed_at = datetime.utcnow()
-        db.add(m)
+        await m.save()
+
         # Log
-        end_msg = payload.get("message") or ("Migration terminée" if m.status == "completed" else "Migration échouée")
-        db.add(MigrationLog(migration_id=migration_id, level=("success" if m.status == "completed" else "error"), message=end_msg))
-        db.commit()
-        db.refresh(m)
+        end_msg = payload.get("message") or (
+            "Migration terminee" if m.status == "completed" else "Migration echouee"
+        )
+        log_id = await get_next_id("migration_logs")
+        log = MigrationLog(
+            log_id=log_id,
+            migration_id=migration_id,
+            level=("success" if m.status == "completed" else "error"),
+            message=end_msg,
+        )
+        await log.insert()
+
         return serialize_migration(m)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -215,27 +221,29 @@ async def complete_migration(
 async def add_log(
     migration_id: int,
     payload: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Ajoute un log à une migration."""
+    """Ajoute un log a une migration."""
     try:
-        m = db.query(Migration).get(migration_id)
+        m = await Migration.find_one(Migration.migration_id == migration_id)
         if not m:
-            raise HTTPException(status_code=404, detail="Migration non trouvée")
+            raise HTTPException(status_code=404, detail="Migration non trouvee")
         level = payload.get("level", "info")
         message = payload.get("message")
         if not message:
             raise HTTPException(status_code=400, detail="'message' requis")
-        log = MigrationLog(migration_id=migration_id, level=level, message=message)
-        db.add(log)
-        db.commit()
-        db.refresh(log)
+        log_id = await get_next_id("migration_logs")
+        log = MigrationLog(
+            log_id=log_id,
+            migration_id=migration_id,
+            level=level,
+            message=message,
+        )
+        await log.insert()
         return serialize_log(log)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -243,16 +251,14 @@ async def add_log(
 async def upload_migration_file(
     migration_id: int,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Upload d'un fichier pour une migration. Le fichier est enregistré et le nom associé à la migration."""
+    """Upload d'un fichier pour une migration."""
     try:
-        m = db.query(Migration).get(migration_id)
+        m = await Migration.find_one(Migration.migration_id == migration_id)
         if not m:
-            raise HTTPException(status_code=404, detail="Migration non trouvée")
+            raise HTTPException(status_code=404, detail="Migration non trouvee")
 
-        # Répertoire de destination
         base_dir = Path("uploads") / "migrations"
         base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -264,15 +270,20 @@ async def upload_migration_file(
             content = await file.read()
             f.write(content)
 
-        # Mettre à jour la migration
         m.file_name = str(dest_path.name)
-        db.add(m)
-        db.add(MigrationLog(migration_id=migration_id, level="info", message=f"Fichier chargé: {m.file_name}"))
-        db.commit()
-        db.refresh(m)
+        await m.save()
+
+        log_id = await get_next_id("migration_logs")
+        log = MigrationLog(
+            log_id=log_id,
+            migration_id=migration_id,
+            level="info",
+            message=f"Fichier charge: {m.file_name}",
+        )
+        await log.insert()
+
         return serialize_migration(m)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

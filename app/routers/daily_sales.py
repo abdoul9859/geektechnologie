@@ -1,19 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc, func
 from typing import List, Optional
 from datetime import date, datetime
 from decimal import Decimal
 
-from app.database import get_db, DailySale, Client, Product, ProductVariant, Invoice, StockMovement
-from app.schemas import (
-    DailySaleCreate, 
-    DailySaleUpdate, 
-    DailySaleResponse
+from ..database import DailySale, Client, Product, ProductVariant, Invoice, StockMovement, get_next_id
+from ..schemas import (
+    DailySaleCreate,
+    DailySaleUpdate,
+    DailySaleResponse,
 )
-from app.auth import get_current_user
+from ..auth import get_current_user
 
 router = APIRouter(prefix="/api/daily-sales", tags=["daily-sales"])
+
 
 @router.get("/", response_model=List[DailySaleResponse])
 async def get_daily_sales(
@@ -23,66 +22,66 @@ async def get_daily_sales(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     payment_method: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Récupérer la liste des ventes quotidiennes"""
-    query = db.query(DailySale)
-    
-    # Filtres
+    """Recuperer la liste des ventes quotidiennes"""
+    filters: dict = {}
+
     if search:
-        query = query.filter(
-            or_(
-                DailySale.client_name.ilike(f"%{search}%"),
-                DailySale.product_name.ilike(f"%{search}%"),
-                DailySale.notes.ilike(f"%{search}%")
-            )
-        )
-    
+        pattern = {"$regex": search, "$options": "i"}
+        filters["$or"] = [
+            {"client_name": pattern},
+            {"product_name": pattern},
+            {"notes": pattern},
+        ]
+
     if start_date and end_date and start_date == end_date:
-        # Filtrage exact sur une seule date
-        query = query.filter(DailySale.sale_date == start_date)
+        filters["sale_date"] = start_date
     else:
         if start_date:
-            query = query.filter(DailySale.sale_date >= start_date)
-        
+            filters.setdefault("sale_date", {})["$gte"] = start_date
         if end_date:
-            query = query.filter(DailySale.sale_date <= end_date)
-    
+            filters.setdefault("sale_date", {})["$lte"] = end_date
+
     if payment_method:
-        query = query.filter(DailySale.payment_method == payment_method)
-    
-    # Restreindre les ventes liées à des factures impayées pour les non-admins
+        filters["payment_method"] = payment_method
+
+    # Restreindre les ventes liees a des factures impayees pour les non-admins
     try:
         role = getattr(current_user, "role", "user")
     except Exception:
         role = "user"
+
+    sales = (
+        await DailySale.find(filters)
+        .sort([("sale_date", -1), ("created_at", -1)])
+        .skip(skip)
+        .limit(limit)
+        .to_list()
+    )
+
     if role != "admin":
-        # Joindre les factures et ne garder que les ventes directes ou factures payées
-        query = query.outerjoin(Invoice, DailySale.invoice_id == Invoice.invoice_id)
-        query = query.filter(
-            or_(
-                DailySale.invoice_id.is_(None),
-                Invoice.status.in_(["payée", "PAID", "partiellement payée"])  # inclure partiellement payée
-            )
-        )
+        # Filter out sales linked to unpaid invoices
+        filtered_sales = []
+        for s in sales:
+            if s.invoice_id is None:
+                filtered_sales.append(s)
+            else:
+                inv = await Invoice.find_one(Invoice.invoice_id == s.invoice_id)
+                if inv and inv.status in ["payee", "PAID", "partiellement payee"]:
+                    filtered_sales.append(s)
+        sales = filtered_sales
 
-    # Tri par date de vente décroissante
-    query = query.order_by(desc(DailySale.sale_date), desc(DailySale.created_at))
-    
-    # Pagination
-    sales = query.offset(skip).limit(limit).all()
-
-    # Attacher le statut de paiement des factures liées
+    # Attacher le statut de paiement des factures liees
     try:
-        inv_ids = [int(s.invoice_id) for s in sales if getattr(s, 'invoice_id', None)]
+        inv_ids = [int(s.invoice_id) for s in sales if getattr(s, "invoice_id", None)]
         if inv_ids:
-            rows = db.query(Invoice.invoice_id, Invoice.status).filter(Invoice.invoice_id.in_(inv_ids)).all()
-            st = {int(r[0]): r[1] for r in rows}
+            invoices = await Invoice.find({"invoice_id": {"$in": inv_ids}}).to_list()
+            st = {int(inv.invoice_id): inv.status for inv in invoices}
             for s in sales:
                 try:
                     if s.invoice_id:
-                        setattr(s, 'invoice_status', st.get(int(s.invoice_id)))
+                        setattr(s, "invoice_status", st.get(int(s.invoice_id)))
                 except Exception:
                     pass
     except Exception:
@@ -90,56 +89,61 @@ async def get_daily_sales(
 
     return sales
 
+
 @router.get("/{sale_id}", response_model=DailySaleResponse)
 async def get_daily_sale(
     sale_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Récupérer une vente spécifique"""
-    sale = db.query(DailySale).filter(DailySale.sale_id == sale_id).first()
+    """Recuperer une vente specifique"""
+    sale = await DailySale.find_one(DailySale.sale_id == sale_id)
     if not sale:
-        raise HTTPException(status_code=404, detail="Vente non trouvée")
+        raise HTTPException(status_code=404, detail="Vente non trouvee")
     return sale
+
 
 @router.post("/", response_model=DailySaleResponse)
 async def create_daily_sale(
     sale_data: DailySaleCreate,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Créer une nouvelle vente quotidienne"""
-    # Vérifier si le client existe si client_id est fourni
+    """Creer une nouvelle vente quotidienne"""
+    variant = None
+
+    # Verifier si le client existe si client_id est fourni
     if sale_data.client_id:
-        client = db.query(Client).filter(Client.client_id == sale_data.client_id).first()
+        client = await Client.find_one(Client.client_id == sale_data.client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client non trouvé")
-    
-    # Vérifier si le produit existe si product_id est fourni
+            raise HTTPException(status_code=404, detail="Client non trouve")
+
+    # Verifier si le produit existe si product_id est fourni
+    product = None
     if sale_data.product_id:
-        product = db.query(Product).filter(Product.product_id == sale_data.product_id).first()
+        product = await Product.find_one(Product.product_id == sale_data.product_id)
         if not product:
-            raise HTTPException(status_code=404, detail="Produit non trouvé")
-        
-        # Vérifier si une variante est spécifiée
+            raise HTTPException(status_code=404, detail="Produit non trouve")
+
         if sale_data.variant_id:
-            variant = db.query(ProductVariant).filter(
-                ProductVariant.variant_id == sale_data.variant_id,
-                ProductVariant.product_id == sale_data.product_id,
-                ProductVariant.is_sold == False
-            ).first()
+            variant = await ProductVariant.find_one(
+                {
+                    "variant_id": sale_data.variant_id,
+                    "product_id": sale_data.product_id,
+                    "is_sold": False,
+                }
+            )
             if not variant:
-                raise HTTPException(status_code=404, detail="Variante non trouvée ou déjà vendue")
+                raise HTTPException(status_code=404, detail="Variante non trouvee ou deja vendue")
         else:
-            # Vérifier le stock disponible pour les produits sans variantes
             if product.quantity < sale_data.quantity:
                 raise HTTPException(
-                    status_code=400, 
-                    detail=f"Stock insuffisant. Disponible: {product.quantity}, Demandé: {sale_data.quantity}"
+                    status_code=400,
+                    detail=f"Stock insuffisant. Disponible: {product.quantity}, Demande: {sale_data.quantity}",
                 )
-    
-    # Créer la vente
+
+    # Creer la vente
+    new_id = await get_next_id("daily_sales")
     db_sale = DailySale(
+        sale_id=new_id,
         client_id=sale_data.client_id,
         client_name=sale_data.client_name,
         product_id=sale_data.product_id,
@@ -154,205 +158,200 @@ async def create_daily_sale(
         sale_date=sale_data.sale_date,
         payment_method=sale_data.payment_method,
         invoice_id=sale_data.invoice_id,
-        notes=sale_data.notes
+        notes=sale_data.notes,
     )
-    
-    db.add(db_sale)
-    
-    # Mettre à jour le stock si un produit est spécifié
+
+    await db_sale.insert()
+
+    # Mettre a jour le stock si un produit est specifie
     if sale_data.product_id:
-        if sale_data.variant_id:
-            # Marquer la variante comme vendue (pas de décrément du stock principal)
+        if sale_data.variant_id and variant:
             variant.is_sold = True
-            # Créer un mouvement de stock pour la variante (quantité = 1 car c'est une variante unique)
+            await variant.save()
+
+            sm_id = await get_next_id("stock_movements")
             stock_movement = StockMovement(
+                movement_id=sm_id,
                 product_id=sale_data.product_id,
-                quantity=-1,  # Une variante = 1 unité
+                quantity=-1,
                 movement_type="OUT",
                 reference_type="DAILY_SALE",
                 reference_id=db_sale.sale_id,
                 notes=f"Vente quotidienne - {sale_data.client_name} (Variante: {sale_data.variant_imei})",
-                unit_price=sale_data.unit_price
+                unit_price=sale_data.unit_price,
             )
-            db.add(stock_movement)
+            await stock_movement.insert()
         else:
-            # Mettre à jour la quantité en stock pour les produits sans variantes
-            product.quantity -= sale_data.quantity
-            
-            # Créer un mouvement de stock
+            if product:
+                product.quantity -= sale_data.quantity
+                await product.save()
+
+            sm_id = await get_next_id("stock_movements")
             stock_movement = StockMovement(
+                movement_id=sm_id,
                 product_id=sale_data.product_id,
-                quantity=-sale_data.quantity,  # Négatif pour sortie
+                quantity=-sale_data.quantity,
                 movement_type="OUT",
                 reference_type="DAILY_SALE",
                 reference_id=db_sale.sale_id,
                 notes=f"Vente quotidienne - {sale_data.client_name}",
-                unit_price=sale_data.unit_price
+                unit_price=sale_data.unit_price,
             )
-            db.add(stock_movement)
-    
-    db.commit()
-    db.refresh(db_sale)
-    
+            await stock_movement.insert()
+
     return db_sale
+
 
 @router.put("/{sale_id}", response_model=DailySaleResponse)
 async def update_daily_sale(
     sale_id: int,
     sale_data: DailySaleUpdate,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Mettre à jour une vente quotidienne"""
-    db_sale = db.query(DailySale).filter(DailySale.sale_id == sale_id).first()
+    """Mettre a jour une vente quotidienne"""
+    db_sale = await DailySale.find_one(DailySale.sale_id == sale_id)
     if not db_sale:
-        raise HTTPException(status_code=404, detail="Vente non trouvée")
-    
-    # Vérifier si le client existe si client_id est fourni
+        raise HTTPException(status_code=404, detail="Vente non trouvee")
+
+    # Verifier si le client existe si client_id est fourni
     if sale_data.client_id:
-        client = db.query(Client).filter(Client.client_id == sale_data.client_id).first()
+        client = await Client.find_one(Client.client_id == sale_data.client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client non trouvé")
-    
-    # Vérifier si le produit existe si product_id est fourni
+            raise HTTPException(status_code=404, detail="Client non trouve")
+
+    # Verifier si le produit existe si product_id est fourni
     if sale_data.product_id:
-        product = db.query(Product).filter(Product.product_id == sale_data.product_id).first()
+        product = await Product.find_one(Product.product_id == sale_data.product_id)
         if not product:
-            raise HTTPException(status_code=404, detail="Produit non trouvé")
-    
+            raise HTTPException(status_code=404, detail="Produit non trouve")
+
     # Sauvegarder les anciennes valeurs pour ajuster le stock
     old_quantity = db_sale.quantity
     old_product_id = db_sale.product_id
-    
-    # Mettre à jour les champs
+
+    # Mettre a jour les champs
     update_data = sale_data.dict(exclude_unset=True)
     for field, value in update_data.items():
         setattr(db_sale, field, value)
-    
-    # Ajuster le stock si nécessaire
+
+    # Ajuster le stock si necessaire
     if old_product_id and db_sale.product_id:
         if old_product_id == db_sale.product_id:
-            # Même produit, ajuster la différence
             quantity_diff = db_sale.quantity - old_quantity
             if quantity_diff != 0:
-                product = db.query(Product).filter(Product.product_id == db_sale.product_id).first()
+                product = await Product.find_one(Product.product_id == db_sale.product_id)
                 if product:
                     product.quantity -= quantity_diff
+                    await product.save()
         else:
-            # Produit différent, remettre l'ancien stock et déduire le nouveau
-            old_product = db.query(Product).filter(Product.product_id == old_product_id).first()
+            old_product = await Product.find_one(Product.product_id == old_product_id)
             if old_product:
                 old_product.quantity += old_quantity
-            
-            new_product = db.query(Product).filter(Product.product_id == db_sale.product_id).first()
+                await old_product.save()
+
+            new_product = await Product.find_one(Product.product_id == db_sale.product_id)
             if new_product:
                 new_product.quantity -= db_sale.quantity
-    
-    db.commit()
-    db.refresh(db_sale)
-    
+                await new_product.save()
+
+    await db_sale.save()
+
     return db_sale
+
 
 @router.delete("/{sale_id}")
 async def delete_daily_sale(
     sale_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     """Supprimer une vente quotidienne"""
-    db_sale = db.query(DailySale).filter(DailySale.sale_id == sale_id).first()
+    db_sale = await DailySale.find_one(DailySale.sale_id == sale_id)
     if not db_sale:
-        raise HTTPException(status_code=404, detail="Vente non trouvée")
-    
-    # Remettre le stock si un produit était associé
+        raise HTTPException(status_code=404, detail="Vente non trouvee")
+
+    # Remettre le stock si un produit etait associe
     if db_sale.product_id:
         if db_sale.variant_id:
-            # Remettre la variante en stock (marquer comme non vendue)
-            variant = db.query(ProductVariant).filter(ProductVariant.variant_id == db_sale.variant_id).first()
+            variant = await ProductVariant.find_one(ProductVariant.variant_id == db_sale.variant_id)
             if variant:
                 variant.is_sold = False
+                await variant.save()
         else:
-            # Remettre le stock du produit principal
-            product = db.query(Product).filter(Product.product_id == db_sale.product_id).first()
+            product = await Product.find_one(Product.product_id == db_sale.product_id)
             if product:
                 product.quantity += db_sale.quantity
-    
-    # Supprimer les mouvements de stock associés
-    db.query(StockMovement).filter(
-        and_(
-            StockMovement.reference_type == "DAILY_SALE",
-            StockMovement.reference_id == sale_id
-        )
+                await product.save()
+
+    # Supprimer les mouvements de stock associes
+    await StockMovement.find(
+        {
+            "reference_type": "DAILY_SALE",
+            "reference_id": sale_id,
+        }
     ).delete()
-    
-    db.delete(db_sale)
-    db.commit()
-    
-    return {"message": "Vente supprimée avec succès"}
+
+    await db_sale.delete()
+
+    return {"message": "Vente supprimee avec succes"}
+
 
 @router.get("/stats/summary")
 async def get_sales_summary(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Obtenir un résumé des ventes"""
-    query = db.query(DailySale)
-    
-    if start_date:
-        query = query.filter(DailySale.sale_date >= start_date)
-    
-    if end_date:
-        query = query.filter(DailySale.sale_date <= end_date)
-    
-    # Exclure les ventes liées à des factures impayées pour les non-admins
-    try:
-        role = getattr(current_user, "role", "user")
-    except Exception:
-        role = "user"
-    if role != "admin":
-        query = query.outerjoin(Invoice, DailySale.invoice_id == Invoice.invoice_id)
-        query = query.filter(
-            or_(
-                DailySale.invoice_id.is_(None),
-                Invoice.status.in_(["payée", "PAID", "partiellement payée"])  # inclure partiellement payée
-            )
-        )
+    """Obtenir un resume des ventes"""
+    filters: dict = {}
 
-    # Statistiques générales
-    # Compter chaque facture une seule fois (distinct invoice_id) + ventes directes
-    direct_sales = query.filter(DailySale.invoice_id.is_(None)).count()
-    invoice_sales_distinct = (
-        db.query(func.count(func.distinct(DailySale.invoice_id)))
-        .select_from(DailySale)
-        .filter(DailySale.sale_id.in_([s.sale_id for s in query.all()]))
-        .filter(DailySale.invoice_id.isnot(None))
-        .scalar()
-        or 0
-    )
-    total_sales = int(direct_sales) + int(invoice_sales_distinct)
-    total_amount = db.query(func.sum(DailySale.total_amount)).filter(
-        DailySale.sale_id.in_([s.sale_id for s in query.all()])
-    ).scalar() or 0
-    
-    # Ventes par méthode de paiement
-    payment_methods = db.query(
-        DailySale.payment_method,
-        func.count(DailySale.sale_id).label('count'),
-        func.sum(DailySale.total_amount).label('total')
-    ).filter(
-        DailySale.sale_id.in_([s.sale_id for s in query.all()])
-    ).group_by(DailySale.payment_method).all()
-    
-    # Ventes liées à des factures vs ventes directes
-    invoice_sales = int(invoice_sales_distinct)
-    
-    # Restreindre 'vente moyenne' pour les non-admins
+    if start_date:
+        filters.setdefault("sale_date", {})["$gte"] = start_date
+    if end_date:
+        filters.setdefault("sale_date", {})["$lte"] = end_date
+
     try:
         role = getattr(current_user, "role", "user")
     except Exception:
         role = "user"
+
+    # Get all matching sales
+    all_sales = await DailySale.find(filters).to_list()
+
+    # Filter for non-admins
+    if role != "admin":
+        filtered_sales = []
+        for s in all_sales:
+            if s.invoice_id is None:
+                filtered_sales.append(s)
+            else:
+                inv = await Invoice.find_one(Invoice.invoice_id == s.invoice_id)
+                if inv and inv.status in ["payee", "PAID", "partiellement payee"]:
+                    filtered_sales.append(s)
+        all_sales = filtered_sales
+
+    sale_ids = [s.sale_id for s in all_sales]
+
+    # Direct sales (no invoice)
+    direct_sales = sum(1 for s in all_sales if s.invoice_id is None)
+
+    # Distinct invoice IDs
+    invoice_ids_set = {s.invoice_id for s in all_sales if s.invoice_id is not None}
+    invoice_sales_distinct = len(invoice_ids_set)
+
+    total_sales = direct_sales + invoice_sales_distinct
+    total_amount = sum(float(s.total_amount or 0) for s in all_sales)
+
+    # Ventes par methode de paiement
+    payment_method_stats: dict = {}
+    for s in all_sales:
+        pm = s.payment_method or "autre"
+        if pm not in payment_method_stats:
+            payment_method_stats[pm] = {"count": 0, "total": 0}
+        payment_method_stats[pm]["count"] += 1
+        payment_method_stats[pm]["total"] += float(s.total_amount or 0)
+
+    invoice_sales = invoice_sales_distinct
+
     avg_sale = float(total_amount / total_sales) if total_sales > 0 else 0
     if role != "admin":
         avg_sale = 0.0
@@ -362,23 +361,19 @@ async def get_sales_summary(
         "total_amount": float(total_amount),
         "average_sale": avg_sale,
         "payment_methods": [
-            {
-                "method": pm.payment_method,
-                "count": pm.count,
-                "total": float(pm.total or 0)
-            }
-            for pm in payment_methods
+            {"method": method, "count": stats["count"], "total": stats["total"]}
+            for method, stats in payment_method_stats.items()
         ],
         "invoice_sales": invoice_sales,
-        "direct_sales": direct_sales
+        "direct_sales": direct_sales,
     }
+
 
 @router.get("/by-date/{sale_date}")
 async def get_sales_by_date(
     sale_date: date,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Récupérer les ventes d'une date spécifique"""
-    sales = db.query(DailySale).filter(DailySale.sale_date == sale_date).all()
+    """Recuperer les ventes d'une date specifique"""
+    sales = await DailySale.find(DailySale.sale_date == sale_date).to_list()
     return sales

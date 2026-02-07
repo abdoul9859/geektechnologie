@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
 from typing import Optional, List
 from datetime import datetime, date, timedelta
 from pydantic import BaseModel
@@ -10,7 +8,7 @@ import logging
 import os
 import httpx
 
-from ..database import get_db, Maintenance, Client, User, UserSettings
+from ..database import Maintenance, Client, User, UserSettings, get_next_id
 from ..auth import get_current_user
 
 templates = Jinja2Templates(directory="templates")
@@ -24,7 +22,7 @@ class MaintenanceCreate(BaseModel):
     client_name: str
     client_phone: Optional[str] = None
     client_email: Optional[str] = None
-    
+
     device_type: str
     device_brand: Optional[str] = None
     device_model: Optional[str] = None
@@ -32,22 +30,22 @@ class MaintenanceCreate(BaseModel):
     device_description: Optional[str] = None
     device_accessories: Optional[str] = None
     device_condition: Optional[str] = None
-    
+
     problem_description: str
     diagnosis: Optional[str] = None
-    
+
     reception_date: Optional[datetime] = None
     estimated_completion_date: Optional[date] = None
     pickup_deadline: Optional[date] = None
-    
+
     status: str = "received"
     priority: str = "normal"
-    
+
     estimated_cost: Optional[float] = None
     advance_paid: Optional[float] = 0
-    
+
     warranty_days: int = 30
-    
+
     technician_id: Optional[int] = None
     notes: Optional[str] = None
     internal_notes: Optional[str] = None
@@ -70,7 +68,7 @@ class MaintenanceUpdate(BaseModel):
     client_name: Optional[str] = None
     client_phone: Optional[str] = None
     client_email: Optional[str] = None
-    
+
     device_type: Optional[str] = None
     device_brand: Optional[str] = None
     device_model: Optional[str] = None
@@ -78,26 +76,26 @@ class MaintenanceUpdate(BaseModel):
     device_description: Optional[str] = None
     device_accessories: Optional[str] = None
     device_condition: Optional[str] = None
-    
+
     problem_description: Optional[str] = None
     diagnosis: Optional[str] = None
     work_done: Optional[str] = None
-    
+
     estimated_completion_date: Optional[date] = None
     actual_completion_date: Optional[date] = None
     pickup_deadline: Optional[date] = None
     pickup_date: Optional[date] = None
-    
+
     status: Optional[str] = None
     priority: Optional[str] = None
-    
+
     estimated_cost: Optional[float] = None
     final_cost: Optional[float] = None
     advance_paid: Optional[float] = None
-    
+
     warranty_days: Optional[int] = None
     liability_waived: Optional[bool] = None
-    
+
     technician_id: Optional[int] = None
     notes: Optional[str] = None
     internal_notes: Optional[str] = None
@@ -105,30 +103,37 @@ class MaintenanceUpdate(BaseModel):
 
 # ==================== HELPERS ====================
 
-def generate_maintenance_number(db: Session) -> str:
-    """Générer un numéro de maintenance unique."""
+async def generate_maintenance_number() -> str:
+    """Generer un numero de maintenance unique."""
     today = datetime.now()
     prefix = f"MAINT-{today.strftime('%y%m')}-"
-    
-    # Trouver le dernier numéro du mois
-    last = db.query(Maintenance).filter(
-        Maintenance.maintenance_number.like(f"{prefix}%")
-    ).order_by(Maintenance.maintenance_id.desc()).first()
-    
+
+    # Trouver le dernier numero du mois
+    last = await Maintenance.find(
+        {"maintenance_number": {"$regex": f"^{prefix}"}}
+    ).sort(-Maintenance.maintenance_id).first_or_none()
+
     if last:
         try:
             last_num = int(last.maintenance_number.split("-")[-1])
             new_num = last_num + 1
-        except:
+        except Exception:
             new_num = 1
     else:
         new_num = 1
-    
+
     return f"{prefix}{new_num:04d}"
 
 
-def maintenance_to_dict(m: Maintenance) -> dict:
+async def maintenance_to_dict(m: Maintenance) -> dict:
     """Convertir une maintenance en dictionnaire."""
+    # Look up technician name if technician_id is set
+    technician_name = None
+    if m.technician_id:
+        tech = await User.find_one(User.user_id == m.technician_id)
+        if tech:
+            technician_name = tech.full_name
+
     return {
         "maintenance_id": m.maintenance_id,
         "maintenance_number": m.maintenance_number,
@@ -162,7 +167,7 @@ def maintenance_to_dict(m: Maintenance) -> dict:
         "reminder_sent": m.reminder_sent,
         "reminder_sent_date": m.reminder_sent_date.isoformat() if m.reminder_sent_date else None,
         "technician_id": m.technician_id,
-        "technician_name": m.technician.full_name if m.technician else None,
+        "technician_name": technician_name,
         "notes": m.notes,
         "internal_notes": m.internal_notes,
         "created_at": m.created_at.isoformat() if m.created_at else None,
@@ -180,50 +185,55 @@ async def list_maintenances(
     status: Optional[str] = None,
     priority: Optional[str] = None,
     overdue: Optional[bool] = None,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Lister les maintenances avec filtres et pagination."""
     try:
-        query = db.query(Maintenance)
-        
+        filters = []
+
         # Filtres
         if search:
-            search_term = f"%{search}%"
-            query = query.filter(or_(
-                Maintenance.maintenance_number.ilike(search_term),
-                Maintenance.client_name.ilike(search_term),
-                Maintenance.client_phone.ilike(search_term),
-                Maintenance.device_type.ilike(search_term),
-                Maintenance.device_brand.ilike(search_term),
-                Maintenance.device_model.ilike(search_term),
-                Maintenance.device_serial.ilike(search_term),
-            ))
-        
+            regex_filter = {"$regex": search, "$options": "i"}
+            filters.append({"$or": [
+                {"maintenance_number": regex_filter},
+                {"client_name": regex_filter},
+                {"client_phone": regex_filter},
+                {"device_type": regex_filter},
+                {"device_brand": regex_filter},
+                {"device_model": regex_filter},
+                {"device_serial": regex_filter},
+            ]})
+
         if status:
-            query = query.filter(Maintenance.status == status)
-        
+            filters.append({"status": status})
+
         if priority:
-            query = query.filter(Maintenance.priority == priority)
-        
+            filters.append({"priority": priority})
+
         if overdue:
             today = date.today()
-            query = query.filter(
-                and_(
-                    Maintenance.pickup_deadline < today,
-                    Maintenance.status.in_(["completed", "ready"]),
-                    Maintenance.pickup_date == None
-                )
-            )
-        
+            filters.append({
+                "pickup_deadline": {"$lt": datetime.combine(today, datetime.min.time())},
+                "status": {"$in": ["completed", "ready"]},
+                "pickup_date": None,
+            })
+
+        query_filter = {"$and": filters} if filters else {}
+
         # Comptage total
-        total = query.count()
-        
+        total = await Maintenance.find(query_filter).count()
+
         # Pagination
-        maintenances = query.order_by(Maintenance.created_at.desc()).offset((page - 1) * per_page).limit(per_page).all()
-        
+        maintenances = await (
+            Maintenance.find(query_filter)
+            .sort(-Maintenance.created_at)
+            .skip((page - 1) * per_page)
+            .limit(per_page)
+            .to_list()
+        )
+
         return {
-            "items": [maintenance_to_dict(m) for m in maintenances],
+            "items": [await maintenance_to_dict(m) for m in maintenances],
             "total": total,
             "page": page,
             "per_page": per_page,
@@ -255,14 +265,13 @@ def _normalize_maintenance_kind(kind: Optional[str]) -> str:
 @router.post("/send-whatsapp")
 async def send_maintenance_whatsapp(
     data: SendMaintenanceWhatsAppRequest,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Envoyer un rapport/fiche de maintenance par WhatsApp via n8n."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == data.maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == data.maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
 
         kind = _normalize_maintenance_kind(data.kind)
         app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
@@ -283,7 +292,7 @@ async def send_maintenance_whatsapp(
             response = await client.post(webhook_url, json=payload)
 
         if response.status_code == 200:
-            return {"success": True, "message": "Document de maintenance envoyé par WhatsApp"}
+            return {"success": True, "message": "Document de maintenance envoye par WhatsApp"}
         logging.error(f"Erreur n8n WhatsApp maintenance: {response.status_code} - {response.text}")
         return {"success": False, "message": f"Erreur n8n: {response.text}"}
 
@@ -300,14 +309,13 @@ async def send_maintenance_whatsapp(
 @router.post("/send-email")
 async def send_maintenance_email(
     data: SendMaintenanceEmailRequest,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Envoyer un rapport/fiche de maintenance par Email via n8n."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == data.maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == data.maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
 
         kind = _normalize_maintenance_kind(data.kind)
         app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
@@ -328,7 +336,7 @@ async def send_maintenance_email(
             response = await client.post(webhook_url, json=payload)
 
         if response.status_code == 200:
-            return {"success": True, "message": "Document de maintenance envoyé par email"}
+            return {"success": True, "message": "Document de maintenance envoye par email"}
         logging.error(f"Erreur n8n Email maintenance: {response.status_code} - {response.text}")
         return {"success": False, "message": f"Erreur n8n: {response.text}"}
 
@@ -344,36 +352,34 @@ async def send_maintenance_email(
 
 @router.get("/stats")
 async def get_maintenance_stats(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Obtenir les statistiques des maintenances."""
     try:
         today = date.today()
-        
-        total = db.query(Maintenance).count()
-        received = db.query(Maintenance).filter(Maintenance.status == "received").count()
-        in_progress = db.query(Maintenance).filter(Maintenance.status == "in_progress").count()
-        completed = db.query(Maintenance).filter(Maintenance.status == "completed").count()
-        ready = db.query(Maintenance).filter(Maintenance.status == "ready").count()
-        picked_up = db.query(Maintenance).filter(Maintenance.status == "picked_up").count()
-        abandoned = db.query(Maintenance).filter(Maintenance.status == "abandoned").count()
-        
-        # Maintenances en retard (deadline dépassée, non récupérées)
-        overdue = db.query(Maintenance).filter(
-            and_(
-                Maintenance.pickup_deadline < today,
-                Maintenance.status.in_(["completed", "ready"]),
-                Maintenance.pickup_date == None
-            )
-        ).count()
-        
+        today_dt = datetime.combine(today, datetime.min.time())
+
+        total = await Maintenance.find().count()
+        received = await Maintenance.find(Maintenance.status == "received").count()
+        in_progress = await Maintenance.find(Maintenance.status == "in_progress").count()
+        completed = await Maintenance.find(Maintenance.status == "completed").count()
+        ready = await Maintenance.find(Maintenance.status == "ready").count()
+        picked_up = await Maintenance.find(Maintenance.status == "picked_up").count()
+        abandoned = await Maintenance.find(Maintenance.status == "abandoned").count()
+
+        # Maintenances en retard (deadline depassee, non recuperees)
+        overdue = await Maintenance.find({
+            "pickup_deadline": {"$lt": today_dt},
+            "status": {"$in": ["completed", "ready"]},
+            "pickup_date": None,
+        }).count()
+
         # Maintenances urgentes
-        urgent = db.query(Maintenance).filter(
-            Maintenance.priority == "urgent",
-            Maintenance.status.notin_(["picked_up", "abandoned"])
-        ).count()
-        
+        urgent = await Maintenance.find({
+            "priority": "urgent",
+            "status": {"$nin": ["picked_up", "abandoned"]},
+        }).count()
+
         return {
             "total": total,
             "received": received,
@@ -392,31 +398,32 @@ async def get_maintenance_stats(
 
 @router.get("/next-number")
 async def get_next_maintenance_number(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Obtenir le prochain numéro de maintenance."""
-    return {"maintenance_number": generate_maintenance_number(db)}
+    """Obtenir le prochain numero de maintenance."""
+    return {"maintenance_number": await generate_maintenance_number()}
 
 
 @router.get("/overdue")
 async def get_overdue_maintenances(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Obtenir les maintenances en retard de récupération."""
+    """Obtenir les maintenances en retard de recuperation."""
     try:
         today = date.today()
-        
-        overdue = db.query(Maintenance).filter(
-            and_(
-                Maintenance.pickup_deadline < today,
-                Maintenance.status.in_(["completed", "ready"]),
-                Maintenance.pickup_date == None
-            )
-        ).order_by(Maintenance.pickup_deadline.asc()).all()
-        
-        return {"items": [maintenance_to_dict(m) for m in overdue]}
+        today_dt = datetime.combine(today, datetime.min.time())
+
+        overdue = await (
+            Maintenance.find({
+                "pickup_deadline": {"$lt": today_dt},
+                "status": {"$in": ["completed", "ready"]},
+                "pickup_date": None,
+            })
+            .sort(+Maintenance.pickup_deadline)
+            .to_list()
+        )
+
+        return {"items": [await maintenance_to_dict(m) for m in overdue]}
     except Exception as e:
         logging.error(f"Erreur maintenances en retard: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -425,34 +432,36 @@ async def get_overdue_maintenances(
 @router.get("/{maintenance_id}")
 async def get_maintenance(
     maintenance_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Obtenir une maintenance par son ID."""
-    maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+    maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
     if not maintenance:
-        raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-    return maintenance_to_dict(maintenance)
+        raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+    return await maintenance_to_dict(maintenance)
 
 
 @router.post("")
 async def create_maintenance(
     data: MaintenanceCreate,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Créer une nouvelle maintenance."""
+    """Creer une nouvelle maintenance."""
     try:
-        # Générer le numéro
-        maintenance_number = generate_maintenance_number(db)
-        
-        # Calculer la date limite de récupération si non fournie (30 jours après réception)
+        # Generer le numero
+        maintenance_number = await generate_maintenance_number()
+
+        # Obtenir le prochain ID auto-increment
+        new_id = await get_next_id("maintenances")
+
+        # Calculer la date limite de recuperation si non fournie (30 jours apres reception)
         reception = data.reception_date or datetime.now()
         pickup_deadline = data.pickup_deadline
         if not pickup_deadline:
             pickup_deadline = (reception + timedelta(days=30)).date()
-        
+
         maintenance = Maintenance(
+            maintenance_id=new_id,
             maintenance_number=maintenance_number,
             client_id=data.client_id,
             client_name=data.client_name,
@@ -479,15 +488,12 @@ async def create_maintenance(
             notes=data.notes,
             internal_notes=data.internal_notes,
         )
-        
-        db.add(maintenance)
-        db.commit()
-        db.refresh(maintenance)
-        
-        return maintenance_to_dict(maintenance)
+
+        await maintenance.insert()
+
+        return await maintenance_to_dict(maintenance)
     except Exception as e:
-        db.rollback()
-        logging.error(f"Erreur création maintenance: {e}")
+        logging.error(f"Erreur creation maintenance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -495,56 +501,52 @@ async def create_maintenance(
 async def update_maintenance(
     maintenance_id: int,
     data: MaintenanceUpdate,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Mettre à jour une maintenance."""
+    """Mettre a jour une maintenance."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
-        # Mettre à jour les champs fournis
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
+        # Mettre a jour les champs fournis
         update_data = data.dict(exclude_unset=True)
         for key, value in update_data.items():
             if hasattr(maintenance, key):
                 setattr(maintenance, key, value)
-        
-        db.commit()
-        db.refresh(maintenance)
-        
-        return maintenance_to_dict(maintenance)
+
+        maintenance.updated_at = datetime.utcnow()
+        await maintenance.save()
+
+        return await maintenance_to_dict(maintenance)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
-        logging.error(f"Erreur mise à jour maintenance: {e}")
+        logging.error(f"Erreur mise a jour maintenance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{maintenance_id}/complete")
 async def complete_maintenance(
     maintenance_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Marquer une maintenance comme terminée."""
+    """Marquer une maintenance comme terminee."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
         maintenance.status = "completed"
         maintenance.actual_completion_date = date.today()
-        
-        db.commit()
-        db.refresh(maintenance)
-        
-        return maintenance_to_dict(maintenance)
+        maintenance.updated_at = datetime.utcnow()
+
+        await maintenance.save()
+
+        return await maintenance_to_dict(maintenance)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur completion maintenance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -552,27 +554,25 @@ async def complete_maintenance(
 @router.post("/{maintenance_id}/ready")
 async def mark_ready_for_pickup(
     maintenance_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Marquer une maintenance comme prête à récupérer."""
+    """Marquer une maintenance comme prete a recuperer."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
         maintenance.status = "ready"
         if not maintenance.actual_completion_date:
             maintenance.actual_completion_date = date.today()
-        
-        db.commit()
-        db.refresh(maintenance)
-        
-        return maintenance_to_dict(maintenance)
+        maintenance.updated_at = datetime.utcnow()
+
+        await maintenance.save()
+
+        return await maintenance_to_dict(maintenance)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur ready maintenance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -580,26 +580,24 @@ async def mark_ready_for_pickup(
 @router.post("/{maintenance_id}/pickup")
 async def mark_picked_up(
     maintenance_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Marquer une maintenance comme récupérée."""
+    """Marquer une maintenance comme recuperee."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
         maintenance.status = "picked_up"
         maintenance.pickup_date = date.today()
-        
-        db.commit()
-        db.refresh(maintenance)
-        
-        return maintenance_to_dict(maintenance)
+        maintenance.updated_at = datetime.utcnow()
+
+        await maintenance.save()
+
+        return await maintenance_to_dict(maintenance)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur pickup maintenance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -607,27 +605,25 @@ async def mark_picked_up(
 @router.post("/{maintenance_id}/waive-liability")
 async def waive_liability(
     maintenance_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Dégager la responsabilité sur une maintenance en retard."""
+    """Degager la responsabilite sur une maintenance en retard."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
         maintenance.liability_waived = True
         maintenance.liability_waived_date = date.today()
         maintenance.status = "abandoned"
-        
-        db.commit()
-        db.refresh(maintenance)
-        
-        return maintenance_to_dict(maintenance)
+        maintenance.updated_at = datetime.utcnow()
+
+        await maintenance.save()
+
+        return await maintenance_to_dict(maintenance)
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur waive liability: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -635,23 +631,20 @@ async def waive_liability(
 @router.delete("/{maintenance_id}")
 async def delete_maintenance(
     maintenance_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Supprimer une maintenance."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
-        db.delete(maintenance)
-        db.commit()
-        
-        return {"message": "Maintenance supprimée"}
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
+        await maintenance.delete()
+
+        return {"message": "Maintenance supprimee"}
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur suppression maintenance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -659,35 +652,33 @@ async def delete_maintenance(
 @router.post("/{maintenance_id}/send-reminder")
 async def send_pickup_reminder(
     maintenance_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Envoyer un rappel de récupération au client."""
+    """Envoyer un rappel de recuperation au client."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
         if not maintenance.client_phone:
-            raise HTTPException(status_code=400, detail="Pas de numéro de téléphone pour ce client")
-        
-        # Marquer le rappel comme envoyé
+            raise HTTPException(status_code=400, detail="Pas de numero de telephone pour ce client")
+
+        # Marquer le rappel comme envoye
         maintenance.reminder_sent = True
         maintenance.reminder_sent_date = datetime.now()
-        
-        db.commit()
-        db.refresh(maintenance)
-        
-        # Retourner les infos pour l'envoi WhatsApp côté frontend
+        maintenance.updated_at = datetime.utcnow()
+
+        await maintenance.save()
+
+        # Retourner les infos pour l'envoi WhatsApp cote frontend
         return {
             "success": True,
-            "maintenance": maintenance_to_dict(maintenance),
-            "message": f"Bonjour {maintenance.client_name},\n\nVotre appareil ({maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}) est prêt à être récupéré chez Geek Technologie.\n\nNuméro de fiche: {maintenance.maintenance_number}\nDate limite: {maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else 'Non définie'}\n\nMerci de venir le récupérer dans les plus brefs délais.\n\nCordialement,\nGeek Technologie"
+            "maintenance": await maintenance_to_dict(maintenance),
+            "message": f"Bonjour {maintenance.client_name},\n\nVotre appareil ({maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}) est pret a etre recupere chez Geek Technologie.\n\nNumero de fiche: {maintenance.maintenance_number}\nDate limite: {maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else 'Non definie'}\n\nMerci de venir le recuperer dans les plus brefs delais.\n\nCordialement,\nGeek Technologie"
         }
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur envoi rappel: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -700,24 +691,23 @@ class SendReminderWhatsAppRequest(BaseModel):
 async def send_reminder_whatsapp(
     maintenance_id: int,
     data: SendReminderWhatsAppRequest,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Envoyer un rappel de récupération via n8n webhook."""
+    """Envoyer un rappel de recuperation via n8n webhook."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
         # Construire le message de rappel
         device = f"{maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}".strip()
-        pickup_date = maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else 'Non définie'
-        
-        message = f"Bonjour {maintenance.client_name},\n\nVotre appareil ({device}) est prêt à être récupéré chez Geek Technologie.\n\nNuméro de fiche: {maintenance.maintenance_number}\nDate limite: {pickup_date}\n\nMerci de venir le récupérer dans les plus brefs délais.\n\nCordialement,\nGeek Technologie"
-        
+        pickup_date = maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else 'Non definie'
+
+        message = f"Bonjour {maintenance.client_name},\n\nVotre appareil ({device}) est pret a etre recupere chez Geek Technologie.\n\nNumero de fiche: {maintenance.maintenance_number}\nDate limite: {pickup_date}\n\nMerci de venir le recuperer dans les plus brefs delais.\n\nCordialement,\nGeek Technologie"
+
         # Appeler le webhook n8n
         webhook_url = f"{N8N_BASE_URL}/webhook/send-maintenance-reminder-whatsapp"
-        
+
         payload = {
             "maintenance_id": maintenance_id,
             "maintenance_number": maintenance.maintenance_number,
@@ -726,21 +716,22 @@ async def send_reminder_whatsapp(
             "client_name": maintenance.client_name,
             "device": device
         }
-        
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(webhook_url, json=payload)
-        
+
         if response.status_code == 200:
-            # Marquer le rappel comme envoyé
+            # Marquer le rappel comme envoye
             maintenance.reminder_sent = True
             maintenance.reminder_sent_date = datetime.now()
-            db.commit()
-            
-            return {"success": True, "message": "Rappel de récupération envoyé par WhatsApp"}
-        
+            maintenance.updated_at = datetime.utcnow()
+            await maintenance.save()
+
+            return {"success": True, "message": "Rappel de recuperation envoye par WhatsApp"}
+
         logging.error(f"Erreur n8n rappel WhatsApp: {response.status_code} - {response.text}")
         return {"success": False, "message": f"Erreur n8n: {response.text}"}
-        
+
     except httpx.RequestError as e:
         logging.error(f"Erreur connexion n8n (rappel WhatsApp): {e}")
         raise HTTPException(status_code=503, detail="Service n8n indisponible")
@@ -756,29 +747,29 @@ async def print_maintenance_sheet(
     request: Request,
     maintenance_id: int,
     kind: str = Query("technician"),
-    db: Session = Depends(get_db)
 ):
-    """Générer la fiche de maintenance imprimable."""
+    """Generer la fiche de maintenance imprimable."""
     try:
-        maintenance = db.query(Maintenance).filter(Maintenance.maintenance_id == maintenance_id).first()
+        maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
-            raise HTTPException(status_code=404, detail="Maintenance non trouvée")
-        
-        # Charger les paramètres de l'entreprise
+            raise HTTPException(status_code=404, detail="Maintenance non trouvee")
+
+        # Charger les parametres de l'entreprise (key-value UserSettings)
         settings_dict = {}
         try:
-            settings = db.query(UserSettings).first()
-            if settings:
+            all_settings = await UserSettings.find().to_list()
+            if all_settings:
+                kv = {s.setting_key: s.setting_value for s in all_settings}
                 settings_dict = {
-                    "company_name": settings.company_name,
-                    "address": settings.address,
-                    "city": settings.city,
-                    "phone": settings.phone,
-                    "phone2": getattr(settings, 'phone2', None),
-                    "email": settings.email,
-                    "website": getattr(settings, 'website', None),
-                    "logo": settings.logo_path,
-                    "footer_text": getattr(settings, 'footer_text', None),
+                    "company_name": kv.get("company_name"),
+                    "address": kv.get("address"),
+                    "city": kv.get("city"),
+                    "phone": kv.get("phone"),
+                    "phone2": kv.get("phone2"),
+                    "email": kv.get("email"),
+                    "website": kv.get("website"),
+                    "logo": kv.get("logo_path"),
+                    "footer_text": kv.get("footer_text"),
                 }
         except Exception as e:
             logging.error(f"Erreur chargement UserSettings (impression maintenance): {e}")

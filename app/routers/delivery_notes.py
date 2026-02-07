@@ -1,54 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime
-import json
 
-from ..database import get_db, User
+from ..database import DeliveryNote, DeliveryNoteItem, Client, get_next_id
 from ..auth import get_current_user
 
 router = APIRouter(prefix="/api/delivery-notes", tags=["delivery_notes"])
 
-# Données simulées pour les bons de livraison
-delivery_notes_data = [
-    {
-        "id": 1,
-        "number": "BL-2024-001",
-        "client_id": 1,
-        "client_name": "Amadou Ba",
-        "date": "2024-01-15",
-        "delivery_date": "2024-01-16",
-        "status": "delivered",
-        "items": [
-            {"product_id": 1, "product_name": "iPhone 15", "quantity": 2, "unit_price": 750000},
-            {"product_id": 2, "product_name": "Samsung Galaxy S24", "quantity": 1, "unit_price": 650000}
-        ],
-        "subtotal": 2150000,
-        "tax_rate": 18,
-        "tax_amount": 387000,
-        "total": 2537000,
-        "notes": "Livraison à domicile",
-        "created_at": "2024-01-15T10:00:00"
-    },
-    {
-        "id": 2,
-        "number": "BL-2024-002",
-        "client_id": 2,
-        "client_name": "Fatou Diop",
-        "date": "2024-01-18",
-        "delivery_date": "2024-01-19",
-        "status": "pending",
-        "items": [
-            {"product_id": 3, "product_name": "MacBook Air", "quantity": 1, "unit_price": 1200000}
-        ],
-        "subtotal": 1200000,
-        "tax_rate": 18,
-        "tax_amount": 216000,
-        "total": 1416000,
-        "notes": "Livraison en magasin",
-        "created_at": "2024-01-18T14:30:00"
-    }
-]
 
 @router.get("/")
 async def get_delivery_notes(
@@ -57,99 +15,168 @@ async def get_delivery_notes(
     search: Optional[str] = None,
     status: Optional[str] = None,
     client_id: Optional[int] = None,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Récupérer la liste des bons de livraison"""
+    """Recuperer la liste des bons de livraison"""
     try:
-        filtered_notes = delivery_notes_data.copy()
-        
-        # Filtrer par recherche
+        filters = {}
+
         if search:
-            search_lower = search.lower()
-            filtered_notes = [
-                n for n in filtered_notes 
-                if search_lower in n["number"].lower() or 
-                   search_lower in n["client_name"].lower()
+            pattern = {"$regex": search, "$options": "i"}
+            filters["$or"] = [
+                {"delivery_note_number": pattern},
             ]
-        
-        # Filtrer par statut
+
         if status:
-            filtered_notes = [n for n in filtered_notes if n["status"] == status]
-            
-        # Filtrer par client
+            filters["status"] = status
+
         if client_id:
-            filtered_notes = [n for n in filtered_notes if n["client_id"] == client_id]
-        
-        # Pagination
-        total = len(filtered_notes)
-        notes = filtered_notes[skip:skip + limit]
-        
+            filters["client_id"] = client_id
+
+        total = await DeliveryNote.find(filters).count()
+        notes = (
+            await DeliveryNote.find(filters)
+            .sort([("date", -1), ("delivery_note_id", -1)])
+            .skip(skip)
+            .limit(limit)
+            .to_list()
+        )
+
+        # Enrich with items and client name
+        result_notes = []
+        for note in notes:
+            items = await DeliveryNoteItem.find(
+                DeliveryNoteItem.delivery_note_id == note.delivery_note_id
+            ).to_list()
+
+            client_name = ""
+            if note.client_id:
+                client = await Client.find_one(Client.client_id == note.client_id)
+                client_name = client.name if client else ""
+
+            note_dict = {
+                "id": note.delivery_note_id,
+                "number": note.delivery_note_number,
+                "client_id": note.client_id,
+                "client_name": client_name,
+                "date": note.date.strftime("%Y-%m-%d") if note.date else None,
+                "delivery_date": note.delivery_date.strftime("%Y-%m-%d") if note.delivery_date else None,
+                "status": note.status,
+                "items": [
+                    {
+                        "product_id": it.product_id,
+                        "product_name": it.product_name,
+                        "quantity": it.quantity,
+                        "unit_price": float(it.price or 0),
+                    }
+                    for it in items
+                ],
+                "subtotal": float(note.subtotal or 0),
+                "tax_rate": float(note.tax_rate or 18),
+                "tax_amount": float(note.tax_amount or 0),
+                "total": float(note.total or 0),
+                "notes": note.notes,
+                "created_at": note.created_at.isoformat() if note.created_at else None,
+            }
+            result_notes.append(note_dict)
+
         return {
-            "delivery_notes": notes,
+            "delivery_notes": result_notes,
             "total": total,
             "page": (skip // limit) + 1,
-            "pages": (total + limit - 1) // limit
+            "pages": (total + limit - 1) // limit,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/stats/summary")
 async def get_delivery_notes_stats(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Récupérer les statistiques des bons de livraison"""
+    """Recuperer les statistiques des bons de livraison"""
     try:
-        total_notes = len(delivery_notes_data)
-        pending_notes = len([n for n in delivery_notes_data if n["status"] == "pending"])
-        delivered_notes = len([n for n in delivery_notes_data if n["status"] == "delivered"])
-        total_value = sum(n["total"] for n in delivery_notes_data)
-        
+        total_notes = await DeliveryNote.count()
+        pending_notes = await DeliveryNote.find(DeliveryNote.status == "en_preparation").count()
+        delivered_notes = await DeliveryNote.find(DeliveryNote.status == "delivered").count()
+
+        pipeline = [
+            {"$group": {"_id": None, "total_value": {"$sum": "$total"}}},
+        ]
+        agg_result = await DeliveryNote.aggregate(pipeline).to_list()
+        total_value = float(agg_result[0]["total_value"]) if agg_result else 0
+
         return {
             "total_notes": total_notes,
             "pending_notes": pending_notes,
             "delivered_notes": delivered_notes,
-            "total_value": total_value
+            "total_value": total_value,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/")
 async def create_delivery_note(
     note_data: dict,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    current_user=Depends(get_current_user),
 ):
-    """Créer un nouveau bon de livraison"""
+    """Creer un nouveau bon de livraison"""
     try:
-        new_id = max([n["id"] for n in delivery_notes_data], default=0) + 1
+        from decimal import Decimal
+
+        new_id = await get_next_id("delivery_notes")
         new_number = f"BL-2024-{new_id:03d}"
-        
-        items = note_data.get("items", [])
-        subtotal = sum(item["quantity"] * item["unit_price"] for item in items)
+
+        items_data = note_data.get("items", [])
+        subtotal = sum(item["quantity"] * item["unit_price"] for item in items_data)
         tax_rate = note_data.get("tax_rate", 18)
         tax_amount = subtotal * tax_rate / 100
         total = subtotal + tax_amount
-        
-        new_note = {
+
+        new_note = DeliveryNote(
+            delivery_note_id=new_id,
+            delivery_note_number=new_number,
+            client_id=note_data.get("client_id"),
+            date=datetime.fromisoformat(note_data["date"]) if note_data.get("date") else datetime.now(),
+            delivery_date=datetime.fromisoformat(note_data["delivery_date"]) if note_data.get("delivery_date") else None,
+            status="en_preparation",
+            subtotal=Decimal(str(subtotal)),
+            tax_rate=Decimal(str(tax_rate)),
+            tax_amount=Decimal(str(tax_amount)),
+            total=Decimal(str(total)),
+            notes=note_data.get("notes", ""),
+        )
+        await new_note.insert()
+
+        # Create items
+        for item in items_data:
+            item_id = await get_next_id("delivery_note_items")
+            dn_item = DeliveryNoteItem(
+                item_id=item_id,
+                delivery_note_id=new_id,
+                product_id=item.get("product_id"),
+                product_name=item.get("product_name", ""),
+                quantity=item.get("quantity", 0),
+                price=Decimal(str(item.get("unit_price", 0))),
+            )
+            await dn_item.insert()
+
+        return {
             "id": new_id,
             "number": new_number,
             "client_id": note_data.get("client_id"),
             "client_name": note_data.get("client_name"),
             "date": note_data.get("date", datetime.now().strftime("%Y-%m-%d")),
             "delivery_date": note_data.get("delivery_date"),
-            "status": "pending",
-            "items": items,
+            "status": "en_preparation",
+            "items": items_data,
             "subtotal": subtotal,
             "tax_rate": tax_rate,
             "tax_amount": tax_amount,
             "total": total,
             "notes": note_data.get("notes", ""),
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now().isoformat(),
         }
-        
-        delivery_notes_data.append(new_note)
-        return new_note
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

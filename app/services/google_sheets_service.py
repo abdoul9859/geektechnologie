@@ -9,8 +9,7 @@ import json
 import re
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy.orm import Session
-from app.database import Product, ProductVariant, ProductVariantAttribute, Category, StockMovement
+from app.database import Product, ProductVariant, ProductVariantAttribute, Category, StockMovement, get_next_id
 from app.schemas import ProductCreate
 import requests
 import hashlib
@@ -187,7 +186,7 @@ class GoogleSheetsService:
                 try:
                     return Decimal(value_str)
                 except Exception:
-                    print(f"⚠️ Impossible de convertir '{value}' en prix, utilisation de 0.00")
+                    print(f"Impossible de convertir '{value}' en prix, utilisation de 0.00")
                     return Decimal('0.00')
 
             elif field_type == 'integer':
@@ -204,7 +203,7 @@ class GoogleSheetsService:
             else:
                 return value
         except (ValueError, TypeError) as e:
-            print(f"⚠️ Erreur de normalisation pour '{value}' ({field_type}): {str(e)}")
+            print(f"Erreur de normalisation pour '{value}' ({field_type}): {str(e)}")
             if field_type == 'price':
                 return Decimal('0.00')
             elif field_type == 'integer':
@@ -218,15 +217,15 @@ class GoogleSheetsService:
             if not image_url or not image_url.startswith(('http://', 'https://')):
                 # Si ce n'est pas une URL, considérer que c'est déjà un chemin local
                 return image_url if image_url else None
-            
+
             # Créer le dossier de destination s'il n'existe pas
             upload_dir = Path("static/uploads/products")
             upload_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Télécharger l'image
             response = requests.get(image_url, timeout=10, stream=True)
             response.raise_for_status()
-            
+
             # Déterminer l'extension du fichier
             content_type = response.headers.get('content-type', '')
             extension = '.jpg'  # Par défaut
@@ -238,31 +237,31 @@ class GoogleSheetsService:
                 extension = '.webp'
             elif 'gif' in content_type:
                 extension = '.gif'
-            
+
             # Générer un nom de fichier unique basé sur le nom du produit et un hash
             safe_name = "".join(c for c in product_name if c.isalnum() or c in (' ', '-', '_')).strip()
             safe_name = safe_name.replace(' ', '_')[:50]  # Limiter la longueur
             timestamp = int(datetime.now().timestamp())
             url_hash = hashlib.md5(image_url.encode()).hexdigest()[:8]
             filename = f"{safe_name}_{timestamp}_{url_hash}{extension}"
-            
+
             # Chemin complet du fichier
             file_path = upload_dir / filename
-            
+
             # Sauvegarder l'image
             with open(file_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
-            
+
             # Retourner le chemin relatif pour la base de données
             return f"static/uploads/products/{filename}"
-            
+
         except requests.exceptions.RequestException as e:
-            print(f"❌ Erreur lors du téléchargement de l'image {image_url}: {e}")
+            print(f"Erreur lors du telechargement de l'image {image_url}: {e}")
             return None
         except Exception as e:
-            print(f"❌ Erreur lors de la sauvegarde de l'image: {e}")
+            print(f"Erreur lors de la sauvegarde de l'image: {e}")
             return None
 
     def map_sheet_row_to_product(self, row: Dict, imei_columns: Optional[List[str]] = None, custom_mapping: Optional[Dict[str, str]] = None) -> Dict:
@@ -359,7 +358,7 @@ class GoogleSheetsService:
             # Conserver la compatibilité: premier IMEI comme champ simple
             product_data['imei_serial'] = self._normalize_value(imei_values[0] if imei_values else None, 'text')
             product_data['imei_serials'] = imei_values
-        
+
         # Télécharger l'image maintenant qu'on a le nom du produit
         if image_url_to_download:
             product_name = product_data.get('name', 'product')
@@ -387,14 +386,13 @@ class GoogleSheetsService:
 
         return product_data
 
-    def sync_products(self, db: Session, spreadsheet_id: str, worksheet_name: str = 'Tableau1',
+    async def sync_products(self, spreadsheet_id: str, worksheet_name: str = 'Tableau1',
                      update_existing: bool = False, imei_columns: Optional[List[str]] = None,
                      custom_mapping: Optional[Dict[str, str]] = None) -> Dict[str, int]:
         """
         Synchronise les produits depuis Google Sheets vers la base de données
 
         Args:
-            db: Session SQLAlchemy
             spreadsheet_id: ID du Google Spreadsheet
             worksheet_name: Nom de la feuille
             update_existing: Si True, met à jour les produits existants (par code-barres)
@@ -418,7 +416,8 @@ class GoogleSheetsService:
 
             # Précharger les catégories (name -> requires_variants)
             try:
-                categories = {c.name: c.requires_variants for c in db.query(Category).all()}
+                all_categories = await Category.find().to_list()
+                categories = {c.name: c.requires_variants for c in all_categories}
             except Exception:
                 categories = {}
 
@@ -429,7 +428,7 @@ class GoogleSheetsService:
 
                     # Ignore les lignes sans nom de produit
                     if not product_data.get('name'):
-                        print(f"⚠️ Ligne {idx}: Ignorée (pas de nom de produit)")
+                        print(f"Ligne {idx}: Ignoree (pas de nom de produit)")
                         stats['skipped'] += 1
                         continue
 
@@ -442,7 +441,7 @@ class GoogleSheetsService:
                     if (requires_variants or has_imei) and has_barcode and has_imei:
                         # Mode variantes par code-barres produit partagé
                         # 1) Trouver ou créer le produit parent via Product.barcode
-                        existing_product = db.query(Product).filter(Product.barcode == product_data['barcode']).first()
+                        existing_product = await Product.find_one(Product.barcode == product_data['barcode'])
                         if existing_product:
                             # Si on ne souhaite pas mettre à jour les produits existants,
                             # ignorer simplement cette ligne.
@@ -460,26 +459,29 @@ class GoogleSheetsService:
                             imeis: List[str] = product_data.get('imei_serials') or ([] if not product_data.get('imei_serial') else [product_data.get('imei_serial')])
                             added = 0
                             if imeis:
-                                from app.database import ProductVariant
                                 for imei in imeis:
                                     if not imei:
                                         continue
-                                    already = db.query(ProductVariant).filter(ProductVariant.imei_serial == imei).first()
+                                    already = await ProductVariant.find_one(ProductVariant.imei_serial == imei)
                                     if not already:
+                                        variant_id = await get_next_id("product_variants")
                                         v = ProductVariant(
+                                            variant_id=variant_id,
                                             product_id=existing_product.product_id,
                                             imei_serial=imei,
                                             barcode=None,
                                             condition=product_data.get('condition') or existing_product.condition
                                         )
-                                        db.add(v)
+                                        await v.insert()
                                         # Incrémente le stock du produit parent
                                         try:
                                             existing_product.quantity = (existing_product.quantity or 0) + 1
                                         except Exception:
                                             pass
                                         # Mouvement de stock IN unitaire
+                                        sm_id = await get_next_id("stock_movements")
                                         sm = StockMovement(
+                                            movement_id=sm_id,
                                             product_id=existing_product.product_id,
                                             quantity=1,
                                             movement_type='IN',
@@ -487,17 +489,18 @@ class GoogleSheetsService:
                                             notes=f"Import IMEI {imei} depuis Google Sheets",
                                             unit_price=existing_product.purchase_price or Decimal('0.00')
                                         )
-                                        db.add(sm)
+                                        await sm.insert()
                                         added += 1
-                            db.commit()
+                            await existing_product.save()
                             stats['updated'] += 1 if added > 0 or update_existing else 0
                             stats['skipped'] += 0 if added > 0 or update_existing else 1
                         else:
                             # Créer le produit parent avec le code-barres partagé
-                            from app.database import ProductVariant
                             imeis: List[str] = product_data.get('imei_serials') or ([] if not product_data.get('imei_serial') else [product_data.get('imei_serial')])
                             qty_init = max(1, len(imeis)) if imeis else 1
+                            product_id = await get_next_id("products")
                             parent = Product(
+                                product_id=product_id,
                                 name=product_data.get('name'),
                                 description=product_data.get('description'),
                                 quantity=qty_init,  # commence avec N variantes
@@ -514,23 +517,26 @@ class GoogleSheetsService:
                                 notes=product_data.get('notes'),
                                 image_path=product_data.get('image_path')
                             )
-                            db.add(parent)
-                            db.flush()
+                            await parent.insert()
                             # Créer les variantes pour chaque IMEI (ou une variante vide si pas d'IMEI)
                             created_any = False
                             if imeis:
                                 for imei in imeis:
                                     if not imei:
                                         continue
+                                    variant_id = await get_next_id("product_variants")
                                     var = ProductVariant(
+                                        variant_id=variant_id,
                                         product_id=parent.product_id,
                                         imei_serial=imei,
                                         barcode=None,
                                         condition=parent.condition
                                     )
-                                    db.add(var)
+                                    await var.insert()
                                     # Mouvement de stock IN unitaire
+                                    sm_id = await get_next_id("stock_movements")
                                     sm = StockMovement(
+                                        movement_id=sm_id,
                                         product_id=parent.product_id,
                                         quantity=1,
                                         movement_type='IN',
@@ -538,18 +544,22 @@ class GoogleSheetsService:
                                         notes=f'Import initial variante IMEI {imei} depuis Google Sheets',
                                         unit_price=parent.purchase_price or Decimal('0.00')
                                     )
-                                    db.add(sm)
+                                    await sm.insert()
                                     created_any = True
                             else:
                                 # Fallback: une variante sans IMEI
+                                variant_id = await get_next_id("product_variants")
                                 var = ProductVariant(
+                                    variant_id=variant_id,
                                     product_id=parent.product_id,
                                     imei_serial=product_data.get('imei_serial'),
                                     barcode=None,
                                     condition=parent.condition
                                 )
-                                db.add(var)
+                                await var.insert()
+                                sm_id = await get_next_id("stock_movements")
                                 sm = StockMovement(
+                                    movement_id=sm_id,
                                     product_id=parent.product_id,
                                     quantity=1,
                                     movement_type='IN',
@@ -557,16 +567,15 @@ class GoogleSheetsService:
                                     notes='Import initial variante depuis Google Sheets',
                                     unit_price=parent.purchase_price or Decimal('0.00')
                                 )
-                                db.add(sm)
-                            db.commit()
+                                await sm.insert()
                             stats['created'] += 1
                     else:
                         # Mode produit simple (pas de variante/IMEI)
                         existing_product = None
                         if product_data.get('barcode'):
-                            existing_product = db.query(Product).filter(
+                            existing_product = await Product.find_one(
                                 Product.barcode == product_data['barcode']
-                            ).first()
+                            )
 
                         if existing_product:
                             if update_existing:
@@ -574,20 +583,22 @@ class GoogleSheetsService:
                                 for key, value in product_data.items():
                                     if value is not None and key != 'barcode':
                                         setattr(existing_product, key, value)
-                                db.commit()
+                                await existing_product.save()
                                 stats['updated'] += 1
                             else:
                                 stats['skipped'] += 1
                         else:
                             # Crée un nouveau produit
-                            new_product = Product(**{k: v for k, v in product_data.items() if k != 'imei_serial'})
-                            db.add(new_product)
-                            db.commit()
-                            db.refresh(new_product)
+                            product_id = await get_next_id("products")
+                            clean_data = {k: v for k, v in product_data.items() if k not in ('imei_serial', 'imei_serials')}
+                            new_product = Product(product_id=product_id, **clean_data)
+                            await new_product.insert()
 
                             # Crée un mouvement de stock IN si quantité > 0
                             if new_product.quantity > 0:
+                                sm_id = await get_next_id("stock_movements")
                                 stock_movement = StockMovement(
+                                    movement_id=sm_id,
                                     product_id=new_product.product_id,
                                     quantity=new_product.quantity,
                                     movement_type='IN',
@@ -595,8 +606,7 @@ class GoogleSheetsService:
                                     notes=f'Import initial depuis Google Sheets',
                                     unit_price=new_product.purchase_price or Decimal('0.00')
                                 )
-                                db.add(stock_movement)
-                                db.commit()
+                                await stock_movement.insert()
 
                             stats['created'] += 1
 
@@ -605,7 +615,6 @@ class GoogleSheetsService:
                     error_msg = f"Ligne {idx}: {str(e)}"
                     stats['error_details'].append(error_msg)
                     print(error_msg)
-                    db.rollback()
                     continue
 
             return stats
@@ -666,7 +675,7 @@ class GoogleSheetsService:
         try:
             if not self.client:
                 if not self.authenticate():
-                    print("❌ Impossible de s'authentifier avec Google Sheets")
+                    print("Impossible de s'authentifier avec Google Sheets")
                     return False
 
             spreadsheet = self.client.open_by_key(spreadsheet_id)
@@ -676,7 +685,7 @@ class GoogleSheetsService:
             all_data = worksheet.get_all_values()
 
             if not all_data:
-                print("❌ Aucune donnée trouvée dans le Google Sheet")
+                print("Aucune donnee trouvee dans le Google Sheet")
                 return False
 
             # Trouve l'index des colonnes
@@ -692,7 +701,7 @@ class GoogleSheetsService:
                     quantity_col_idx = idx
 
             if barcode_col_idx is None or quantity_col_idx is None:
-                print(f"❌ Colonnes requises non trouvées (barcode:{barcode_col_idx}, qty:{quantity_col_idx})")
+                print(f"Colonnes requises non trouvees (barcode:{barcode_col_idx}, qty:{quantity_col_idx})")
                 return False
 
             # Chercher la ligne du produit
@@ -706,14 +715,14 @@ class GoogleSheetsService:
                         cell_address = f"{col_letter}{row_idx}"
 
                         worksheet.update(cell_address, [[new_quantity]])
-                        print(f"✅ Stock mis à jour dans Google Sheets: {product_barcode} → {new_quantity}")
+                        print(f"Stock mis a jour dans Google Sheets: {product_barcode} -> {new_quantity}")
                         return True
 
-            print(f"⚠️ Produit non trouvé dans Google Sheets: {product_barcode}")
+            print(f"Produit non trouve dans Google Sheets: {product_barcode}")
             return False
 
         except Exception as e:
-            print(f"❌ Erreur lors de la mise à jour du stock dans Google Sheets: {str(e)}")
+            print(f"Erreur lors de la mise a jour du stock dans Google Sheets: {str(e)}")
             return False
 
     def _column_index_to_letter(self, col_idx: int) -> str:
@@ -733,13 +742,12 @@ class GoogleSheetsService:
             col_idx //= 26
         return result
 
-    def sync_stock_to_sheets(self, db: Session, spreadsheet_id: str,
+    async def sync_stock_to_sheets(self, spreadsheet_id: str,
                             worksheet_name: str) -> Dict[str, int]:
         """
         Synchronise tous les stocks de la base de données vers Google Sheets
 
         Args:
-            db: Session SQLAlchemy
             spreadsheet_id: ID du Google Spreadsheet
             worksheet_name: Nom de la feuille
 
@@ -756,7 +764,9 @@ class GoogleSheetsService:
 
         try:
             # Récupère tous les produits avec un code-barres
-            products = db.query(Product).filter(Product.barcode.isnot(None)).all()
+            products = await Product.find(
+                Product.barcode != None
+            ).to_list()
             stats['total'] = len(products)
 
             for product in products:
@@ -777,7 +787,7 @@ class GoogleSheetsService:
                     stats['errors'] += 1
                     error_msg = f"Produit {product.name} ({product.barcode}): {str(e)}"
                     stats['error_details'].append(error_msg)
-                    print(f"❌ {error_msg}")
+                    print(f"{error_msg}")
                     continue
 
             return stats

@@ -1,10 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from datetime import date, datetime, timedelta
-from sqlalchemy import func
 
-from ..database import get_db, Invoice, Client, ClientDebt, AppCache
+from ..database import Invoice, Client, ClientDebt, AppCache
 from ..services.debt_notifier import debt_notifier
 from ..auth import get_current_user
 
@@ -12,12 +10,11 @@ router = APIRouter(prefix="/api/debug/debt-notifier", tags=["debug"])
 
 @router.get("/status")
 async def get_debt_notifier_status(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Affiche le statut du DebtNotifier et sa configuration"""
     import os
-    
+
     config = {
         "ENABLE_DEBT_REMINDERS": os.getenv("ENABLE_DEBT_REMINDERS"),
         "DEBT_REMINDER_CHANNEL": os.getenv("DEBT_REMINDER_CHANNEL"),
@@ -28,10 +25,10 @@ async def get_debt_notifier_status(
         "DEFAULT_COUNTRY_CODE": os.getenv("DEFAULT_COUNTRY_CODE"),
         "APP_NAME": os.getenv("APP_NAME"),
     }
-    
+
     # Vérifier si le thread du notifier tourne
     thread_status = "running" if debt_notifier._thread and debt_notifier._thread.is_alive() else "stopped"
-    
+
     return {
         "config": config,
         "thread_status": thread_status,
@@ -43,32 +40,28 @@ async def get_debt_notifier_status(
 
 @router.get("/overdue-clients")
 async def get_overdue_clients(
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Liste tous les clients avec des dettes en retard selon la logique du DebtNotifier"""
     today = date.today()
     client_overdue = {}
 
-    # Factures en retard (logique exacte du _tick())
-    inv_rows = (
-        db.query(Invoice, Client)
-        .join(Client, Client.client_id == Invoice.client_id, isouter=True)
-        .filter((func.coalesce(Invoice.remaining_amount, Invoice.total - func.coalesce(Invoice.paid_amount, 0)) > 0))
-        .filter(Invoice.due_date.isnot(None))
-        .all()
-    )
-    
-    for inv, cl in inv_rows:
-        dd = getattr(inv.due_date, 'date', lambda: inv.due_date)()
+    # Factures en retard
+    invoices = await Invoice.find({"due_date": {"$ne": None}}).to_list()
+    for inv in invoices:
+        dd = inv.due_date
+        if hasattr(dd, 'date'):
+            dd = dd.date()
         amount = float(inv.total or 0)
         paid = float(inv.paid_amount or 0)
         remaining = float(inv.remaining_amount if inv.remaining_amount is not None else max(0.0, amount - paid))
         if dd and remaining > 0 and dd < today:
-            cid = int(inv.client_id) if inv.client_id is not None else None
+            cid = inv.client_id
             if cid is None:
                 continue
-            client_overdue.setdefault(cid, {"client": cl, "invoices": [], "manual": []})
+            if cid not in client_overdue:
+                cl = await Client.find_one(Client.client_id == cid)
+                client_overdue[cid] = {"client": cl, "invoices": [], "manual": []}
             client_overdue[cid]["invoices"].append({
                 "invoice_number": inv.invoice_number,
                 "due_date": dd.isoformat(),
@@ -76,15 +69,19 @@ async def get_overdue_clients(
             })
 
     # Créances manuelles en retard
-    cd_rows = db.query(ClientDebt, Client).join(Client, Client.client_id == ClientDebt.client_id, isouter=True).all()
-    for d, cl in cd_rows:
-        dd = getattr(d.due_date, 'date', lambda: d.due_date)()
+    debts = await ClientDebt.find().to_list()
+    for d in debts:
+        dd = d.due_date
+        if hasattr(dd, 'date'):
+            dd = dd.date()
         amount = float(d.amount or 0)
         paid = float(d.paid_amount or 0)
         remaining = float(d.remaining_amount if d.remaining_amount is not None else amount - paid)
         if dd and remaining > 0 and dd < today and d.client_id is not None:
             cid = int(d.client_id)
-            client_overdue.setdefault(cid, {"client": cl, "invoices": [], "manual": []})
+            if cid not in client_overdue:
+                cl = await Client.find_one(Client.client_id == cid)
+                client_overdue[cid] = {"client": cl, "invoices": [], "manual": []}
             client_overdue[cid]["manual"].append({
                 "reference": d.reference,
                 "due_date": dd.isoformat(),
@@ -95,10 +92,10 @@ async def get_overdue_clients(
     result = []
     for cid, data in client_overdue.items():
         cl = data["client"]
-        
+
         # Vérifier si le client devrait être notifié (période de rappel)
-        should_notify = debt_notifier._should_notify(db, cid)
-        
+        should_notify = await debt_notifier._should_notify(cid)
+
         result.append({
             "client_id": cid,
             "client_name": cl.name if cl else "Unknown",
@@ -109,7 +106,7 @@ async def get_overdue_clients(
             "overdue_manual_debts": data["manual"],
             "total_overdue": sum(x["remaining"] for x in data["invoices"]) + sum(x["remaining"] for x in data["manual"])
         })
-    
+
     return {
         "today": today.isoformat(),
         "total_overdue_clients": len(result),
@@ -119,7 +116,6 @@ async def get_overdue_clients(
 @router.post("/send-notification/{client_id}")
 async def send_notification_to_client(
     client_id: int,
-    db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
     """Force l'envoi d'une notification pour un client spécifique"""
@@ -127,21 +123,18 @@ async def send_notification_to_client(
     client_overdue = {}
 
     # Récupérer les dettes en retard pour ce client spécifique
-    inv_rows = (
-        db.query(Invoice, Client)
-        .join(Client, Client.client_id == Invoice.client_id, isouter=True)
-        .filter(Invoice.client_id == client_id)
-        .filter((func.coalesce(Invoice.remaining_amount, Invoice.total - func.coalesce(Invoice.paid_amount, 0)) > 0))
-        .filter(Invoice.due_date.isnot(None))
-        .all()
-    )
-    
-    for inv, cl in inv_rows:
-        dd = getattr(inv.due_date, 'date', lambda: inv.due_date)()
+    invoices = await Invoice.find(
+        {"client_id": client_id, "due_date": {"$ne": None}}
+    ).to_list()
+    for inv in invoices:
+        dd = inv.due_date
+        if hasattr(dd, 'date'):
+            dd = dd.date()
         amount = float(inv.total or 0)
         paid = float(inv.paid_amount or 0)
         remaining = float(inv.remaining_amount if inv.remaining_amount is not None else max(0.0, amount - paid))
         if dd and remaining > 0 and dd < today:
+            cl = await Client.find_one(Client.client_id == client_id)
             client_overdue.setdefault(client_id, {"client": cl, "invoices": [], "manual": []})
             client_overdue[client_id]["invoices"].append({
                 "invoice_number": inv.invoice_number,
@@ -150,13 +143,16 @@ async def send_notification_to_client(
             })
 
     # Créances manuelles en retard pour ce client
-    cd_rows = db.query(ClientDebt, Client).join(Client, Client.client_id == ClientDebt.client_id, isouter=True).filter(ClientDebt.client_id == client_id).all()
-    for d, cl in cd_rows:
-        dd = getattr(d.due_date, 'date', lambda: d.due_date)()
+    debts = await ClientDebt.find(ClientDebt.client_id == client_id).to_list()
+    for d in debts:
+        dd = d.due_date
+        if hasattr(dd, 'date'):
+            dd = dd.date()
         amount = float(d.amount or 0)
         paid = float(d.paid_amount or 0)
         remaining = float(d.remaining_amount if d.remaining_amount is not None else amount - paid)
         if dd and remaining > 0 and dd < today:
+            cl = await Client.find_one(Client.client_id == client_id)
             client_overdue.setdefault(client_id, {"client": cl, "invoices": [], "manual": []})
             client_overdue[client_id]["manual"].append({
                 "reference": d.reference,
@@ -169,11 +165,11 @@ async def send_notification_to_client(
 
     data = client_overdue[client_id]
     cl = data["client"]
-    
+
     try:
-        # Appeler directement _send_notification
-        debt_notifier._send_notification(db, client_id, data)
-        
+        # Appeler directement _send_notification (now async)
+        await debt_notifier._send_notification(client_id, data)
+
         return {
             "success": True,
             "client_id": client_id,
@@ -194,14 +190,13 @@ async def test_webhook_direct(
 ):
     """Test direct du webhook n8n sans passer par le DebtNotifier"""
     try:
-        # Appeler directement _send_whatsapp_n8n
         success = debt_notifier._send_whatsapp_n8n(phone, message, client_id=999)
-        
+
         return {
             "success": success,
             "phone": phone,
             "message": message,
-            "webhook_url": debt_notifier._default_cc  # Juste pour info
+            "webhook_url": debt_notifier._default_cc
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Webhook test failed: {str(e)}")

@@ -8,9 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# OS deps (psycopg2, build tools, healthcheck curl)
+# OS deps (build tools, wkhtmltopdf, healthcheck curl)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential gcc libpq-dev curl \
+    apt-get install -y --no-install-recommends build-essential gcc curl \
     fontconfig libfreetype6 libjpeg62-turbo libpng16-16 libx11-6 libxcb1 libxext6 \
     libxrender1 xfonts-75dpi xfonts-base && \
     curl -L https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.bookworm_amd64.deb -o /tmp/wkhtmltox.deb && \

@@ -1,75 +1,50 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from typing import List, Optional
-from sqlalchemy import func
-from ..database import get_db, Client, Invoice, ClientDebt
+from ..database import Client, Invoice, ClientDebt, get_next_id
 from ..schemas import ClientCreate, ClientUpdate, ClientResponse
 from ..auth import get_current_user, require_any_role
 import logging
+import re
 
 router = APIRouter(prefix="/api/clients", tags=["clients"])
 
 @router.get("/", response_model=List[ClientResponse])
 async def list_clients(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = 0, limit: int = 100,
     search: Optional[str] = None,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Lister les clients avec recherche.
-    - Trie par défaut: plus récents d'abord (client_id DESC).
-    - Recherche sur name/email/phone (ilike).
-    """
-    query = db.query(Client)
-
+    query = {}
     if search:
-        like = f"%{search}%"
-        query = query.filter(
-            Client.name.ilike(like) |
-            Client.email.ilike(like) |
-            Client.phone.ilike(like) |
-            Client.contact.ilike(like)
-        )
-
-    query = query.order_by(Client.client_id.desc())
-
-    clients = query.offset(skip).limit(limit).all()
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+        query = {"$or": [
+            {"name": {"$regex": pattern}},
+            {"email": {"$regex": pattern}},
+            {"phone": {"$regex": pattern}},
+            {"contact": {"$regex": pattern}},
+        ]}
+    clients = (
+        await Client.find(query)
+        .sort(-Client.client_id)
+        .skip(skip).limit(limit)
+        .to_list()
+    )
     return clients
 
 @router.get("/{client_id}", response_model=ClientResponse)
-async def get_client(
-    client_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Obtenir un client par ID"""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
+async def get_client(client_id: int, current_user=Depends(get_current_user)):
+    client = await Client.find_one(Client.client_id == client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client non trouvé")
     return client
 
 @router.get("/{client_id}/details")
-async def get_client_details(
-    client_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Détails étendus d'un client: infos, factures, dettes et totaux."""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
+async def get_client_details(client_id: int, current_user=Depends(get_current_user)):
+    client = await Client.find_one(Client.client_id == client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client non trouvé")
-
-    # Factures du client
-    invoices = (
-        db.query(Invoice)
-        .filter(Invoice.client_id == client_id)
-        .order_by(Invoice.date.desc())
-        .all()
-    )
-
-    # Créances manuelles du client
-    client_debts = db.query(ClientDebt).filter(ClientDebt.client_id == client_id).order_by(ClientDebt.date.desc()).all()
+    invoices = await Invoice.find(Invoice.client_id == client_id).sort(-Invoice.date).to_list()
+    client_debts = await ClientDebt.find(ClientDebt.client_id == client_id).sort(-ClientDebt.date).to_list()
     debts = [
         {
             "debt_id": d.debt_id,
@@ -84,21 +59,17 @@ async def get_client_details(
         }
         for d in client_debts
     ]
-
-    # Agrégats
-    total_invoiced = float(sum([float(i.total or 0) for i in invoices]))
-    total_paid = float(sum([float(i.paid_amount or 0) for i in invoices]))
+    total_invoiced = float(sum(float(i.total or 0) for i in invoices))
+    total_paid = float(sum(float(i.paid_amount or 0) for i in invoices))
     total_due = total_invoiced - total_paid
-    # Total des créances manuelles (reste à payer)
-    total_debts = float(sum([float(getattr(d, 'remaining_amount', 0) or 0) for d in debts]))
-
+    total_debts = float(sum(float(d.get("remaining_amount", 0) or 0) for d in debts))
     return {
-        "client": ClientResponse.from_orm(client),
+        "client": ClientResponse(**client.dict()),
         "stats": {
             "total_invoiced": total_invoiced,
             "total_paid": total_paid,
             "total_due": total_due,
-            "total_debts": total_debts
+            "total_debts": total_debts,
         },
         "invoices": [
             {
@@ -108,38 +79,27 @@ async def get_client_details(
                 "status": inv.status,
                 "total": float(inv.total or 0),
                 "paid": float(inv.paid_amount or 0),
-                "remaining": float(inv.remaining_amount or 0)
+                "remaining": float(inv.remaining_amount or 0),
             }
             for inv in invoices
         ],
-        "debts": debts
+        "debts": debts,
     }
 
 @router.post("/", response_model=ClientResponse)
-async def create_client(
-    client_data: ClientCreate,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Créer un nouveau client"""
+async def create_client(client_data: ClientCreate, current_user=Depends(get_current_user)):
     try:
-        # Vérifier l'unicité du numéro de téléphone s'il est fourni
         if client_data.phone:
             incoming_phone = client_data.phone.strip()
             if incoming_phone:
-                existing = (
-                    db.query(Client)
-                    .filter(func.lower(Client.phone) == incoming_phone.lower())
-                    .first()
+                existing = await Client.find_one(
+                    {"phone": {"$regex": f"^{re.escape(incoming_phone)}$", "$options": "i"}}
                 )
                 if existing:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Un client avec ce numéro de téléphone existe déjà",
-                    )
-
-        # Créer le client en utilisant les champs explicitement
+                    raise HTTPException(status_code=400, detail="Un client avec ce numéro de téléphone existe déjà")
+        new_id = await get_next_id("clients")
         db_client = Client(
+            client_id=new_id,
             name=client_data.name,
             contact=client_data.contact,
             email=client_data.email,
@@ -149,88 +109,56 @@ async def create_client(
             postal_code=client_data.postal_code,
             country=client_data.country,
             tax_number=client_data.tax_number,
-            notes=client_data.notes
+            notes=client_data.notes,
         )
-        db.add(db_client)
-        db.commit()
-        db.refresh(db_client)
+        await db_client.insert()
         return db_client
     except HTTPException:
-        # Re-lever les HTTPException (comme les erreurs de validation) sans les transformer
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de la création du client: {e}")
-        logging.error(f"Données reçues: {client_data.dict()}")
-        import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
 
 @router.put("/{client_id}", response_model=ClientResponse)
 async def update_client(
-    client_id: int,
-    client_data: ClientUpdate,
-    db: Session = Depends(get_db),
-    current_user = Depends(require_any_role(["user", "manager"]))
+    client_id: int, client_data: ClientUpdate,
+    current_user=Depends(require_any_role(["user", "manager"])),
 ):
-    """Mettre à jour un client"""
     try:
-        client = db.query(Client).filter(Client.client_id == client_id).first()
+        client = await Client.find_one(Client.client_id == client_id)
         if not client:
             raise HTTPException(status_code=404, detail="Client non trouvé")
-        
         update_data = client_data.dict(exclude_unset=True)
-
-        # Vérifier l'unicité du numéro si modifié
         new_phone = update_data.get("phone")
         if new_phone is not None:
             new_phone_stripped = new_phone.strip()
             if new_phone_stripped:
-                conflict = (
-                    db.query(Client)
-                    .filter(
-                        func.lower(Client.phone) == new_phone_stripped.lower(),
-                        Client.client_id != client_id,
-                    )
-                    .first()
+                conflict = await Client.find_one(
+                    {"phone": {"$regex": f"^{re.escape(new_phone_stripped)}$", "$options": "i"},
+                     "client_id": {"$ne": client_id}}
                 )
                 if conflict:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Un autre client possède déjà ce numéro de téléphone",
-                    )
+                    raise HTTPException(status_code=400, detail="Un autre client possède déjà ce numéro de téléphone")
             else:
-                # Autoriser la mise à jour vers une valeur vide/null si souhaité
                 update_data["phone"] = None
         for field, value in update_data.items():
             setattr(client, field, value)
-        
-        db.commit()
-        db.refresh(client)
+        await client.save()
         return client
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de la mise à jour du client: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")
 
 @router.delete("/{client_id}")
-async def delete_client(
-    client_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
-):
-    """Supprimer un client"""
+async def delete_client(client_id: int, current_user=Depends(get_current_user)):
     try:
-        client = db.query(Client).filter(Client.client_id == client_id).first()
+        client = await Client.find_one(Client.client_id == client_id)
         if not client:
             raise HTTPException(status_code=404, detail="Client non trouvé")
-        
-        db.delete(client)
-        db.commit()
+        await client.delete()
         return {"message": "Client supprimé avec succès"}
     except Exception as e:
-        db.rollback()
         logging.error(f"Erreur lors de la suppression du client: {e}")
         raise HTTPException(status_code=500, detail="Erreur serveur")

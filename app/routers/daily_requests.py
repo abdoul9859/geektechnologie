@@ -1,20 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, desc
 from typing import List, Optional
 from datetime import date, datetime
-from decimal import Decimal
 
-from app.database import get_db, DailyClientRequest, Client
-from app.schemas import (
-    DailyClientRequestCreate, 
-    DailyClientRequestUpdate, 
+from ..database import DailyClientRequest, Client, get_next_id
+from ..schemas import (
+    DailyClientRequestCreate,
+    DailyClientRequestUpdate,
     DailyClientRequestResponse,
-    ClientCreate
 )
-from app.auth import get_current_user
+from ..auth import get_current_user
 
 router = APIRouter(prefix="/api/daily-requests", tags=["daily-requests"])
+
 
 @router.get("/", response_model=List[DailyClientRequestResponse])
 async def get_daily_requests(
@@ -24,189 +21,188 @@ async def get_daily_requests(
     status: Optional[str] = Query(None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Récupérer la liste des demandes quotidiennes des clients"""
-    query = db.query(DailyClientRequest)
-    
-    # Filtres
+    """Recuperer la liste des demandes quotidiennes des clients"""
+    filters: dict = {}
+
     if search:
-        query = query.filter(
-            or_(
-                DailyClientRequest.client_name.ilike(f"%{search}%"),
-                DailyClientRequest.product_description.ilike(f"%{search}%"),
-                DailyClientRequest.notes.ilike(f"%{search}%")
-            )
-        )
-    
+        pattern = {"$regex": search, "$options": "i"}
+        filters["$or"] = [
+            {"client_name": pattern},
+            {"product_description": pattern},
+            {"notes": pattern},
+        ]
+
     if status:
-        query = query.filter(DailyClientRequest.status == status)
-    
+        filters["status"] = status
+
     if start_date:
-        query = query.filter(DailyClientRequest.request_date >= start_date)
-    
+        filters.setdefault("request_date", {})["$gte"] = start_date
     if end_date:
-        query = query.filter(DailyClientRequest.request_date <= end_date)
-    
-    # Tri par date de demande décroissante
-    query = query.order_by(desc(DailyClientRequest.request_date), desc(DailyClientRequest.created_at))
-    
-    # Pagination
-    requests = query.offset(skip).limit(limit).all()
+        filters.setdefault("request_date", {})["$lte"] = end_date
+
+    requests = (
+        await DailyClientRequest.find(filters)
+        .sort([("request_date", -1), ("created_at", -1)])
+        .skip(skip)
+        .limit(limit)
+        .to_list()
+    )
     return requests
+
 
 @router.get("/{request_id}", response_model=DailyClientRequestResponse)
 async def get_daily_request(
     request_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Récupérer une demande spécifique"""
-    request = db.query(DailyClientRequest).filter(DailyClientRequest.request_id == request_id).first()
+    """Recuperer une demande specifique"""
+    request = await DailyClientRequest.find_one(DailyClientRequest.request_id == request_id)
     if not request:
-        raise HTTPException(status_code=404, detail="Demande non trouvée")
+        raise HTTPException(status_code=404, detail="Demande non trouvee")
     return request
+
 
 @router.post("/", response_model=DailyClientRequestResponse)
 async def create_daily_request(
     request_data: DailyClientRequestCreate,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Créer une nouvelle demande quotidienne"""
-    # Vérifier si le client existe si client_id est fourni
+    """Creer une nouvelle demande quotidienne"""
+    # Verifier si le client existe si client_id est fourni
     if request_data.client_id:
-        client = db.query(Client).filter(Client.client_id == request_data.client_id).first()
+        client = await Client.find_one(Client.client_id == request_data.client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client non trouvé")
-    
-    # Créer la demande
+            raise HTTPException(status_code=404, detail="Client non trouve")
+
+    new_id = await get_next_id("daily_client_requests")
     db_request = DailyClientRequest(
+        request_id=new_id,
         client_id=request_data.client_id,
         client_name=request_data.client_name,
         client_phone=request_data.client_phone,
         product_description=request_data.product_description,
         request_date=request_data.request_date,
         status=request_data.status,
-        notes=request_data.notes
+        notes=request_data.notes,
     )
-    
-    db.add(db_request)
-    db.commit()
-    db.refresh(db_request)
-    
+
+    await db_request.insert()
+
     return db_request
+
 
 @router.put("/{request_id}", response_model=DailyClientRequestResponse)
 async def update_daily_request(
     request_id: int,
     request_data: DailyClientRequestUpdate,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Mettre à jour une demande quotidienne"""
-    db_request = db.query(DailyClientRequest).filter(DailyClientRequest.request_id == request_id).first()
+    """Mettre a jour une demande quotidienne"""
+    db_request = await DailyClientRequest.find_one(DailyClientRequest.request_id == request_id)
     if not db_request:
-        raise HTTPException(status_code=404, detail="Demande non trouvée")
-    
-    # Vérifier si le client existe si client_id est fourni
+        raise HTTPException(status_code=404, detail="Demande non trouvee")
+
+    # Verifier si le client existe si client_id est fourni
     if request_data.client_id:
-        client = db.query(Client).filter(Client.client_id == request_data.client_id).first()
+        client = await Client.find_one(Client.client_id == request_data.client_id)
         if not client:
-            raise HTTPException(status_code=404, detail="Client non trouvé")
-    
-    # Mettre à jour les champs
+            raise HTTPException(status_code=404, detail="Client non trouve")
+
     update_data = request_data.dict(exclude_unset=True)
     for field, value in update_data.items():
         setattr(db_request, field, value)
-    
+
     db_request.updated_at = datetime.now()
-    
-    db.commit()
-    db.refresh(db_request)
-    
+
+    await db_request.save()
+
     return db_request
+
 
 @router.delete("/{request_id}")
 async def delete_daily_request(
     request_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     """Supprimer une demande quotidienne"""
-    db_request = db.query(DailyClientRequest).filter(DailyClientRequest.request_id == request_id).first()
+    db_request = await DailyClientRequest.find_one(DailyClientRequest.request_id == request_id)
     if not db_request:
-        raise HTTPException(status_code=404, detail="Demande non trouvée")
-    
-    db.delete(db_request)
-    db.commit()
-    
-    return {"message": "Demande supprimée avec succès"}
+        raise HTTPException(status_code=404, detail="Demande non trouvee")
+
+    await db_request.delete()
+
+    return {"message": "Demande supprimee avec succes"}
+
 
 @router.post("/{request_id}/fulfill")
 async def fulfill_request(
     request_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     """Marquer une demande comme satisfaite"""
-    db_request = db.query(DailyClientRequest).filter(DailyClientRequest.request_id == request_id).first()
+    db_request = await DailyClientRequest.find_one(DailyClientRequest.request_id == request_id)
     if not db_request:
-        raise HTTPException(status_code=404, detail="Demande non trouvée")
-    
+        raise HTTPException(status_code=404, detail="Demande non trouvee")
+
     db_request.status = "fulfilled"
     db_request.updated_at = datetime.now()
-    
-    db.commit()
-    db.refresh(db_request)
-    
-    return {"message": "Demande marquée comme satisfaite"}
+
+    await db_request.save()
+
+    return {"message": "Demande marquee comme satisfaite"}
+
 
 @router.post("/{request_id}/cancel")
 async def cancel_request(
     request_id: int,
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
     """Annuler une demande"""
-    db_request = db.query(DailyClientRequest).filter(DailyClientRequest.request_id == request_id).first()
+    db_request = await DailyClientRequest.find_one(DailyClientRequest.request_id == request_id)
     if not db_request:
-        raise HTTPException(status_code=404, detail="Demande non trouvée")
-    
+        raise HTTPException(status_code=404, detail="Demande non trouvee")
+
     db_request.status = "cancelled"
     db_request.updated_at = datetime.now()
-    
-    db.commit()
-    db.refresh(db_request)
-    
-    return {"message": "Demande annulée"}
+
+    await db_request.save()
+
+    return {"message": "Demande annulee"}
+
 
 @router.get("/stats/summary")
 async def get_requests_summary(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user),
 ):
-    """Obtenir un résumé des demandes"""
-    query = db.query(DailyClientRequest)
-    
+    """Obtenir un resume des demandes"""
+    filters: dict = {}
+
     if start_date:
-        query = query.filter(DailyClientRequest.request_date >= start_date)
-    
+        filters.setdefault("request_date", {})["$gte"] = start_date
     if end_date:
-        query = query.filter(DailyClientRequest.request_date <= end_date)
-    
-    total_requests = query.count()
-    pending_requests = query.filter(DailyClientRequest.status == "pending").count()
-    fulfilled_requests = query.filter(DailyClientRequest.status == "fulfilled").count()
-    cancelled_requests = query.filter(DailyClientRequest.status == "cancelled").count()
-    
+        filters.setdefault("request_date", {})["$lte"] = end_date
+
+    total_requests = await DailyClientRequest.find(filters).count()
+
+    pending_filters = {**filters, "status": "pending"}
+    pending_requests = await DailyClientRequest.find(pending_filters).count()
+
+    fulfilled_filters = {**filters, "status": "fulfilled"}
+    fulfilled_requests = await DailyClientRequest.find(fulfilled_filters).count()
+
+    cancelled_filters = {**filters, "status": "cancelled"}
+    cancelled_requests = await DailyClientRequest.find(cancelled_filters).count()
+
     return {
         "total_requests": total_requests,
         "pending_requests": pending_requests,
         "fulfilled_requests": fulfilled_requests,
         "cancelled_requests": cancelled_requests,
-        "fulfillment_rate": round((fulfilled_requests / total_requests * 100) if total_requests > 0 else 0, 2)
+        "fulfillment_rate": round(
+            (fulfilled_requests / total_requests * 100) if total_requests > 0 else 0, 2
+        ),
     }

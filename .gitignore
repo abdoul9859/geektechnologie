@@ -151,6 +151,12 @@ test_*.py
 # Application specific
 uploads/
 static/uploads/
+data/
+
+# WhatsApp session data (credentials, cache, etc.)
+whatsapp-baileys/auth_info/
+whatsapp-baileys/whatsapp-session/
+whatsapp-service/
 
 # Google Sheets Credentials (IMPORTANT: Never commit these!)
 credentials/

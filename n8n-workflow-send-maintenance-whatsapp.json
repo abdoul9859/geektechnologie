@@ -17,7 +17,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Extraire et formater les données du webhook\nconst data = $input.first().json.body || $input.first().json;\n\nconsole.log('Données maintenance WhatsApp reçues:', JSON.stringify(data));\n\nconst maintenanceNumber = data.maintenance_number || data.maintenanceNumber || 'N/A';\nconst clientName = data.client_name || data.clientName || 'Client';\nconst phone = data.phone || '';\nconst kind = data.kind || 'technician';\nconst device = data.device || '';\n\n// URL HTML du document (accessible via réseau Docker)\n// Aligné sur le pattern facture/devis: URL interne nitek_app\nconst htmlUrl = `http://nitek_app:8000/api/maintenances/${data.maintenance_id}/print?kind=${encodeURIComponent(kind)}`;\n\n// Construire le message caption\nconst caption = `Bonjour ${clientName || 'Client'},\n\n🛠️ *MAINTENANCE ${maintenanceNumber}*\n📄 Document: ${kind}\n${device ? `💻 Appareil: ${device}\\n` : ''}\n\nMerci pour votre confiance.\n\nCordialement,\nGeekTechnologie`;\n\nreturn [{\n  json: {\n    phone: phone,\n    htmlUrl: htmlUrl,\n    filename: `Maintenance-${maintenanceNumber}-${kind}.pdf`,\n    caption: caption\n  }\n}];"
+        "jsCode": "// Extraire et formater les données du webhook\nconst data = $input.first().json.body || $input.first().json;\n\nconsole.log('Données maintenance WhatsApp reçues:', JSON.stringify(data));\n\nconst maintenanceNumber = data.maintenance_number || data.maintenanceNumber || 'N/A';\nconst clientName = data.client_name || data.clientName || 'Client';\nconst phone = data.phone || '';\nconst kind = data.kind || 'technician';\nconst device = data.device || '';\n\n// URL HTML du document (accessible via réseau Docker)\nconst htmlUrl = `http://nitek_app:8000/api/maintenances/${data.maintenance_id}/print?kind=${encodeURIComponent(kind)}`;\n\n// Construire le message caption\nconst caption = `Bonjour ${clientName || 'Client'},\n\n🛠️ *MAINTENANCE ${maintenanceNumber}*\n📄 Document: ${kind}\n${device ? `💻 Appareil: ${device}\\n` : ''}\n\nMerci pour votre confiance.\n\nCordialement,\nGeekTechnologie`;\n\nreturn [{\n  json: {\n    phone: phone,\n    htmlUrl: htmlUrl,\n    filename: `Maintenance-${maintenanceNumber}-${kind}.pdf`,\n    caption: caption\n  }\n}];"
       },
       "id": "extract-data-node",
       "name": "Extract Data",
@@ -28,19 +28,93 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://72.62.22.52:3001/api/sendPdf",
+        "url": "http://gotenberg:3000/forms/chromium/convert/url",
         "authentication": "none",
         "sendBody": true,
-        "contentType": "json",
-        "specifyBody": "json",
-        "jsonBody": "={{ $json }}",
-        "options": {}
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formData",
+              "name": "url",
+              "value": "={{ $json.htmlUrl }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginTop",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginBottom",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginLeft",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "marginRight",
+              "value": "0"
+            },
+            {
+              "parameterType": "formData",
+              "name": "printBackground",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
       },
-      "id": "send-file-node",
-      "name": "Send File WhatsApp",
+      "id": "generate-pdf-node",
+      "name": "Generate PDF",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://whatsapp_baileys:3002/api/sendPdfFile",
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formData",
+              "name": "phone",
+              "value": "={{ $('Extract Data').first().json.phone }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "filename",
+              "value": "={{ $('Extract Data').first().json.filename }}"
+            },
+            {
+              "parameterType": "formData",
+              "name": "caption",
+              "value": "={{ $('Extract Data').first().json.caption }}"
+            }
+          ]
+        },
+        "sendBinaryData": true,
+        "binaryPropertyName": "data",
+        "options": {}
+      },
+      "id": "send-whatsapp-node",
+      "name": "Send WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 300]
     },
     {
       "parameters": {
@@ -51,7 +125,7 @@
       "name": "Respond Success",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [850, 300]
+      "position": [1050, 300]
     }
   ],
   "connections": {
@@ -70,14 +144,25 @@
       "main": [
         [
           {
-            "node": "Send File WhatsApp",
+            "node": "Generate PDF",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Send File WhatsApp": {
+    "Generate PDF": {
+      "main": [
+        [
+          {
+            "node": "Send WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp": {
       "main": [
         [
           {
@@ -93,7 +178,7 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "1",
+  "versionId": "3",
   "meta": {
     "instanceId": "geektechnologie"
   },

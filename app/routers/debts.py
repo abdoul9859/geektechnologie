@@ -1,14 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func
 from typing import Optional
 from datetime import datetime, date
 
 from ..database import (
-    get_db, User, Invoice, Client, InvoicePayment,
+    User, Invoice, Client, InvoicePayment,
     Supplier, SupplierDebt, SupplierDebtPayment,
     SupplierInvoice, SupplierInvoicePayment,
-    ClientDebt, ClientDebtPayment
+    ClientDebt, ClientDebtPayment, BankTransaction,
+    get_next_id,
 )
 from ..auth import get_current_user
 
@@ -41,6 +40,16 @@ def _coerce_dt(v):
     except Exception:
         return None
 
+def _safe_date(v):
+    """Extract .date() from a datetime-like value, or return it as-is if already a date."""
+    if v is None:
+        return None
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    return v
+
 @router.get("/")
 async def get_debts(
     skip: int = 0,
@@ -49,36 +58,46 @@ async def get_debts(
     type: Optional[str] = None,
     status: Optional[str] = None,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
-    """Récupérer les dettes clients et fournisseurs."""
+    """Recuperer les dettes clients et fournisseurs."""
     try:
         debts_all = []
         today = date.today()
-        
-        # 1. Récupérer les créances clients (inclus: factures impayées + créances manuelles)
+
+        # 1. Recuperer les creances clients (inclus: factures impayees + creances manuelles)
         if type is None or type == "client":
-            # a) Factures client impayées (affichées pour visibilité globale)
-            remaining_sql = func.coalesce(Invoice.remaining_amount, Invoice.total - func.coalesce(Invoice.paid_amount, 0))
-            q = (
-                db.query(Invoice, Client)
-                .join(Client, Client.client_id == Invoice.client_id, isouter=True)
-                .filter(remaining_sql > 0)
-            )
-
-            if search:
-                s = f"%{(search or '').lower()}%"
-                q = q.filter(
-                    func.lower(Invoice.invoice_number).like(s) | func.lower(Client.name).like(s)
-                )
-
-            rows = q.all()
-
-            for inv, cl in rows:
+            # a) Factures client impayees
+            # Build a filter for invoices with remaining amount > 0
+            all_invoices = await Invoice.find().to_list()
+            # Filter in Python: remaining > 0
+            open_invoices = []
+            for inv in all_invoices:
                 amount = float(inv.total or 0)
                 paid = float(inv.paid_amount or 0)
-                remaining = float(inv.remaining_amount or (amount - paid))
-                overdue = bool(inv.due_date and getattr(inv.due_date, 'date', lambda: inv.due_date)() < today and remaining > 0)
+                remaining = float(inv.remaining_amount if inv.remaining_amount is not None else (amount - paid))
+                if remaining > 0:
+                    open_invoices.append((inv, remaining))
+
+            # Pre-fetch clients for these invoices
+            client_ids = list(set(inv.client_id for inv, _ in open_invoices if inv.client_id is not None))
+            clients_list = await Client.find({"client_id": {"$in": client_ids}}).to_list() if client_ids else []
+            clients_map = {c.client_id: c for c in clients_list}
+
+            for inv, remaining in open_invoices:
+                # Search filter
+                if search:
+                    s = search.lower()
+                    inv_num = (inv.invoice_number or "").lower()
+                    cl = clients_map.get(inv.client_id)
+                    cl_name = (cl.name if cl else "").lower()
+                    if s not in inv_num and s not in cl_name:
+                        continue
+
+                cl = clients_map.get(inv.client_id)
+                amount = float(inv.total or 0)
+                paid = float(inv.paid_amount or 0)
+                inv_date = _safe_date(inv.due_date)
+                overdue = bool(inv_date and inv_date < today and remaining > 0)
                 st = "paid" if remaining <= 0 else ("overdue" if overdue else ("partial" if paid > 0 else "pending"))
                 if status and st != status:
                     continue
@@ -96,22 +115,32 @@ async def get_debts(
                     "due_date": inv.due_date,
                     "created_at": inv.created_at,
                     "status": st,
-                    "days_overdue": ( (today - inv.due_date.date()).days if (inv.due_date and remaining > 0 and hasattr(inv.due_date, 'date')) else 0 ),
+                    "days_overdue": ((today - inv_date).days if (inv_date and remaining > 0) else 0),
                     "description": None,
                     "has_invoice": True,
                 })
 
-            # b) Créances clients manuelles
-            cd_q = db.query(ClientDebt, Client).join(Client, Client.client_id == ClientDebt.client_id, isouter=True)
-            if search:
-                s2 = f"%{(search or '').lower()}%"
-                cd_q = cd_q.filter(func.lower(ClientDebt.reference).like(s2) | func.lower(Client.name).like(s2))
-            client_debts = cd_q.all()
-            for d, cl in client_debts:
+            # b) Creances clients manuelles
+            client_debts_all = await ClientDebt.find().to_list()
+            # Pre-fetch clients for debts
+            cd_client_ids = list(set(d.client_id for d in client_debts_all if d.client_id is not None))
+            cd_clients_list = await Client.find({"client_id": {"$in": cd_client_ids}}).to_list() if cd_client_ids else []
+            cd_clients_map = {c.client_id: c for c in cd_clients_list}
+
+            for d in client_debts_all:
+                cl = cd_clients_map.get(d.client_id)
+                if search:
+                    s = search.lower()
+                    ref = (d.reference or "").lower()
+                    cl_name = (cl.name if cl else "").lower()
+                    if s not in ref and s not in cl_name:
+                        continue
+
                 amount = float(d.amount or 0)
                 paid = float(d.paid_amount or 0)
                 remaining = float(d.remaining_amount if d.remaining_amount is not None else amount - paid)
-                overdue = bool(d.due_date and getattr(d.due_date, 'date', lambda: d.due_date)() < today and remaining > 0)
+                d_date = _safe_date(d.due_date)
+                overdue = bool(d_date and d_date < today and remaining > 0)
                 st = d.status or ("paid" if remaining <= 0 else ("overdue" if overdue else ("partial" if paid > 0 else "pending")))
                 if status and st != status:
                     continue
@@ -128,33 +157,36 @@ async def get_debts(
                     "due_date": d.due_date,
                     "created_at": d.created_at,
                     "status": st,
-                    "days_overdue": ( (today - d.due_date.date()).days if (d.due_date and remaining > 0 and hasattr(d.due_date, 'date')) else 0 ),
+                    "days_overdue": ((today - d_date).days if (d_date and remaining > 0) else 0),
                     "description": d.description,
                     "has_invoice": False,
                 })
-        
-        # 2. Récupérer les dettes fournisseurs (factures fournisseur non payées)
+
+        # 2. Recuperer les dettes fournisseurs (factures fournisseur non payees)
         if type is None or type == "supplier":
-            q_supplier = (
-                db.query(SupplierInvoice, Supplier)
-                .join(Supplier, Supplier.supplier_id == SupplierInvoice.supplier_id, isouter=True)
-                .filter(SupplierInvoice.remaining_amount > 0)
-            )
-            
-            if search:
-                s = f"%{search.lower()}%"
-                q_supplier = q_supplier.filter(
-                    func.lower(SupplierInvoice.invoice_number).like(s) | func.lower(Supplier.name).like(s)
-                )
-            
-            supplier_rows = q_supplier.all()
-            
-            for sup_inv, sup in supplier_rows:
+            supplier_invs = await SupplierInvoice.find(
+                {"remaining_amount": {"$gt": 0}}
+            ).to_list()
+
+            # Pre-fetch suppliers
+            sup_ids = list(set(si.supplier_id for si in supplier_invs if si.supplier_id is not None))
+            suppliers_list = await Supplier.find({"supplier_id": {"$in": sup_ids}}).to_list() if sup_ids else []
+            suppliers_map = {s.supplier_id: s for s in suppliers_list}
+
+            for sup_inv in supplier_invs:
+                sup = suppliers_map.get(sup_inv.supplier_id)
+                if search:
+                    s = search.lower()
+                    inv_num = (sup_inv.invoice_number or "").lower()
+                    sup_name = (sup.name if sup else "").lower()
+                    if s not in inv_num and s not in sup_name:
+                        continue
+
                 amount = float(sup_inv.amount or 0)
                 paid = float(sup_inv.paid_amount or 0)
                 remaining = float(sup_inv.remaining_amount or 0)
-                # Statut
-                overdue = bool(sup_inv.due_date and sup_inv.due_date.date() < today and remaining > 0)
+                si_date = _safe_date(sup_inv.due_date)
+                overdue = bool(si_date and si_date < today and remaining > 0)
                 if remaining <= 0:
                     st = "paid"
                 elif overdue:
@@ -163,7 +195,6 @@ async def get_debts(
                     st = sup_inv.status
                 else:
                     st = ("partial" if paid > 0 else "pending")
-                # Filtre statut si demandé
                 if status and st != status:
                     continue
                 debts_all.append({
@@ -180,17 +211,17 @@ async def get_debts(
                     "due_date": sup_inv.due_date,
                     "created_at": sup_inv.created_at,
                     "status": st,
-                    "days_overdue": ( (today - sup_inv.due_date.date()).days if (sup_inv.due_date and remaining > 0) else 0 ),
+                    "days_overdue": ((today - si_date).days if (si_date and remaining > 0) else 0),
                     "description": sup_inv.description,
                 })
 
-        # Trier par date décroissante
+        # Trier par date decroissante
         debts_all.sort(key=lambda x: x.get('date') or datetime.min, reverse=True)
-        
-        # Pagination côté Python sur la liste filtrée
+
+        # Pagination cote Python sur la liste filtree
         total = len(debts_all)
         debts = debts_all[skip: skip + limit]
-        
+
         return {
             "debts": debts,
             "total": total,
@@ -200,22 +231,81 @@ async def get_debts(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/stats/summary")
+async def get_debts_stats(
+    current_user: User = Depends(get_current_user),
+):
+    """Recuperer les statistiques des dettes"""
+    try:
+        today = date.today()
+
+        # 1. Statistiques des creances clients
+        invs = await Invoice.find().to_list()
+        def remaining_of(i):
+            return float(i.remaining_amount if i.remaining_amount is not None else max(0.0, float(i.total or 0) - float(i.paid_amount or 0)))
+        open_invoices = [i for i in invs if remaining_of(i) > 0]
+        client_total_amount = sum(float(i.total or 0) for i in open_invoices)
+        client_total_paid = sum(float(i.paid_amount or 0) for i in open_invoices)
+        client_total_remaining = sum(remaining_of(i) for i in open_invoices)
+
+        # 2. Statistiques des dettes fournisseurs
+        supplier_invs = await SupplierInvoice.find({"remaining_amount": {"$gt": 0}}).to_list()
+        supplier_total_amount = sum(float(i.amount or 0) for i in supplier_invs)
+        supplier_total_paid = sum(float(i.paid_amount or 0) for i in supplier_invs)
+        supplier_total_remaining = sum(float(i.remaining_amount or 0) for i in supplier_invs)
+
+        # 3. Calcul des totaux combines
+        total_client_debts = len(open_invoices)
+        total_supplier_debts = len(supplier_invs)
+
+        # Overdue clients
+        client_overdue = [i for i in open_invoices if (_safe_date(i.due_date) and _safe_date(i.due_date) < today and remaining_of(i) > 0)]
+        # Overdue fournisseurs
+        supplier_overdue = [i for i in supplier_invs if (_safe_date(i.due_date) and _safe_date(i.due_date) < today)]
+
+        # Pending (non paye du tout)
+        client_overdue_set = set(id(i) for i in client_overdue)
+        supplier_overdue_set = set(id(i) for i in supplier_overdue)
+        client_pending = [i for i in open_invoices if float(i.paid_amount or 0) == 0 and id(i) not in client_overdue_set]
+        supplier_pending = [i for i in supplier_invs if float(i.paid_amount or 0) == 0 and id(i) not in supplier_overdue_set]
+
+        return {
+            "total_debts": total_client_debts + total_supplier_debts,
+            "client_debts_count": total_client_debts,
+            "supplier_debts_count": total_supplier_debts,
+            "client_total_amount": client_total_amount,
+            "client_total_paid": client_total_paid,
+            "client_total_remaining": client_total_remaining,
+            "supplier_total_amount": supplier_total_amount,
+            "supplier_total_paid": supplier_total_paid,
+            "supplier_total_remaining": supplier_total_remaining,
+            "total_amount": client_total_amount + supplier_total_amount,
+            "total_paid": client_total_paid + supplier_total_paid,
+            "total_remaining": client_total_remaining + supplier_total_remaining,
+            "overdue_count": len(client_overdue) + len(supplier_overdue),
+            "overdue_amount": sum(remaining_of(i) for i in client_overdue) + sum(float(i.remaining_amount or 0) for i in supplier_overdue),
+            "pending_count": len(client_pending) + len(supplier_pending),
+            "pending_amount": sum(remaining_of(i) for i in client_pending) + sum(float(i.remaining_amount or 0) for i in supplier_pending)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/{debt_id}")
 async def get_debt(
     debt_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
-    """Récupérer une dette par ID"""
+    """Recuperer une dette par ID"""
     # D'abord, chercher une facture client
-    inv = db.query(Invoice).filter(Invoice.invoice_id == debt_id).first()
+    inv = await Invoice.find_one({"invoice_id": debt_id})
     if inv:
-        cl = db.query(Client).filter(Client.client_id == inv.client_id).first() if inv.client_id else None
+        cl = await Client.find_one({"client_id": inv.client_id}) if inv.client_id else None
         amount = float(inv.total or 0)
         paid = float(inv.paid_amount or 0)
         remaining = float(inv.remaining_amount or (amount - paid))
         today = date.today()
-        overdue = bool(inv.due_date and getattr(inv.due_date, 'date', lambda: inv.due_date)() < today and remaining > 0)
+        inv_date = _safe_date(inv.due_date)
+        overdue = bool(inv_date and inv_date < today and remaining > 0)
         st = "paid" if remaining <= 0 else ("overdue" if overdue else ("partial" if paid > 0 else "pending"))
         return {
             "id": int(inv.invoice_id),
@@ -231,20 +321,21 @@ async def get_debt(
             "due_date": inv.due_date,
             "created_at": inv.created_at,
             "status": st,
-            "days_overdue": ( (today - inv.due_date.date()).days if (inv.due_date and remaining > 0 and hasattr(inv.due_date, 'date')) else 0 ),
+            "days_overdue": ((today - inv_date).days if (inv_date and remaining > 0) else 0),
             "description": None,
             "has_invoice": True,
         }
 
-    # Sinon, chercher une créance client manuelle
-    d = db.query(ClientDebt).filter(ClientDebt.debt_id == debt_id).first()
+    # Sinon, chercher une creance client manuelle
+    d = await ClientDebt.find_one({"debt_id": debt_id})
     if d:
-        cl = db.query(Client).filter(Client.client_id == d.client_id).first() if d.client_id else None
+        cl = await Client.find_one({"client_id": d.client_id}) if d.client_id else None
         amount = float(d.amount or 0)
         paid = float(d.paid_amount or 0)
         remaining = float(d.remaining_amount if d.remaining_amount is not None else amount - paid)
         today = date.today()
-        overdue = bool(d.due_date and getattr(d.due_date, 'date', lambda: d.due_date)() < today and remaining > 0)
+        d_date = _safe_date(d.due_date)
+        overdue = bool(d_date and d_date < today and remaining > 0)
         st = d.status or ("paid" if remaining <= 0 else ("overdue" if overdue else ("partial" if paid > 0 else "pending")))
         return {
             "id": int(d.debt_id),
@@ -259,52 +350,27 @@ async def get_debt(
             "due_date": d.due_date,
             "created_at": d.created_at,
             "status": st,
-            "days_overdue": ( (today - d.due_date.date()).days if (d.due_date and remaining > 0 and hasattr(d.due_date, 'date')) else 0 ),
+            "days_overdue": ((today - d_date).days if (d_date and remaining > 0) else 0),
             "description": d.description,
             "has_invoice": False,
         }
 
-    raise HTTPException(status_code=404, detail="Dette non trouvée")
-    cl = db.query(Client).filter(Client.client_id == inv.client_id).first() if inv.client_id else None
-    amount = float(inv.total or 0)
-    paid = float(inv.paid_amount or 0)
-    remaining = float(inv.remaining_amount or (amount - paid))
-    today = date.today()
-    overdue = bool(inv.due_date and getattr(inv.due_date, 'date', lambda: inv.due_date)() < today and remaining > 0)
-    st = "paid" if remaining <= 0 else ("overdue" if overdue else ("partial" if paid > 0 else "pending"))
-    return {
-        "id": int(inv.invoice_id),
-        "type": "client",
-        "entity_id": int(inv.client_id) if inv.client_id is not None else None,
-        "entity_name": getattr(cl, 'name', None),
-        "reference": inv.invoice_number,
-        "invoice_number": inv.invoice_number,
-        "amount": amount,
-        "paid_amount": paid,
-        "remaining_amount": remaining,
-        "date": inv.date,
-        "due_date": inv.due_date,
-        "created_at": inv.created_at,
-        "status": st,
-        "days_overdue": ( (today - inv.due_date.date()).days if (inv.due_date and remaining > 0 and hasattr(inv.due_date, 'date')) else 0 ),
-        "description": None,
-    }
+    raise HTTPException(status_code=404, detail="Dette non trouvee")
 
 @router.post("/")
 async def create_debt(
     debt_data: dict,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
-    """Créer une dette (client manuelle ou fournisseur)."""
+    """Creer une dette (client manuelle ou fournisseur)."""
     try:
         if debt_data.get("type") == "client":
             client_id = debt_data.get("entity_id") or debt_data.get("client_id")
             if not client_id:
                 raise HTTPException(status_code=400, detail="Client requis")
-            cl = db.query(Client).filter(Client.client_id == client_id).first()
+            cl = await Client.find_one({"client_id": client_id})
             if not cl:
-                raise HTTPException(status_code=404, detail="Client non trouvé")
+                raise HTTPException(status_code=404, detail="Client non trouve")
 
             amount = float(debt_data.get("amount") or 0)
             if amount <= 0:
@@ -313,7 +379,9 @@ async def create_debt(
             if paid < 0 or paid > amount:
                 raise HTTPException(status_code=400, detail="Montants invalides")
 
+            next_id = await get_next_id("client_debts")
             d = ClientDebt(
+                debt_id=next_id,
                 client_id=client_id,
                 reference=str(debt_data.get("reference") or "CRE-" + datetime.now().strftime("%Y%m%d%H%M%S")),
                 date=_coerce_dt(debt_data.get("date")),
@@ -325,9 +393,7 @@ async def create_debt(
                 description=debt_data.get("description"),
                 notes=debt_data.get("notes"),
             )
-            db.add(d)
-            db.commit()
-            db.refresh(d)
+            await d.insert()
             return {
                 "id": d.debt_id,
                 "type": "client",
@@ -344,21 +410,23 @@ async def create_debt(
                 "notes": d.notes,
             }
         if debt_data.get("type") != "supplier":
-            raise HTTPException(status_code=405, detail="Type de dette non supporté")
+            raise HTTPException(status_code=405, detail="Type de dette non supporte")
 
         supplier_id = debt_data.get("entity_id") or debt_data.get("supplier_id")
         if not supplier_id:
             raise HTTPException(status_code=400, detail="Fournisseur requis")
-        sup = db.query(Supplier).filter(Supplier.supplier_id == supplier_id).first()
+        sup = await Supplier.find_one({"supplier_id": supplier_id})
         if not sup:
-            raise HTTPException(status_code=404, detail="Fournisseur non trouvé")
+            raise HTTPException(status_code=404, detail="Fournisseur non trouve")
 
         amount = float(debt_data.get("amount") or 0)
-        paid = 0.0  # création simplifiée: non payé au départ
+        paid = 0.0  # creation simplifiee: non paye au depart
         if amount <= 0:
             raise HTTPException(status_code=400, detail="Montant invalide")
 
+        next_id = await get_next_id("supplier_debts")
         debt = SupplierDebt(
+            debt_id=next_id,
             supplier_id=supplier_id,
             reference=str(debt_data.get("reference") or "DEBT-" + datetime.now().strftime("%Y%m%d%H%M%S")),
             date=debt_data.get("date"),
@@ -370,9 +438,7 @@ async def create_debt(
             description=debt_data.get("description"),
             notes=debt_data.get("notes"),
         )
-        db.add(debt)
-        db.commit()
-        db.refresh(debt)
+        await debt.insert()
         return {
             "id": debt.debt_id,
             "type": "supplier",
@@ -391,7 +457,6 @@ async def create_debt(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/{debt_id}")
@@ -399,21 +464,19 @@ async def update_debt(
     debt_id: int,
     debt_data: dict,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
-    """Mettre à jour une dette (client manuelle ou fournisseur)"""
+    """Mettre a jour une dette (client manuelle ou fournisseur)"""
     try:
-        # Tenter d'abord côté dettes fournisseurs
-        d = db.query(SupplierDebt).filter(SupplierDebt.debt_id == debt_id).first()
-        is_supplier = bool(d)
+        # Tenter d'abord cote dettes fournisseurs
+        d = await SupplierDebt.find_one({"debt_id": debt_id})
         if not d:
-            # Sinon côté créances client
-            cd = db.query(ClientDebt).filter(ClientDebt.debt_id == debt_id).first()
+            # Sinon cote creances client
+            cd = await ClientDebt.find_one({"debt_id": debt_id})
             if not cd:
-                raise HTTPException(status_code=404, detail="Dette non trouvée")
+                raise HTTPException(status_code=404, detail="Dette non trouvee")
             if debt_data.get("type") and debt_data.get("type") != "client":
                 raise HTTPException(status_code=400, detail="Type invalide")
-            # Mise à jour champs
+            # Mise a jour champs
             for field in ["reference", "date", "due_date", "description", "notes"]:
                 if field in debt_data:
                     if field in ("date", "due_date"):
@@ -429,9 +492,8 @@ async def update_debt(
                 cd.paid_amount = paid
                 cd.remaining_amount = amount - paid
                 cd.status = "paid" if cd.remaining_amount == 0 else ("partial" if cd.paid_amount > 0 else "pending")
-            db.commit()
-            db.refresh(cd)
-            cl = db.query(Client).filter(Client.client_id == cd.client_id).first()
+            await cd.save()
+            cl = await Client.find_one({"client_id": cd.client_id})
             return {
                 "id": cd.debt_id,
                 "type": "client",
@@ -463,9 +525,8 @@ async def update_debt(
             d.paid_amount = paid
             d.remaining_amount = amount - paid
             d.status = "paid" if d.remaining_amount == 0 else ("partial" if d.paid_amount > 0 else "pending")
-        db.commit()
-        db.refresh(d)
-        sup = db.query(Supplier).filter(Supplier.supplier_id == d.supplier_id).first()
+        await d.save()
+        sup = await Supplier.find_one({"supplier_id": d.supplier_id})
         return {
             "id": d.debt_id,
             "type": "supplier",
@@ -484,32 +545,27 @@ async def update_debt(
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/{debt_id}")
 async def delete_debt(
     debt_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
     """Supprimer une dette (client manuelle ou fournisseur)"""
     try:
-        d = db.query(SupplierDebt).filter(SupplierDebt.debt_id == debt_id).first()
+        d = await SupplierDebt.find_one({"debt_id": debt_id})
         if d:
-            db.delete(d)
-            db.commit()
-            return {"message": "Dette fournisseur supprimée"}
-        cd = db.query(ClientDebt).filter(ClientDebt.debt_id == debt_id).first()
+            await d.delete()
+            return {"message": "Dette fournisseur supprimee"}
+        cd = await ClientDebt.find_one({"debt_id": debt_id})
         if cd:
-            db.delete(cd)
-            db.commit()
-            return {"message": "Créance client supprimée"}
-        raise HTTPException(status_code=404, detail="Dette non trouvée")
+            await cd.delete()
+            return {"message": "Creance client supprimee"}
+        raise HTTPException(status_code=404, detail="Dette non trouvee")
     except HTTPException:
         raise
     except Exception as e:
-        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/{debt_id}/payments")
@@ -517,21 +573,22 @@ async def record_payment(
     debt_id: int,
     payment_data: dict,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
 ):
     """Enregistrer un paiement pour une dette"""
     try:
-        # Vérifier d'abord si c'est une facture fournisseur
-        sup_inv = db.query(SupplierInvoice).filter(SupplierInvoice.invoice_id == debt_id).first()
+        # Verifier d'abord si c'est une facture fournisseur
+        sup_inv = await SupplierInvoice.find_one({"invoice_id": debt_id})
         if sup_inv:
             amount = round(float(payment_data.get("amount", 0)))
             if amount <= 0:
-                raise HTTPException(status_code=400, detail="Le montant du paiement doit être positif")
+                raise HTTPException(status_code=400, detail="Le montant du paiement doit etre positif")
             if amount > float(sup_inv.remaining_amount):
-                raise HTTPException(status_code=400, detail="Le montant dépasse le solde restant")
-            
-            # Créer le paiement
+                raise HTTPException(status_code=400, detail="Le montant depasse le solde restant")
+
+            # Creer le paiement
+            next_pay_id = await get_next_id("supplier_invoice_payments")
             pay = SupplierInvoicePayment(
+                payment_id=next_pay_id,
                 supplier_invoice_id=sup_inv.invoice_id,
                 amount=amount,
                 payment_date=payment_data.get("date") or datetime.now(),
@@ -539,9 +596,9 @@ async def record_payment(
                 reference=payment_data.get("reference"),
                 notes=payment_data.get("notes")
             )
-            db.add(pay)
-            
-            # Mettre à jour la facture
+            await pay.insert()
+
+            # Mettre a jour la facture
             sup_inv.paid_amount = (sup_inv.paid_amount or 0) + amount
             sup_inv.remaining_amount = (sup_inv.amount or 0) - (sup_inv.paid_amount or 0)
             if sup_inv.remaining_amount <= 0:
@@ -549,39 +606,49 @@ async def record_payment(
                 sup_inv.status = "paid"
             elif sup_inv.paid_amount > 0:
                 sup_inv.status = "partial"
-            
-            # Créer une transaction bancaire de sortie
-            from ..database import BankTransaction
+            await sup_inv.save()
+
+            # Creer une transaction bancaire de sortie
+            next_bt_id = await get_next_id("bank_transactions")
+            pay_date = payment_data.get("date")
+            if isinstance(pay_date, datetime):
+                bt_date = pay_date.date()
+            elif isinstance(pay_date, date):
+                bt_date = pay_date
+            else:
+                bt_date = date.today()
             bank_transaction = BankTransaction(
+                transaction_id=next_bt_id,
                 type="exit",
                 motif="Paiement fournisseur",
                 description=f"Paiement facture {sup_inv.invoice_number}",
                 amount=amount,
-                date=payment_data.get("date", datetime.now()).date() if isinstance(payment_data.get("date"), datetime) else date.today(),
+                date=bt_date,
                 method="virement" if payment_data.get("method") in ["virement", "virement bancaire"] else "cheque",
                 reference=payment_data.get("reference") or f"PAY-{sup_inv.invoice_number}"
             )
-            db.add(bank_transaction)
-            
-            db.commit()
-            return {"message": "Paiement enregistré", "remaining": float(sup_inv.remaining_amount or 0)}
-        
-        # Sinon vérifier si c'est une dette fournisseur manuelle
-        d = db.query(SupplierDebt).filter(SupplierDebt.debt_id == debt_id).first()
+            await bank_transaction.insert()
+
+            return {"message": "Paiement enregistre", "remaining": float(sup_inv.remaining_amount or 0)}
+
+        # Sinon verifier si c'est une dette fournisseur manuelle
+        d = await SupplierDebt.find_one({"debt_id": debt_id})
         if d:
             amount = round(float(payment_data.get("amount", 0)))
             if amount <= 0:
-                raise HTTPException(status_code=400, detail="Le montant du paiement doit être positif")
+                raise HTTPException(status_code=400, detail="Le montant du paiement doit etre positif")
             if amount > float(d.remaining_amount or (d.amount or 0) - (d.paid_amount or 0)):
-                raise HTTPException(status_code=400, detail="Le montant dépasse le solde restant")
+                raise HTTPException(status_code=400, detail="Le montant depasse le solde restant")
+            next_pay_id = await get_next_id("supplier_debt_payments")
             pay = SupplierDebtPayment(
+                payment_id=next_pay_id,
                 debt_id=d.debt_id,
                 amount=amount,
                 payment_method=payment_data.get("method"),
                 reference=payment_data.get("reference"),
                 notes=payment_data.get("notes")
             )
-            db.add(pay)
+            await pay.insert()
             d.paid_amount = (d.paid_amount or 0) + amount
             d.remaining_amount = (d.amount or 0) - (d.paid_amount or 0)
             if d.remaining_amount <= 0:
@@ -589,18 +656,20 @@ async def record_payment(
                 d.status = "paid"
             elif d.paid_amount > 0:
                 d.status = "partial"
-            db.commit()
-            return {"message": "Paiement enregistré", "remaining": float(d.remaining_amount or 0)}
+            await d.save()
+            return {"message": "Paiement enregistre", "remaining": float(d.remaining_amount or 0)}
 
-        # Sinon vérifier si c'est une créance client manuelle
-        cd = db.query(ClientDebt).filter(ClientDebt.debt_id == debt_id).first()
+        # Sinon verifier si c'est une creance client manuelle
+        cd = await ClientDebt.find_one({"debt_id": debt_id})
         if cd:
             amount = round(float(payment_data.get("amount", 0)))
             if amount <= 0:
-                raise HTTPException(status_code=400, detail="Le montant du paiement doit être positif")
+                raise HTTPException(status_code=400, detail="Le montant du paiement doit etre positif")
             if amount > float(cd.remaining_amount or (cd.amount or 0) - (cd.paid_amount or 0)):
-                raise HTTPException(status_code=400, detail="Le montant dépasse le solde restant")
+                raise HTTPException(status_code=400, detail="Le montant depasse le solde restant")
+            next_pay_id = await get_next_id("client_debt_payments")
             pay = ClientDebtPayment(
+                payment_id=next_pay_id,
                 debt_id=cd.debt_id,
                 amount=amount,
                 payment_date=_coerce_dt(payment_data.get("date")) or datetime.now(),
@@ -608,7 +677,7 @@ async def record_payment(
                 reference=payment_data.get("reference"),
                 notes=payment_data.get("notes")
             )
-            db.add(pay)
+            await pay.insert()
             cd.paid_amount = (cd.paid_amount or 0) + amount
             cd.remaining_amount = (cd.amount or 0) - (cd.paid_amount or 0)
             if cd.remaining_amount <= 0:
@@ -616,101 +685,44 @@ async def record_payment(
                 cd.status = "paid"
             elif cd.paid_amount > 0:
                 cd.status = "partial"
-            db.commit()
-            return {"message": "Paiement enregistré", "remaining": float(cd.remaining_amount or 0)}
+            await cd.save()
+            return {"message": "Paiement enregistre", "remaining": float(cd.remaining_amount or 0)}
 
         # Sinon: dette client via facture
-        inv = db.query(Invoice).filter(Invoice.invoice_id == debt_id).first()
+        inv = await Invoice.find_one({"invoice_id": debt_id})
         if not inv:
-            raise HTTPException(status_code=404, detail="Dette/Facture non trouvée")
+            raise HTTPException(status_code=404, detail="Dette/Facture non trouvee")
 
         amount = round(float(payment_data.get("amount", 0)))
         if amount <= 0:
-            raise HTTPException(status_code=400, detail="Le montant du paiement doit être positif")
-        
+            raise HTTPException(status_code=400, detail="Le montant du paiement doit etre positif")
+
         remaining = float(inv.remaining_amount or 0)
         if amount > remaining:
-            raise HTTPException(status_code=400, detail="Le montant dépasse le solde restant")
+            raise HTTPException(status_code=400, detail="Le montant depasse le solde restant")
 
+        next_pay_id = await get_next_id("invoice_payments")
         pay = InvoicePayment(
+            payment_id=next_pay_id,
             invoice_id=inv.invoice_id,
             amount=amount,
             payment_method=payment_data.get("method"),
             reference=payment_data.get("reference"),
             notes=payment_data.get("notes")
         )
-        db.add(pay)
+        await pay.insert()
 
         inv.paid_amount = (inv.paid_amount or 0) + amount
         inv.remaining_amount = (inv.total or 0) - (inv.paid_amount or 0)
         if inv.remaining_amount <= 0:
             inv.remaining_amount = 0
-            inv.status = "payée"
+            inv.status = "payee"
         elif inv.paid_amount > 0:
-            inv.status = "partiellement payée"
+            inv.status = "partiellement payee"
 
-        db.commit()
-        return {"message": "Paiement enregistré", "remaining": float(inv.remaining_amount or 0)}
+        await inv.save()
+        return {"message": "Paiement enregistre", "remaining": float(inv.remaining_amount or 0)}
     except HTTPException:
         raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/stats/summary")
-async def get_debts_stats(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Récupérer les statistiques des dettes"""
-    try:
-        today = date.today()
-        
-        # 1. Statistiques des créances clients
-        invs = db.query(Invoice).all()
-        def remaining_of(i):
-            return float(i.remaining_amount if i.remaining_amount is not None else max(0.0, float(i.total or 0) - float(i.paid_amount or 0)))
-        open_invoices = [i for i in invs if remaining_of(i) > 0]
-        client_total_amount = sum(float(i.total or 0) for i in open_invoices)
-        client_total_paid = sum(float(i.paid_amount or 0) for i in open_invoices)
-        client_total_remaining = sum(remaining_of(i) for i in open_invoices)
-        
-        # 2. Statistiques des dettes fournisseurs
-        supplier_invs = db.query(SupplierInvoice).filter(SupplierInvoice.remaining_amount > 0).all()
-        supplier_total_amount = sum(float(i.amount or 0) for i in supplier_invs)
-        supplier_total_paid = sum(float(i.paid_amount or 0) for i in supplier_invs)
-        supplier_total_remaining = sum(float(i.remaining_amount or 0) for i in supplier_invs)
-        
-        # 3. Calcul des totaux combinés
-        total_client_debts = len(open_invoices)
-        total_supplier_debts = len(supplier_invs)
-        
-        # Overdue clients
-        client_overdue = [i for i in open_invoices if (i.due_date and getattr(i.due_date, 'date', lambda: i.due_date)() < today and remaining_of(i) > 0)]
-        # Overdue fournisseurs
-        supplier_overdue = [i for i in supplier_invs if (i.due_date and i.due_date.date() < today)]
-        
-        # Pending (non payé du tout)
-        client_pending = [i for i in open_invoices if float(i.paid_amount or 0) == 0 and not (i in client_overdue)]
-        supplier_pending = [i for i in supplier_invs if float(i.paid_amount or 0) == 0 and not (i in supplier_overdue)]
-        
-        return {
-            "total_debts": total_client_debts + total_supplier_debts,
-            "client_debts_count": total_client_debts,
-            "supplier_debts_count": total_supplier_debts,
-            "client_total_amount": client_total_amount,
-            "client_total_paid": client_total_paid,
-            "client_total_remaining": client_total_remaining,
-            "supplier_total_amount": supplier_total_amount,
-            "supplier_total_paid": supplier_total_paid,
-            "supplier_total_remaining": supplier_total_remaining,
-            "total_amount": client_total_amount + supplier_total_amount,
-            "total_paid": client_total_paid + supplier_total_paid,
-            "total_remaining": client_total_remaining + supplier_total_remaining,
-            "overdue_count": len(client_overdue) + len(supplier_overdue),
-            "overdue_amount": sum(remaining_of(i) for i in client_overdue) + sum(float(i.remaining_amount or 0) for i in supplier_overdue),
-            "pending_count": len(client_pending) + len(supplier_pending),
-            "pending_amount": sum(remaining_of(i) for i in client_pending) + sum(float(i.remaining_amount or 0) for i in supplier_pending)
-        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

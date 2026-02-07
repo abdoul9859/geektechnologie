@@ -28,7 +28,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://72.62.22.52:3001/api/sendText",
+        "url": "http://whatsapp_baileys:3002/api/sendText",
         "authentication": "none",
         "sendBody": true,
         "contentType": "json",

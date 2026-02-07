@@ -1,4 +1,5 @@
 import os
+import asyncio
 import threading
 import time
 from datetime import datetime, date, timedelta
@@ -6,20 +7,17 @@ import json
 from urllib import request as _urlrequest
 from typing import Optional
 
-from sqlalchemy.orm import Session
-from sqlalchemy import and_
-
-from ..database import get_db, Maintenance, Client, AppCache, SessionLocal
+from ..database import Maintenance, Client, AppCache, get_next_id
 
 
 class MaintenanceNotifier:
     """Service de notification automatique pour les maintenances.
-    
+
     Envoie 2 rappels :
     1. 2 jours avant la fin du délai de récupération (rappel préventif)
     2. Le jour même de la fin du délai (avec dégagement de responsabilité)
     """
-    
+
     def __init__(self):
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
@@ -49,116 +47,96 @@ class MaintenanceNotifier:
         time.sleep(45)
         while not self._stop.is_set():
             try:
-                self._tick()
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(self._tick())
+                loop.close()
             except Exception as e:
                 print(f"[MaintenanceNotifier] Error in tick: {e}")
             self._stop.wait(self._interval_seconds)
 
-    def _tick(self):
-        db: Session = SessionLocal()
-        try:
-            today = date.today()
-            reminder_date = today + timedelta(days=self._days_before_deadline)
-            
-            # 1. Rappel préventif : 2 jours avant la fin du délai
-            # Maintenances dont le délai arrive dans X jours
-            upcoming_maintenances = (
-                db.query(Maintenance)
-                .filter(Maintenance.pickup_deadline.isnot(None))
-                .filter(Maintenance.pickup_deadline == reminder_date)  # Délai dans X jours
-                .filter(Maintenance.pickup_date.is_(None))  # Pas encore récupéré
-                .filter(Maintenance.status.in_(['completed', 'ready']))  # Réparation terminée
-                .all()
-            )
-            
-            print(f"[MaintenanceNotifier] Found {len(upcoming_maintenances)} maintenances with deadline in {self._days_before_deadline} days")
-            
-            for maintenance in upcoming_maintenances:
-                if not self._should_notify_warning(db, maintenance.maintenance_id):
-                    continue
-                self._send_warning_notification(db, maintenance)
-            
-            # 2. Rappel final : le jour même de la fin du délai (avec dégagement de responsabilité)
-            deadline_today_maintenances = (
-                db.query(Maintenance)
-                .filter(Maintenance.pickup_deadline.isnot(None))
-                .filter(Maintenance.pickup_deadline == today)  # Délai aujourd'hui
-                .filter(Maintenance.pickup_date.is_(None))  # Pas encore récupéré
-                .filter(Maintenance.liability_waived == False)  # Responsabilité pas encore dégagée
-                .filter(Maintenance.status.in_(['completed', 'ready']))  # Réparation terminée
-                .all()
-            )
-            
-            print(f"[MaintenanceNotifier] Found {len(deadline_today_maintenances)} maintenances with deadline today")
-            
-            for maintenance in deadline_today_maintenances:
-                if not self._should_notify_final(db, maintenance.maintenance_id):
-                    continue
-                self._send_final_notification(db, maintenance)
-                # Dégager la responsabilité automatiquement
-                self._waive_liability(db, maintenance)
-                
-        finally:
-            try:
-                db.close()
-            except Exception:
-                pass
+    async def _tick(self):
+        today = date.today()
+        reminder_date = today + timedelta(days=self._days_before_deadline)
 
-    def _should_notify_warning(self, db: Session, maintenance_id: int) -> bool:
-        """Vérifie si on doit envoyer le rappel préventif (2 jours avant)."""
+        # 1. Rappel préventif : 2 jours avant la fin du délai
+        upcoming_maintenances = await Maintenance.find(
+            {
+                "pickup_deadline": {"$ne": None, "$eq": reminder_date},
+                "pickup_date": None,
+                "status": {"$in": ["completed", "ready"]},
+            }
+        ).to_list()
+
+        print(f"[MaintenanceNotifier] Found {len(upcoming_maintenances)} maintenances with deadline in {self._days_before_deadline} days")
+
+        for maintenance in upcoming_maintenances:
+            if not await self._should_notify_warning(maintenance.maintenance_id):
+                continue
+            await self._send_warning_notification(maintenance)
+
+        # 2. Rappel final : le jour même de la fin du délai (avec dégagement de responsabilité)
+        deadline_today_maintenances = await Maintenance.find(
+            {
+                "pickup_deadline": {"$ne": None, "$eq": today},
+                "pickup_date": None,
+                "liability_waived": {"$ne": True},
+                "status": {"$in": ["completed", "ready"]},
+            }
+        ).to_list()
+
+        print(f"[MaintenanceNotifier] Found {len(deadline_today_maintenances)} maintenances with deadline today")
+
+        for maintenance in deadline_today_maintenances:
+            if not await self._should_notify_final(maintenance.maintenance_id):
+                continue
+            await self._send_final_notification(maintenance)
+            # Dégager la responsabilité automatiquement
+            await self._waive_liability(maintenance)
+
+    async def _should_notify_warning(self, maintenance_id: int) -> bool:
         key = f"MAINTENANCE_WARNING_REMINDER_{maintenance_id}"
-        rec = db.query(AppCache).filter(AppCache.cache_key == key).first()
-        return rec is None  # Envoyer seulement si pas encore envoyé
+        rec = await AppCache.find_one(AppCache.cache_key == key)
+        return rec is None
 
-    def _should_notify_final(self, db: Session, maintenance_id: int) -> bool:
-        """Vérifie si on doit envoyer le rappel final (jour même)."""
+    async def _should_notify_final(self, maintenance_id: int) -> bool:
         key = f"MAINTENANCE_FINAL_REMINDER_{maintenance_id}"
-        rec = db.query(AppCache).filter(AppCache.cache_key == key).first()
-        return rec is None  # Envoyer seulement si pas encore envoyé
+        rec = await AppCache.find_one(AppCache.cache_key == key)
+        return rec is None
 
-    def _mark_warning_sent(self, db: Session, maintenance_id: int):
-        """Marque le rappel préventif comme envoyé."""
+    async def _mark_warning_sent(self, maintenance_id: int):
         key = f"MAINTENANCE_WARNING_REMINDER_{maintenance_id}"
-        rec = db.query(AppCache).filter(AppCache.cache_key == key).first()
+        rec = await AppCache.find_one(AppCache.cache_key == key)
         now_s = datetime.now().isoformat()
         if not rec:
-            rec = AppCache(cache_key=key, cache_value=now_s)
-            db.add(rec)
+            new_id = await get_next_id("app_cache")
+            rec = AppCache(cache_id=new_id, cache_key=key, cache_value=now_s)
+            await rec.insert()
         else:
             rec.cache_value = now_s
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
+            await rec.save()
 
-    def _mark_final_sent(self, db: Session, maintenance_id: int):
-        """Marque le rappel final comme envoyé."""
+    async def _mark_final_sent(self, maintenance_id: int):
         key = f"MAINTENANCE_FINAL_REMINDER_{maintenance_id}"
-        rec = db.query(AppCache).filter(AppCache.cache_key == key).first()
+        rec = await AppCache.find_one(AppCache.cache_key == key)
         now_s = datetime.now().isoformat()
         if not rec:
-            rec = AppCache(cache_key=key, cache_value=now_s)
-            db.add(rec)
+            new_id = await get_next_id("app_cache")
+            rec = AppCache(cache_id=new_id, cache_key=key, cache_value=now_s)
+            await rec.insert()
         else:
             rec.cache_value = now_s
-        try:
-            db.commit()
-        except Exception:
-            db.rollback()
+            await rec.save()
 
-    def _waive_liability(self, db: Session, maintenance: Maintenance):
-        """Dégage la responsabilité sur la machine."""
+    async def _waive_liability(self, maintenance):
         try:
             maintenance.liability_waived = True
             maintenance.liability_waived_date = date.today()
-            db.commit()
+            await maintenance.save()
             print(f"[MaintenanceNotifier] Liability waived for maintenance {maintenance.maintenance_number}")
         except Exception as e:
-            db.rollback()
             print(f"[MaintenanceNotifier] Error waiving liability: {e}")
 
-    def _get_device_info(self, maintenance: Maintenance) -> str:
-        """Retourne les informations sur l'appareil."""
+    def _get_device_info(self, maintenance) -> str:
         device_info = maintenance.device_type or "Appareil"
         if maintenance.device_brand:
             device_info += f" {maintenance.device_brand}"
@@ -166,16 +144,15 @@ class MaintenanceNotifier:
             device_info += f" {maintenance.device_model}"
         return device_info
 
-    def _send_warning_notification(self, db: Session, maintenance: Maintenance):
-        """Envoie le rappel préventif (2 jours avant la fin du délai)."""
+    async def _send_warning_notification(self, maintenance):
         app_name = os.getenv("APP_NAME", "GeekTechnologie")
-        
+
         deadline = maintenance.pickup_deadline
         if hasattr(deadline, 'date'):
             deadline = deadline.date()
         deadline_str = deadline.strftime("%d/%m/%Y") if deadline else "N/A"
         device_info = self._get_device_info(maintenance)
-        
+
         lines = [
             f"Bonjour {maintenance.client_name},",
             "",
@@ -196,37 +173,36 @@ class MaintenanceNotifier:
             "Cordialement,",
             app_name
         ]
-        
+
         body = "\n".join(lines)
-        
+
         if self._dry_run:
             print(f"[MaintenanceNotifier] DRY-RUN warning to {maintenance.client_name}:\n{body}")
-            self._mark_warning_sent(db, maintenance.maintenance_id)
+            await self._mark_warning_sent(maintenance.maintenance_id)
             return
-        
+
         to_phone = (maintenance.client_phone or '').strip()
         to_phone = self._normalize_phone(to_phone)
         if not to_phone:
             print(f"[MaintenanceNotifier] No phone for maintenance {maintenance.maintenance_number}")
             return
-        
+
         ok = self._send_whatsapp_n8n(to_phone, body, maintenance.maintenance_id)
         if ok:
-            self._mark_warning_sent(db, maintenance.maintenance_id)
+            await self._mark_warning_sent(maintenance.maintenance_id)
             print(f"[MaintenanceNotifier] Sent warning reminder for {maintenance.maintenance_number}")
         else:
             print(f"[MaintenanceNotifier] Failed to send warning to {to_phone}")
 
-    def _send_final_notification(self, db: Session, maintenance: Maintenance):
-        """Envoie le rappel final (jour même) avec dégagement de responsabilité."""
+    async def _send_final_notification(self, maintenance):
         app_name = os.getenv("APP_NAME", "GeekTechnologie")
-        
+
         deadline = maintenance.pickup_deadline
         if hasattr(deadline, 'date'):
             deadline = deadline.date()
         deadline_str = deadline.strftime("%d/%m/%Y") if deadline else "N/A"
         device_info = self._get_device_info(maintenance)
-        
+
         lines = [
             f"Bonjour {maintenance.client_name},",
             "",
@@ -246,37 +222,36 @@ class MaintenanceNotifier:
             "Cordialement,",
             app_name
         ]
-        
+
         body = "\n".join(lines)
-        
+
         if self._dry_run:
             print(f"[MaintenanceNotifier] DRY-RUN final to {maintenance.client_name}:\n{body}")
-            self._mark_final_sent(db, maintenance.maintenance_id)
+            await self._mark_final_sent(maintenance.maintenance_id)
             return
-        
+
         to_phone = (maintenance.client_phone or '').strip()
         to_phone = self._normalize_phone(to_phone)
         if not to_phone:
             print(f"[MaintenanceNotifier] No phone for maintenance {maintenance.maintenance_number}")
             return
-        
+
         ok = self._send_whatsapp_n8n(to_phone, body, maintenance.maintenance_id)
         if ok:
-            self._mark_final_sent(db, maintenance.maintenance_id)
+            await self._mark_final_sent(maintenance.maintenance_id)
             print(f"[MaintenanceNotifier] Sent final reminder for {maintenance.maintenance_number}")
         else:
             print(f"[MaintenanceNotifier] Failed to send final reminder to {to_phone}")
 
     def _send_whatsapp_n8n(self, to_phone: str, body: str, maintenance_id: int = None) -> bool:
-        """Send WhatsApp message via n8n webhook. Returns True if successful."""
         n8n_base = os.getenv("N8N_BASE_URL", "http://n8n:5678")
         webhook_url = f"{n8n_base}/webhook/send-maintenance-reminder-whatsapp"
-        
+
         to_norm = self._normalize_phone(to_phone)
         if not to_norm:
             print(f"[MaintenanceNotifier] Cannot normalize phone: {to_phone}")
             return False
-        
+
         payload = {
             'phone': to_norm,
             'message': body,
@@ -284,12 +259,12 @@ class MaintenanceNotifier:
             'app': os.getenv('APP_NAME', 'GeekTechnologie'),
             'timestamp': datetime.now().isoformat()
         }
-        
+
         try:
             data_bytes = json.dumps(payload).encode('utf-8')
             req = _urlrequest.Request(webhook_url, data=data_bytes, method='POST')
             req.add_header('Content-Type', 'application/json')
-            
+
             with _urlrequest.urlopen(req, timeout=30) as resp:
                 ok = 200 <= resp.status < 300
                 if ok:
@@ -302,7 +277,6 @@ class MaintenanceNotifier:
             return False
 
     def _normalize_phone(self, raw: str) -> Optional[str]:
-        """Normalize phone to E.164 format."""
         if not raw:
             return None
         s = str(raw).strip()
