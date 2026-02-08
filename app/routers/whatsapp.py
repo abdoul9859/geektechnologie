@@ -7,6 +7,7 @@ Utilise Evolution API v2 directement.
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 import logging
+import httpx
 
 from ..services.evolution_api import (
     ensure_instance_exists,
@@ -16,6 +17,10 @@ from ..services.evolution_api import (
     store_qr_from_webhook,
     clear_qr_cache,
     restart_instance,
+    _base_url,
+    _headers,
+    EVOLUTION_INSTANCE_NAME,
+    APP_PUBLIC_URL,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,51 +140,64 @@ async def whatsapp_webhook(request: Request):
 
 @router.get("/debug")
 async def whatsapp_debug():
-    """Debug endpoint - retourne les reponses brutes de Evolution API."""
-    result = {}
+    """Debug - appels directs a Evolution API avec reponses brutes."""
+    base = _base_url()
+    hdrs = _headers()
+    inst = EVOLUTION_INSTANCE_NAME
+    result = {
+        "config": {
+            "evolution_url": base,
+            "instance_name": inst,
+            "webhook_url": f"{APP_PUBLIC_URL}/api/whatsapp/webhook",
+            "api_key_set": bool(hdrs.get("apikey")),
+        }
+    }
 
-    # QR cache info
+    def _truncate(obj, max_len=150):
+        if isinstance(obj, str) and len(obj) > max_len:
+            return obj[:80] + f"... (len={len(obj)})"
+        if isinstance(obj, dict):
+            return {k: _truncate(v, max_len) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_truncate(v, max_len) for v in obj[:5]]
+        return obj
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        # 1. fetchInstances
+        try:
+            r = await client.get(f"{base}/instance/fetchInstances?instanceName={inst}", headers=hdrs)
+            result["1_fetchInstances"] = {"status": r.status_code, "body": _truncate(r.json())}
+        except Exception as e:
+            result["1_fetchInstances"] = {"error": str(e)}
+
+        # 2. connectionState
+        try:
+            r = await client.get(f"{base}/instance/connectionState/{inst}", headers=hdrs)
+            result["2_connectionState"] = {"status": r.status_code, "body": r.json()}
+        except Exception as e:
+            result["2_connectionState"] = {"error": str(e)}
+
+        # 3. connect (GET)
+        try:
+            r = await client.get(f"{base}/instance/connect/{inst}", headers=hdrs)
+            result["3_connect"] = {"status": r.status_code, "body": _truncate(r.json())}
+        except Exception as e:
+            result["3_connect"] = {"error": str(e)}
+
+        # 4. webhook find
+        try:
+            r = await client.get(f"{base}/webhook/find/{inst}", headers=hdrs)
+            result["4_webhook_find"] = {"status": r.status_code, "body": _truncate(r.json())}
+        except Exception as e:
+            result["4_webhook_find"] = {"error": str(e)}
+
+    # 5. QR cache
     cached = get_cached_qr()
-    result["qr_cache"] = {
+    result["5_qr_cache"] = {
         "has_cached_qr": cached is not None,
         "code_present": bool(cached.get("code")) if cached else False,
         "base64_present": bool(cached.get("base64")) if cached else False,
     }
-
-    try:
-        instance_data = await ensure_instance_exists()
-        result["instance"] = instance_data
-    except Exception as e:
-        result["instance_error"] = str(e)
-
-    try:
-        state_data = await get_connection_state()
-        result["connection_state"] = state_data
-    except Exception as e:
-        result["connection_state_error"] = str(e)
-
-    try:
-        qr_data = await get_qr_code()
-        # Tronquer base64 pour lisibilite
-        if isinstance(qr_data, dict):
-            debug_qr = {}
-            for k, v in qr_data.items():
-                if isinstance(v, str) and len(v) > 200:
-                    debug_qr[k] = v[:100] + f"... (len={len(v)})"
-                elif isinstance(v, dict):
-                    debug_qr[k] = {}
-                    for k2, v2 in v.items():
-                        if isinstance(v2, str) and len(v2) > 200:
-                            debug_qr[k][k2] = v2[:100] + f"... (len={len(v2)})"
-                        else:
-                            debug_qr[k][k2] = v2
-                else:
-                    debug_qr[k] = v
-            result["qr_data"] = debug_qr
-        else:
-            result["qr_data"] = str(qr_data)[:500]
-    except Exception as e:
-        result["qr_error"] = str(e)
 
     return result
 
