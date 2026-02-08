@@ -1,5 +1,4 @@
 # Docker Compose configuration for GEEKTECHNOLOGIE
-# Migré vers MongoDB le 2026-02-07
 
 services:
 
@@ -7,7 +6,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: geektechnologie_app
     env_file:
       - .env
     environment:
@@ -18,30 +16,27 @@ services:
       INIT_DB_ON_STARTUP: "false"
       SEED_DEFAULT_DATA: "false"
       ENABLE_MIGRATIONS_WORKER: "false"
-      # n8n base URL pour les webhooks (sans path)
       N8N_BASE_URL: "http://n8n:5678"
-      # URL publique de l'application pour les liens accessibles depuis n8n
-      APP_PUBLIC_URL: "http://geektechnologie_app:8000"
-      # Evolution API WhatsApp
+      APP_PUBLIC_URL: "http://app:8000"
       EVOLUTION_API_URL: "http://evolution_api:8080"
       EVOLUTION_API_KEY: "${EVOLUTION_API_KEY:-your-api-key}"
       EVOLUTION_INSTANCE_NAME: "${EVOLUTION_INSTANCE_NAME:-geektech}"
     expose:
       - "8000"
     volumes:
-      - ./static/uploads:/app/static/uploads
-      - ./logs:/app/logs
-      - ./credentials:/app/credentials:ro
+      - app_uploads:/app/static/uploads
+      - app_logs:/app/logs
     restart: unless-stopped
     depends_on:
       mongo:
         condition: service_healthy
       evolution_api:
         condition: service_started
+    networks:
+      - internal
 
   mongo:
     image: mongo:7
-    container_name: geektechnologie_mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: geekuser
       MONGO_INITDB_ROOT_PASSWORD: "07121998Dabakh@"
@@ -57,10 +52,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+    networks:
+      - internal
 
   evolution_api:
     image: atendai/evolution-api:v2.2.3
-    container_name: geektechnologie_evolution_api
     environment:
       SERVER_TYPE: http
       SERVER_PORT: "8080"
@@ -95,10 +91,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - internal
 
   redis:
     image: redis:7-alpine
-    container_name: geektechnologie_redis
     volumes:
       - redis_data:/data
     expose:
@@ -109,8 +106,16 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge
 
 volumes:
   mongo_data:
   evolution_instances:
   redis_data:
+  app_uploads:
+  app_logs:
