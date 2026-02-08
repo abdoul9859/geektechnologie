@@ -117,9 +117,10 @@ async def ensure_instance_exists() -> dict:
         "integration": "WHATSAPP-BAILEYS",
         "qrcode": True,
         "webhook": {
+            "enabled": True,
             "url": webhook_url,
-            "byEvents": False,
-            "base64": True,
+            "webhookByEvents": False,
+            "webhookBase64": True,
             "events": [
                 "QRCODE_UPDATED",
                 "CONNECTION_UPDATE",
@@ -157,9 +158,10 @@ async def _set_webhook(webhook_url: str) -> None:
     instance = EVOLUTION_INSTANCE_NAME
     url = f"{_base_url()}/webhook/set/{instance}"
     payload = {
+        "enabled": True,
         "url": webhook_url,
-        "byEvents": False,
-        "base64": True,
+        "webhookByEvents": False,
+        "webhookBase64": True,
         "events": [
             "QRCODE_UPDATED",
             "CONNECTION_UPDATE",
@@ -167,7 +169,7 @@ async def _set_webhook(webhook_url: str) -> None:
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.post(url, json=payload, headers=_headers())
-        logger.info(f"[EvolutionAPI] Webhook set response: {r.status_code}")
+        logger.info(f"[EvolutionAPI] Webhook set: {r.status_code} {r.text[:200]}")
 
 
 async def get_connection_state() -> dict:
@@ -329,6 +331,48 @@ async def restart_instance() -> dict:
             pass
     await asyncio.sleep(2)
     return await ensure_instance_exists()
+
+
+async def force_reset_instance() -> dict:
+    """Supprime completement l'instance et en recree une nouvelle.
+
+    Utilise quand l'instance est bloquee (count=0, pas de QR).
+    """
+    global _last_qr_reset
+    _last_qr_reset = 0
+    clear_qr_cache()
+    instance = EVOLUTION_INSTANCE_NAME
+
+    # 1. Logout d'abord (necessaire avant delete dans certaines versions)
+    try:
+        await logout_instance()
+        logger.info("[EvolutionAPI] Force reset: logout OK")
+    except Exception as e:
+        logger.info(f"[EvolutionAPI] Force reset: logout skipped ({e})")
+
+    await asyncio.sleep(1)
+
+    # 2. Supprimer l'instance
+    try:
+        await delete_instance()
+        logger.info("[EvolutionAPI] Force reset: instance supprimee")
+    except Exception as e:
+        logger.warning(f"[EvolutionAPI] Force reset: delete failed ({e})")
+        # Essayer avec un POST au lieu de DELETE (certaines versions)
+        try:
+            url = f"{_base_url()}/instance/delete/{instance}"
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.post(url, headers=_headers())
+                logger.info(f"[EvolutionAPI] Force reset: POST delete: {r.status_code}")
+        except Exception:
+            pass
+
+    await asyncio.sleep(2)
+
+    # 3. Recreer l'instance avec webhook
+    data = await ensure_instance_exists()
+    logger.info(f"[EvolutionAPI] Force reset: instance recreee, keys={list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+    return data
 
 
 # -- Envoi de messages -------------------------------------------------------------

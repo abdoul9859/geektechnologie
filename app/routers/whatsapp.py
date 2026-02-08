@@ -17,6 +17,7 @@ from ..services.evolution_api import (
     store_qr_from_webhook,
     clear_qr_cache,
     restart_instance,
+    force_reset_instance,
     _base_url,
     _headers,
     EVOLUTION_INSTANCE_NAME,
@@ -191,15 +192,44 @@ async def whatsapp_debug():
         except Exception as e:
             result["4_webhook_find"] = {"error": str(e)}
 
-    # 5. QR cache
+        # 5. Set webhook (fix si null)
+        webhook_url = f"{APP_PUBLIC_URL}/api/whatsapp/webhook"
+        try:
+            wb_payload = {
+                "enabled": True,
+                "url": webhook_url,
+                "webhookByEvents": False,
+                "webhookBase64": True,
+                "events": ["QRCODE_UPDATED", "CONNECTION_UPDATE"],
+            }
+            r = await client.post(f"{base}/webhook/set/{inst}", json=wb_payload, headers=hdrs)
+            result["5_webhook_set"] = {"status": r.status_code, "body": _truncate(r.json())}
+        except Exception as e:
+            result["5_webhook_set"] = {"error": str(e)}
+
+    # 6. QR cache
     cached = get_cached_qr()
-    result["5_qr_cache"] = {
+    result["6_qr_cache"] = {
         "has_cached_qr": cached is not None,
         "code_present": bool(cached.get("code")) if cached else False,
         "base64_present": bool(cached.get("base64")) if cached else False,
     }
 
     return result
+
+
+@router.post("/force-reset")
+async def whatsapp_force_reset():
+    """Supprime et recree l'instance WhatsApp completement."""
+    try:
+        data = await force_reset_instance()
+        return {"success": True, "message": "Instance recree", "data_keys": list(data.keys()) if isinstance(data, dict) else str(type(data))}
+    except Exception as e:
+        logger.error(f"[WhatsApp] Erreur force-reset: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={"success": False, "error": str(e)},
+        )
 
 
 @router.post("/restart")
