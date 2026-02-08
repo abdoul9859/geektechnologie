@@ -4,7 +4,7 @@ Router WhatsApp -- QR code, statut, reconnexion.
 Utilise Evolution API v2 directement.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 import logging
 
@@ -12,6 +12,9 @@ from ..services.evolution_api import (
     ensure_instance_exists,
     get_connection_state,
     get_qr_code,
+    get_cached_qr,
+    store_qr_from_webhook,
+    clear_qr_cache,
     restart_instance,
 )
 
@@ -98,10 +101,51 @@ async def whatsapp_qr():
         )
 
 
+@router.post("/webhook")
+async def whatsapp_webhook(request: Request):
+    """Webhook appele par Evolution API pour les evenements QR et connexion."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {"ok": True}
+
+    event = body.get("event", "").lower()
+    data = body.get("data") or body
+
+    logger.info(f"[WhatsApp] Webhook recu: event={event}, keys={list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+
+    if "qrcode" in event or "qr" in event:
+        # QRCODE_UPDATED event
+        qr_obj = data.get("qrcode") or data
+        code = qr_obj.get("code") if isinstance(qr_obj, dict) else None
+        base64_img = qr_obj.get("base64") if isinstance(qr_obj, dict) else None
+        if code or base64_img:
+            store_qr_from_webhook(code=code, base64_img=base64_img)
+            logger.info(f"[WhatsApp] QR code recu via webhook (code={bool(code)}, base64={bool(base64_img)})")
+
+    elif "connection" in event:
+        # CONNECTION_UPDATE event
+        state = (data.get("state") or data.get("status") or "").lower()
+        logger.info(f"[WhatsApp] Connection update: {state}")
+        if state == "open":
+            clear_qr_cache()
+
+    return {"ok": True}
+
+
 @router.get("/debug")
 async def whatsapp_debug():
     """Debug endpoint - retourne les reponses brutes de Evolution API."""
     result = {}
+
+    # QR cache info
+    cached = get_cached_qr()
+    result["qr_cache"] = {
+        "has_cached_qr": cached is not None,
+        "code_present": bool(cached.get("code")) if cached else False,
+        "base64_present": bool(cached.get("base64")) if cached else False,
+    }
+
     try:
         instance_data = await ensure_instance_exists()
         result["instance"] = instance_data
