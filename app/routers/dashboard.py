@@ -70,157 +70,146 @@ async def get_dashboard_stats(
         async def compute_stats():
             today = date.today()
             now = datetime.now()
-
-            # 1. Nombre de produits en stock
-            all_products = await Product.find().to_list()
-
-            # Get available variants per product
-            all_variants = await ProductVariant.find().to_list()
-            available_by_product = defaultdict(int)
-            for v in all_variants:
-                if not v.is_sold:
-                    available_by_product[v.product_id] += 1
-
-            total_stock = sum(
-                1 for p in all_products
-                if (p.quantity or 0) > 0 or available_by_product.get(p.product_id, 0) > 0
-            )
-
-            # 2. Statistiques factures
-            all_invoices = await Invoice.find().to_list()
-
-            pending_statuses = ["en attente", "SENT", "DRAFT", "OVERDUE", "partiellement payee"]
-            pending_invoices = sum(1 for inv in all_invoices if inv.status in pending_statuses)
-
-            # Chiffre d'affaires mensuel (factures payees)
-            paid_statuses = ["payee", "PAID"]
-            monthly_revenue_gross = sum(
-                float(inv.total or 0) for inv in all_invoices
-                if inv.status in paid_statuses and inv.date
-                and _safe_date(inv.date) and _safe_date(inv.date).month == today.month
-                and _safe_date(inv.date).year == today.year
-            )
-
-            # Achats quotidiens du mois
-            all_purchases = await DailyPurchase.find().to_list()
-            monthly_purchases = sum(
-                float(p.amount or 0) for p in all_purchases
-                if (p.date and _safe_date(p.date) and _safe_date(p.date).month == today.month and _safe_date(p.date).year == today.year)
-                or (p.created_at and _safe_date(p.created_at) and _safe_date(p.created_at).month == today.month and _safe_date(p.created_at).year == today.year)
-            )
-
-            # Paiements aux fournisseurs du mois
-            all_supplier_invs = await SupplierInvoice.find().to_list()
-            monthly_supplier_payments = sum(
-                float(si.paid_amount or 0) for si in all_supplier_invs
-                if si.invoice_date and _safe_date(si.invoice_date)
-                and _safe_date(si.invoice_date).month == today.month
-                and _safe_date(si.invoice_date).year == today.year
-            )
-
-            # Chiffre d'affaires net
-            monthly_revenue = float(monthly_revenue_gross) - float(monthly_supplier_payments) - float(monthly_purchases)
-
-            # Montant impaye
-            unpaid_statuses = [
-                "en attente", "En attente", "EN ATTENTE",
-                "partiellement payee", "partiellement payee", "PARTIELLEMENT PAYEE",
-                "OVERDUE", "en retard", "En retard"
-            ]
-            unpaid_amount = sum(
-                float(inv.remaining_amount or 0) for inv in all_invoices
-                if inv.status in unpaid_statuses or (inv.remaining_amount and float(inv.remaining_amount) > 0)
-            )
-            # Fallback
-            if unpaid_amount <= 0:
-                unpaid_amount = sum(
-                    max(float(inv.total or 0) - float(inv.paid_amount or 0), 0)
-                    for inv in all_invoices
-                )
-
-            # 3. KPIs avances (periode 30 jours)
+            month_start = datetime(today.year, today.month, 1)
             since_30 = now - timedelta(days=30)
             since_90 = now - timedelta(days=90)
+            paid_statuses = ["payee", "PAID"]
+            pending_statuses = ["en attente", "SENT", "DRAFT", "OVERDUE", "partiellement payee"]
 
-            # Factures payees sur 30 jours
-            paid_invoices_30d = [
-                inv for inv in all_invoices
-                if inv.status in paid_statuses and inv.date
-                and _safe_date(inv.date) and _safe_date(inv.date) >= since_30.date()
+            # ---- Stock counts (2 queries) ----
+            products_with_stock = await Product.find({"quantity": {"$gt": 0}}).count()
+            available_variant_pids = await ProductVariant.find(
+                {"is_sold": False}
+            ).to_list()
+            pids_with_avail = set(v.product_id for v in available_variant_pids)
+            # Products with zero qty but available variants
+            zero_qty_with_variants = await Product.find(
+                {"quantity": {"$lte": 0}, "product_id": {"$in": list(pids_with_avail)}}
+            ).count() if pids_with_avail else 0
+            total_stock = products_with_stock + zero_qty_with_variants
+
+            out_of_stock = await Product.find(
+                {"$and": [{"quantity": {"$lte": 0}}, {"product_id": {"$nin": list(pids_with_avail)}}]}
+            ).count()
+            low_stock = await Product.find(
+                {"quantity": {"$gt": 0, "$lte": 3}}
+            ).count()
+
+            # ---- Invoice stats (aggregation) ----
+            pending_invoices = await Invoice.find(
+                {"status": {"$in": pending_statuses}}
+            ).count()
+
+            # Monthly revenue (paid invoices this month)
+            rev_pipeline = [
+                {"$match": {"status": {"$in": paid_statuses}, "date": {"$gte": month_start}}},
+                {"$group": {"_id": None, "total": {"$sum": "$total"}}}
             ]
-            num_invoices_30d = len(paid_invoices_30d)
-            total_revenue_30d_gross = sum(float(inv.total or 0) for inv in paid_invoices_30d)
+            rev_agg = await Invoice.aggregate(rev_pipeline).to_list()
+            monthly_revenue_gross = float(str(rev_agg[0]["total"])) if rev_agg else 0
 
-            purchases_30d = sum(
-                float(p.amount or 0) for p in all_purchases
-                if (p.date and _safe_date(p.date) and _safe_date(p.date) >= since_30.date())
-                or (p.created_at and _safe_date(p.created_at) and _safe_date(p.created_at) >= since_30.date())
-            )
+            # Monthly purchases
+            purch_pipeline = [
+                {"$match": {"$or": [
+                    {"date": {"$gte": month_start.date()}},
+                    {"created_at": {"$gte": month_start}}
+                ]}},
+                {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+            ]
+            purch_agg = await DailyPurchase.aggregate(purch_pipeline).to_list()
+            monthly_purchases = float(str(purch_agg[0]["total"])) if purch_agg else 0
 
-            # Paiements fournisseurs 30 jours
-            all_sup_payments = await SupplierInvoicePayment.find().to_list()
-            supplier_payments_30d = sum(
-                float(sp.amount or 0) for sp in all_sup_payments
-                if sp.payment_date and _safe_date(sp.payment_date) and _safe_date(sp.payment_date) >= since_30.date()
-            )
+            # Monthly supplier payments
+            sup_pipeline = [
+                {"$match": {"invoice_date": {"$gte": month_start}}},
+                {"$group": {"_id": None, "total": {"$sum": "$paid_amount"}}}
+            ]
+            sup_agg = await SupplierInvoice.aggregate(sup_pipeline).to_list()
+            monthly_supplier_payments = float(str(sup_agg[0]["total"])) if sup_agg else 0
 
-            total_revenue_30d = float(total_revenue_30d_gross) - float(supplier_payments_30d) - float(purchases_30d)
+            monthly_revenue = monthly_revenue_gross - monthly_supplier_payments - monthly_purchases
+
+            # Unpaid amount
+            unpaid_pipeline = [
+                {"$match": {"remaining_amount": {"$gt": 0}}},
+                {"$group": {"_id": None, "total": {"$sum": "$remaining_amount"}}}
+            ]
+            unpaid_agg = await Invoice.aggregate(unpaid_pipeline).to_list()
+            unpaid_amount = float(str(unpaid_agg[0]["total"])) if unpaid_agg else 0
+
+            # ---- 30-day KPIs (aggregation) ----
+            rev30_pipeline = [
+                {"$match": {"status": {"$in": paid_statuses}, "date": {"$gte": since_30}}},
+                {"$group": {"_id": None, "total": {"$sum": "$total"}, "count": {"$sum": 1}}}
+            ]
+            rev30_agg = await Invoice.aggregate(rev30_pipeline).to_list()
+            total_revenue_30d_gross = float(str(rev30_agg[0]["total"])) if rev30_agg else 0
+            num_invoices_30d = int(rev30_agg[0]["count"]) if rev30_agg else 0
+
+            purch30_pipeline = [
+                {"$match": {"$or": [
+                    {"date": {"$gte": since_30.date()}},
+                    {"created_at": {"$gte": since_30}}
+                ]}},
+                {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+            ]
+            purch30_agg = await DailyPurchase.aggregate(purch30_pipeline).to_list()
+            purchases_30d = float(str(purch30_agg[0]["total"])) if purch30_agg else 0
+
+            sup30_pipeline = [
+                {"$match": {"payment_date": {"$gte": since_30}}},
+                {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
+            ]
+            sup30_agg = await SupplierInvoicePayment.aggregate(sup30_pipeline).to_list()
+            supplier_payments_30d = float(str(sup30_agg[0]["total"])) if sup30_agg else 0
+
+            total_revenue_30d = total_revenue_30d_gross - supplier_payments_30d - purchases_30d
             avg_ticket = float(total_revenue_30d / num_invoices_30d) if num_invoices_30d > 0 else 0.0
 
-            # Taux de conversion devis->factures (30 jours)
-            all_quotations = await Quotation.find().to_list()
-            quotes_30d = sum(
-                1 for q in all_quotations
-                if q.date and _safe_date(q.date) and _safe_date(q.date) >= since_30.date()
-            )
-            converted_quotes_30d = len(set(
-                inv.quotation_id for inv in all_invoices
-                if inv.quotation_id is not None and inv.date
-                and _safe_date(inv.date) and _safe_date(inv.date) >= since_30.date()
-            ))
+            # Conversion rate (30 days)
+            quotes_30d = await Quotation.find({"date": {"$gte": since_30}}).count()
+            converted_quotes_30d_list = await Invoice.find(
+                {"quotation_id": {"$ne": None}, "date": {"$gte": since_30}}
+            ).to_list()
+            converted_quotes_30d = len(set(inv.quotation_id for inv in converted_quotes_30d_list))
             conversion_rate = float((converted_quotes_30d / quotes_30d) * 100) if quotes_30d > 0 else 0.0
 
-            # Stock critique
-            out_of_stock = sum(1 for p in all_products if (p.quantity or 0) == 0)
-            low_stock = sum(1 for p in all_products if (p.quantity or 0) > 0 and (p.quantity or 0) <= 3)
+            # Active customers (90 days)
+            active_cust_list = await Invoice.find(
+                {"client_id": {"$ne": None}, "date": {"$gte": since_90}}
+            ).to_list()
+            active_customers = len(set(inv.client_id for inv in active_cust_list))
 
-            # Clients actifs (90 jours)
-            active_customers = len(set(
-                inv.client_id for inv in all_invoices
-                if inv.client_id is not None and inv.date
-                and _safe_date(inv.date) and _safe_date(inv.date) >= since_90.date()
-            ))
+            # Top 3 products by revenue (30 days) - need invoice_ids then items
+            inv_ids_30d_list = await Invoice.find(
+                {"date": {"$gte": since_30}}
+            ).to_list()
+            inv_ids_30d = [inv.invoice_id for inv in inv_ids_30d_list]
 
-            # Top 3 produits par CA (30 jours)
-            all_items = await InvoiceItem.find().to_list()
-            # Build a set of invoice_ids from the last 30 days
-            inv_ids_30d = set(
-                inv.invoice_id for inv in all_invoices
-                if inv.date and _safe_date(inv.date) and _safe_date(inv.date) >= since_30.date()
-            )
-            product_revenue = defaultdict(float)
-            for item in all_items:
-                if item.invoice_id in inv_ids_30d:
-                    product_revenue[item.product_name or "-"] += float(item.total or 0)
+            top_pipeline = [
+                {"$match": {"invoice_id": {"$in": inv_ids_30d}}},
+                {"$group": {"_id": "$product_name", "revenue": {"$sum": "$total"}}},
+                {"$sort": {"revenue": -1}},
+                {"$limit": 3}
+            ]
+            top_agg = await InvoiceItem.aggregate(top_pipeline).to_list()
+            top_products_list = [
+                {"name": r["_id"] or "-", "revenue": float(str(r["revenue"]))}
+                for r in top_agg
+            ]
 
-            top_products_list = sorted(
-                [{"name": name, "revenue": rev} for name, rev in product_revenue.items()],
-                key=lambda x: x["revenue"],
-                reverse=True
-            )[:3]
-
-            # Repartition paiements (30 jours)
-            all_payments = await InvoicePayment.find().to_list()
-            method_amounts = defaultdict(float)
-            for pay in all_payments:
-                if pay.payment_date and _safe_date(pay.payment_date) and _safe_date(pay.payment_date) >= since_30.date():
-                    method_amounts[pay.payment_method or "Non specifie"] += float(pay.amount or 0)
-
-            payments_breakdown = sorted(
-                [{"method": method, "amount": amt} for method, amt in method_amounts.items()],
-                key=lambda x: x["amount"],
-                reverse=True
-            )[:5]
+            # Payment methods breakdown (30 days)
+            pay_pipeline = [
+                {"$match": {"payment_date": {"$gte": since_30}}},
+                {"$group": {"_id": "$payment_method", "amount": {"$sum": "$amount"}}},
+                {"$sort": {"amount": -1}},
+                {"$limit": 5}
+            ]
+            pay_agg = await InvoicePayment.aggregate(pay_pipeline).to_list()
+            payments_breakdown = [
+                {"method": r["_id"] or "Non specifie", "amount": float(str(r["amount"]))}
+                for r in pay_agg
+            ]
 
             return {
                 # Stats de base

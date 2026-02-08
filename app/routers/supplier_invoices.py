@@ -124,14 +124,17 @@ async def get_supplier_invoices(
                 total = await SupplierInvoice.find(filters).count()
                 invoices = await SupplierInvoice.find(filters).skip(skip).limit(limit).to_list()
 
-        # Enrichir avec les donnees des fournisseurs
+        # Batch-load suppliers (1 query instead of N)
+        sup_ids = list({inv.supplier_id for inv in invoices if inv.supplier_id})
+        all_suppliers = await Supplier.find({"supplier_id": {"$in": sup_ids}}).to_list() if sup_ids else []
+        suppliers_map = {s.supplier_id: s.name for s in all_suppliers}
+
         result_invoices = []
         for invoice in invoices:
-            supplier = await Supplier.find_one(Supplier.supplier_id == invoice.supplier_id)
             invoice_dict = {
                 "invoice_id": invoice.invoice_id,
                 "supplier_id": invoice.supplier_id,
-                "supplier_name": supplier.name if supplier else "Fournisseur supprime",
+                "supplier_name": suppliers_map.get(invoice.supplier_id, "Fournisseur supprime"),
                 "invoice_number": invoice.invoice_number,
                 "invoice_date": invoice.invoice_date,
                 "due_date": invoice.due_date,

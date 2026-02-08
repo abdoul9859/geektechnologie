@@ -42,23 +42,30 @@ async def get_delivery_notes(
             .to_list()
         )
 
-        # Enrich with items and client name
+        # Batch-load items and clients (2 queries instead of N+1)
+        note_ids = [n.delivery_note_id for n in notes]
+        client_ids = list({n.client_id for n in notes if n.client_id})
+
+        all_items = await DeliveryNoteItem.find(
+            {"delivery_note_id": {"$in": note_ids}}
+        ).to_list() if note_ids else []
+        items_by_note = {}
+        for it in all_items:
+            items_by_note.setdefault(it.delivery_note_id, []).append(it)
+
+        all_clients = await Client.find(
+            {"client_id": {"$in": client_ids}}
+        ).to_list() if client_ids else []
+        clients_map = {c.client_id: c.name for c in all_clients}
+
         result_notes = []
         for note in notes:
-            items = await DeliveryNoteItem.find(
-                DeliveryNoteItem.delivery_note_id == note.delivery_note_id
-            ).to_list()
-
-            client_name = ""
-            if note.client_id:
-                client = await Client.find_one(Client.client_id == note.client_id)
-                client_name = client.name if client else ""
-
+            items = items_by_note.get(note.delivery_note_id, [])
             note_dict = {
                 "id": note.delivery_note_id,
                 "number": note.delivery_note_number,
                 "client_id": note.client_id,
-                "client_name": client_name,
+                "client_name": clients_map.get(note.client_id, ""),
                 "date": note.date.strftime("%Y-%m-%d") if note.date else None,
                 "delivery_date": note.delivery_date.strftime("%Y-%m-%d") if note.delivery_date else None,
                 "status": note.status,
