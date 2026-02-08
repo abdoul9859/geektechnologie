@@ -11,7 +11,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: mongodb://geektech:geektech_secret@mongo:27017/geektech?authSource=admin
+      DATABASE_URL: mongodb://geekuser:07121998Dabakh%40@mongo:27017/geektech?authSource=admin
       HOST: 0.0.0.0
       PORT: "8000"
       RELOAD: "false"
@@ -48,8 +48,8 @@ services:
     image: mongo:7
     container_name: nitek_mongo
     environment:
-      MONGO_INITDB_ROOT_USERNAME: geektech
-      MONGO_INITDB_ROOT_PASSWORD: geektech_secret
+      MONGO_INITDB_ROOT_USERNAME: geekuser
+      MONGO_INITDB_ROOT_PASSWORD: "07121998Dabakh@"
       MONGO_INITDB_DATABASE: geektech
     volumes:
       - mongo_data:/data/db
@@ -73,7 +73,7 @@ services:
       AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
       DATABASE_ENABLED: "true"
       DATABASE_PROVIDER: mongodb
-      DATABASE_CONNECTION_URI: mongodb://geektech:geektech_secret@mongo:27017/?authSource=admin
+      DATABASE_CONNECTION_URI: mongodb://geekuser:07121998Dabakh%40@mongo:27017/?authSource=admin
       DATABASE_CONNECTION_DB_PREFIX_NAME: evolution
       DATABASE_SAVE_DATA_INSTANCE: "true"
       DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
