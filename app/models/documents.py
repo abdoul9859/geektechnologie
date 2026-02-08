@@ -182,7 +182,7 @@ class ProductVariant(Document):
     condition: Optional[str] = None
     is_sold: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    attributes: Optional[list] = None
+    attributes: Optional[list] = []
 
     class Settings:
         name = "product_variants"
@@ -219,7 +219,7 @@ class Product(Document):
     image_path: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     is_archived: bool = False
-    variants: Optional[list] = None
+    variants: Optional[list] = []
 
     class Settings:
         name = "products"
