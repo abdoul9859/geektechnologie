@@ -79,7 +79,7 @@ services:
       CONFIG_SESSION_PHONE_NAME: "Chrome"
       QRCODE_LIMIT: "30"
       QRCODE_COLOR: "#198754"
-      LOG_LEVEL: WARN
+      LOG_LEVEL: DEBUG
     expose:
       - "8080"
     volumes:

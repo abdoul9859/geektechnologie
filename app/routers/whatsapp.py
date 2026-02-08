@@ -163,7 +163,7 @@ async def whatsapp_debug():
             return [_truncate(v, max_len) for v in obj[:5]]
         return obj
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         # 1. fetchInstances
         try:
             r = await client.get(f"{base}/instance/fetchInstances?instanceName={inst}", headers=hdrs)
@@ -192,10 +192,9 @@ async def whatsapp_debug():
         except Exception as e:
             result["4_webhook_find"] = {"error": str(e)}
 
-        # 5. Set webhook (fix si null)
+        # 5. Set webhook
         webhook_url = f"{APP_PUBLIC_URL}/api/whatsapp/webhook"
         try:
-            # Evolution API v2 attend le payload encapsule dans une cle "webhook"
             wb_payload = {
                 "webhook": {
                     "enabled": True,
@@ -210,9 +209,79 @@ async def whatsapp_debug():
         except Exception as e:
             result["5_webhook_set"] = {"error": str(e)}
 
-    # 6. QR cache
+        # 6. DELETE + CREATE fresh instance (nuclear reset with full response)
+        try:
+            # Delete current instance
+            try:
+                r = await client.delete(f"{base}/instance/delete/{inst}", headers=hdrs)
+                result["6_delete"] = {"status": r.status_code, "body": _truncate(r.json())}
+            except Exception as e:
+                result["6_delete"] = {"error": str(e)}
+
+            import asyncio
+            await asyncio.sleep(2)
+
+            # Create fresh instance with qrcode=true
+            create_payload = {
+                "instanceName": inst,
+                "integration": "WHATSAPP-BAILEYS",
+                "qrcode": True,
+                "webhook": {
+                    "enabled": True,
+                    "url": webhook_url,
+                    "webhookByEvents": False,
+                    "webhookBase64": True,
+                    "events": ["QRCODE_UPDATED", "CONNECTION_UPDATE"],
+                },
+            }
+            r = await client.post(f"{base}/instance/create", json=create_payload, headers=hdrs)
+            create_body = r.json()
+            result["7_create_fresh"] = {
+                "status": r.status_code,
+                "body_keys": list(create_body.keys()) if isinstance(create_body, dict) else str(type(create_body)),
+                "has_qrcode_key": "qrcode" in create_body if isinstance(create_body, dict) else False,
+                "has_code": bool(create_body.get("code")) if isinstance(create_body, dict) else False,
+                "has_base64": bool(create_body.get("base64")) if isinstance(create_body, dict) else False,
+                "full_response": _truncate(create_body, max_len=300),
+            }
+
+            # If QR in create response, store it
+            if isinstance(create_body, dict):
+                from ..services.evolution_api import _store_qr_from_data, _instance_created_at
+                import time
+                _store_qr_from_data(create_body)
+
+            # Wait and try connect
+            await asyncio.sleep(5)
+            r = await client.get(f"{base}/instance/connect/{inst}", headers=hdrs)
+            connect_body = r.json()
+            result["8_connect_after_create"] = {
+                "status": r.status_code,
+                "body_keys": list(connect_body.keys()) if isinstance(connect_body, dict) else str(type(connect_body)),
+                "count": connect_body.get("count", "N/A") if isinstance(connect_body, dict) else "N/A",
+                "has_code": bool(connect_body.get("code")) if isinstance(connect_body, dict) else False,
+                "has_base64": bool(connect_body.get("base64")) if isinstance(connect_body, dict) else False,
+                "full_response": _truncate(connect_body, max_len=300),
+            }
+
+            # Try connect again after another wait
+            await asyncio.sleep(5)
+            r = await client.get(f"{base}/instance/connect/{inst}", headers=hdrs)
+            connect_body2 = r.json()
+            result["9_connect_retry"] = {
+                "status": r.status_code,
+                "count": connect_body2.get("count", "N/A") if isinstance(connect_body2, dict) else "N/A",
+                "has_code": bool(connect_body2.get("code")) if isinstance(connect_body2, dict) else False,
+                "has_base64": bool(connect_body2.get("base64")) if isinstance(connect_body2, dict) else False,
+                "full_response": _truncate(connect_body2, max_len=300),
+            }
+
+        except Exception as e:
+            result["6_nuclear_reset"] = {"error": str(e)}
+
+    # 10. QR cache
     cached = get_cached_qr()
-    result["6_qr_cache"] = {
+    result["10_qr_cache"] = {
         "has_cached_qr": cached is not None,
         "code_present": bool(cached.get("code")) if cached else False,
         "base64_present": bool(cached.get("base64")) if cached else False,
