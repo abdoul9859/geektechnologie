@@ -37,13 +37,7 @@ services:
       mongo:
         condition: service_healthy
       evolution_api:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api')\""]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
+        condition: service_started
 
   mongo:
     image: mongo:7
@@ -101,12 +95,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"const http = require('http'); const r = http.get('http://localhost:8080/', res => { process.exit(res.statusCode === 200 ? 0 : 1) }); r.on('error', () => process.exit(1)); r.setTimeout(5000, () => process.exit(1));\""]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
 
   redis:
     image: redis:7-alpine
