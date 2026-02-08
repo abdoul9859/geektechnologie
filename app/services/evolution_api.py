@@ -5,6 +5,7 @@ Tous les appels WhatsApp (QR, status, envoi texte, envoi media) passent par ce m
 Appels directs a Evolution API -- pas d'intermediaire n8n.
 """
 
+import asyncio
 import os
 import logging
 import time
@@ -116,68 +117,100 @@ def _has_qr(data: dict) -> bool:
     return False
 
 
+async def _connect_instance() -> dict:
+    """Appelle /instance/connect/ et retourne la reponse brute."""
+    instance = EVOLUTION_INSTANCE_NAME
+    url = f"{_base_url()}/instance/connect/{instance}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.get(url, headers=_headers())
+        r.raise_for_status()
+        return r.json()
+
+
+async def _restart_instance_api() -> None:
+    """Redemarre l'instance via l'API Evolution (PUT /instance/restart/)."""
+    instance = EVOLUTION_INSTANCE_NAME
+    url = f"{_base_url()}/instance/restart/{instance}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.put(url, headers=_headers())
+        logger.info(f"[EvolutionAPI] restart API response: {r.status_code} {r.text[:200]}")
+
+
 async def get_qr_code() -> dict:
     """Recupere le QR code pour scanner.
 
-    Evolution API v2 retourne le QR uniquement a la creation de l'instance.
-    Les appels suivants a /instance/connect/ retournent {"count": N}.
-    Si pas de QR, on supprime et recree l'instance pour forcer la generation.
+    Evolution API v2 retourne le QR dans /instance/connect/ seulement quand
+    l'instance est en etat 'close'. Si elle est en 'connecting' (QR deja genere),
+    il retourne {"count": N}. Dans ce cas, on redemarre l'instance pour
+    forcer un nouvel etat 'close', puis on reconnecte pour obtenir le QR.
     """
     global _last_qr_recreate
     instance = EVOLUTION_INSTANCE_NAME
 
     # 1. Essayer /instance/connect/ d'abord
-    url = f"{_base_url()}/instance/connect/{instance}"
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        r = await client.get(url, headers=_headers())
-        r.raise_for_status()
-        data = r.json()
+    try:
+        data = await _connect_instance()
+        keys = list(data.keys()) if isinstance(data, dict) else str(type(data))
+        logger.info(f"[EvolutionAPI] connect response keys: {keys}")
 
-    logger.info(f"[EvolutionAPI] connect response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        if _has_qr(data):
+            return data
+    except Exception as e:
+        logger.warning(f"[EvolutionAPI] connect failed: {e}")
+        data = {}
 
-    if _has_qr(data):
-        return data
-
-    # 2. Pas de QR -- supprimer et recreer l'instance
+    # 2. Pas de QR -- redemarrer l'instance et reessayer
     now = time.time()
     if (now - _last_qr_recreate) < _QR_RECREATE_MIN_INTERVAL:
-        logger.debug("[EvolutionAPI] Trop tot pour recreer l'instance, retour cache vide")
+        logger.debug("[EvolutionAPI] Trop tot pour redemarrer, attente...")
         return data
 
     _last_qr_recreate = now
-    logger.info("[EvolutionAPI] Pas de QR dans la reponse, suppression + recreation de l'instance...")
+    logger.info("[EvolutionAPI] Pas de QR, redemarrage de l'instance...")
 
+    # Essayer plusieurs methodes de reset
+    reset_done = False
+
+    # Methode 1: PUT /instance/restart/
     try:
-        await delete_instance()
+        await _restart_instance_api()
+        reset_done = True
     except Exception as e:
-        logger.warning(f"[EvolutionAPI] Erreur suppression instance: {e}")
+        logger.warning(f"[EvolutionAPI] restart API failed: {e}")
 
-    # Recreer l'instance avec qrcode=true
-    create_url = f"{_base_url()}/instance/create"
-    payload = {
-        "instanceName": instance,
-        "integration": "WHATSAPP-BAILEYS",
-        "qrcode": True,
-    }
-    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-        r = await client.post(create_url, json=payload, headers=_headers())
-        r.raise_for_status()
-        create_data = r.json()
+    # Methode 2: logout si restart a echoue
+    if not reset_done:
+        try:
+            await logout_instance()
+            reset_done = True
+        except Exception as e:
+            logger.warning(f"[EvolutionAPI] logout failed: {e}")
 
-    logger.info(f"[EvolutionAPI] Instance recreee, reponse keys: {list(create_data.keys()) if isinstance(create_data, dict) else type(create_data)}")
+    # Methode 3: delete + create si tout a echoue
+    if not reset_done:
+        try:
+            await delete_instance()
+        except Exception:
+            pass
+        try:
+            create_data = await ensure_instance_exists()
+            if _has_qr(create_data):
+                return create_data
+        except Exception as e:
+            logger.error(f"[EvolutionAPI] delete+create failed: {e}")
 
-    # Le QR peut etre dans la reponse de creation directement ou dans un sous-objet
-    if _has_qr(create_data):
-        return create_data
+    # Attendre que l'instance se reinitialise
+    await asyncio.sleep(3)
 
-    # Parfois le QR est dans create_data["qrcode"] ou create_data nested
-    if isinstance(create_data, dict):
-        for key in ("qrcode", "qr"):
-            nested = create_data.get(key)
-            if isinstance(nested, dict) and _has_qr(nested):
-                return nested
-
-    return create_data
+    # 3. Reconnecter pour obtenir le QR
+    try:
+        data = await _connect_instance()
+        keys = list(data.keys()) if isinstance(data, dict) else str(type(data))
+        logger.info(f"[EvolutionAPI] connect after reset, keys: {keys}")
+        return data
+    except Exception as e:
+        logger.error(f"[EvolutionAPI] connect after reset failed: {e}")
+        return {}
 
 
 async def delete_instance() -> dict:
@@ -201,13 +234,17 @@ async def logout_instance() -> dict:
 
 
 async def restart_instance() -> dict:
-    """Supprime et recree l'instance pour generer un nouveau QR code."""
+    """Redemarre l'instance pour generer un nouveau QR code."""
     global _last_qr_recreate
     _last_qr_recreate = 0  # Reset le timer pour forcer la recreation
     try:
-        await delete_instance()
+        await _restart_instance_api()
     except Exception:
-        pass
+        try:
+            await logout_instance()
+        except Exception:
+            pass
+    await asyncio.sleep(2)
     return await ensure_instance_exists()
 
 
