@@ -48,6 +48,36 @@ async def _enrich_product_with_variants(product):
     return product
 
 
+async def _enrich_products_batch(products_list):
+    """Batch-enrich multiple products with variants + attributes in 2 queries instead of N+1."""
+    if not products_list:
+        return
+    pids = [p.product_id for p in products_list]
+    # 1 query: all variants for all products
+    all_variants = await ProductVariant.find(
+        {"product_id": {"$in": pids}}
+    ).sort(ProductVariant.variant_id).to_list()
+    # 1 query: all attributes for all variants
+    vids = [v.variant_id for v in all_variants]
+    all_attrs = await ProductVariantAttribute.find(
+        {"variant_id": {"$in": vids}}
+    ).to_list() if vids else []
+    # Group attrs by variant_id
+    attrs_by_vid = {}
+    for a in all_attrs:
+        attrs_by_vid.setdefault(a.variant_id, []).append(a)
+    # Assign attrs to variants
+    for v in all_variants:
+        v.attributes = attrs_by_vid.get(v.variant_id, [])
+    # Group variants by product_id
+    variants_by_pid = {}
+    for v in all_variants:
+        variants_by_pid.setdefault(v.product_id, []).append(v)
+    # Assign to products
+    for p in products_list:
+        p.variants = variants_by_pid.get(p.product_id, [])
+
+
 @router.get("/id/{product_id}/can-modify")
 async def can_modify_product(
     product_id: int,
@@ -466,9 +496,8 @@ async def list_products(
     except Exception:
         pass
 
-    # Enrich with variants
-    for p in products:
-        await _enrich_product_with_variants(p)
+    # Enrich with variants (batch: 2 queries instead of N+1)
+    await _enrich_products_batch(products)
 
     # Si un filtre de condition est actif, ne retourner que les variantes correspondant a cette condition
     if condition:
