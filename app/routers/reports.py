@@ -83,77 +83,85 @@ async def get_dashboard_metrics(
     try:
         now = datetime.now()
         since = now - timedelta(days=max(1, days))
-        since_date = since.date()
-
-        # Pre-fetch all necessary data
-        all_invoices = await Invoice.find().to_list()
         paid_statuses = ["payee", "PAID"]
 
-        # Panier moyen sur factures payees (FR/EN)
-        paid_invoices_period = [
-            inv for inv in all_invoices
-            if inv.status in paid_statuses and inv.date
-            and _safe_date(inv.date) and _safe_date(inv.date) >= since_date
+        # 1. Panier moyen — aggregation on paid invoices in period
+        pipeline_avg = [
+            {"$match": {"status": {"$in": paid_statuses}, "date": {"$gte": since}}},
+            {"$group": {"_id": None, "total": {"$sum": "$total"}, "count": {"$sum": 1}}},
         ]
-        num_invoices = len(paid_invoices_period)
-        total_revenue = sum(float(inv.total or 0) for inv in paid_invoices_period)
+        avg_result = await Invoice.aggregate(pipeline_avg).to_list()
+        if avg_result:
+            total_revenue = float(str(avg_result[0]["total"]))
+            num_invoices = int(avg_result[0]["count"])
+        else:
+            total_revenue, num_invoices = 0.0, 0
         avg_ticket = float(total_revenue / num_invoices) if num_invoices else 0.0
 
-        # Conversion devis -> factures (N jours)
-        all_quotations = await Quotation.find().to_list()
-        quotes_total = sum(
-            1 for q in all_quotations
-            if q.date and _safe_date(q.date) and _safe_date(q.date) >= since_date
-        )
-        converted_quotes = len(set(
-            inv.quotation_id for inv in all_invoices
-            if inv.quotation_id is not None and inv.date
-            and _safe_date(inv.date) and _safe_date(inv.date) >= since_date
-        ))
+        # 2. Conversion devis -> factures — count queries
+        quotes_total = await Quotation.find({"date": {"$gte": since}}).count()
+        pipeline_conv = [
+            {"$match": {"quotation_id": {"$ne": None}, "date": {"$gte": since}}},
+            {"$group": {"_id": "$quotation_id"}},
+        ]
+        converted_quotes = len(await Invoice.aggregate(pipeline_conv).to_list())
         conversion_rate = float((converted_quotes / quotes_total) * 100) if quotes_total else 0.0
 
-        # Stock critique
-        all_products = await Product.find().to_list()
-        out_of_stock = sum(1 for p in all_products if (p.quantity or 0) == 0 or p.quantity is None)
-        low_stock = sum(1 for p in all_products if (p.quantity or 0) > 0 and (p.quantity or 0) <= 3)
+        # 3. Stock critique — count queries
+        out_of_stock = await Product.find(
+            {"$or": [{"quantity": 0}, {"quantity": None}, {"quantity": {"$exists": False}}]}
+        ).count()
+        low_stock = await Product.find(
+            {"quantity": {"$gt": 0, "$lte": 3}}
+        ).count()
 
-        # Clients actifs (90 jours)
+        # 4. Clients actifs (90 jours) — distinct aggregation
         since_90 = now - timedelta(days=90)
-        active_customers = len(set(
-            inv.client_id for inv in all_invoices
-            if inv.client_id is not None and inv.date
-            and _safe_date(inv.date) and _safe_date(inv.date) >= since_90.date()
-        ))
+        pipeline_active = [
+            {"$match": {"client_id": {"$ne": None}, "date": {"$gte": since_90}}},
+            {"$group": {"_id": "$client_id"}},
+        ]
+        active_customers = len(await Invoice.aggregate(pipeline_active).to_list())
 
-        # Repartition des paiements (N jours)
-        all_payments = await InvoicePayment.find().to_list()
-        method_amounts = defaultdict(float)
-        for pay in all_payments:
-            if pay.payment_date and _safe_date(pay.payment_date) and _safe_date(pay.payment_date) >= since_date:
-                method_amounts[pay.payment_method or "Non specifie"] += float(pay.amount or 0)
+        # 5. Repartition des paiements — aggregation
+        pipeline_pay = [
+            {"$match": {"payment_date": {"$gte": since}}},
+            {"$group": {
+                "_id": {"$ifNull": ["$payment_method", "Non specifie"]},
+                "amount": {"$sum": "$amount"},
+            }},
+            {"$sort": {"amount": -1}},
+        ]
+        pay_result = await InvoicePayment.aggregate(pipeline_pay).to_list()
+        payments_breakdown = [
+            {"method": r["_id"], "amount": float(str(r["amount"]))}
+            for r in pay_result
+        ]
 
-        payments_breakdown = sorted(
-            [{"method": method, "amount": amt} for method, amt in method_amounts.items()],
-            key=lambda x: x["amount"],
-            reverse=True
-        )
+        # 6. Top produits par CA — two-step aggregation
+        pipeline_inv_ids = [
+            {"$match": {"date": {"$gte": since}}},
+            {"$project": {"invoice_id": 1}},
+        ]
+        inv_ids_result = await Invoice.aggregate(pipeline_inv_ids).to_list()
+        inv_ids = [r["invoice_id"] for r in inv_ids_result]
 
-        # Top produits par CA (N jours)
-        inv_ids_in_period = set(
-            inv.invoice_id for inv in all_invoices
-            if inv.date and _safe_date(inv.date) and _safe_date(inv.date) >= since_date
-        )
-        all_items = await InvoiceItem.find().to_list()
-        product_revenue = defaultdict(float)
-        for item in all_items:
-            if item.invoice_id in inv_ids_in_period:
-                product_revenue[item.product_name or "-"] += float(item.total or 0)
-
-        top_products = sorted(
-            [{"name": name, "revenue": rev} for name, rev in product_revenue.items()],
-            key=lambda x: x["revenue"],
-            reverse=True
-        )[:5]
+        top_products = []
+        if inv_ids:
+            pipeline_top = [
+                {"$match": {"invoice_id": {"$in": inv_ids}}},
+                {"$group": {
+                    "_id": {"$ifNull": ["$product_name", "-"]},
+                    "revenue": {"$sum": "$total"},
+                }},
+                {"$sort": {"revenue": -1}},
+                {"$limit": 5},
+            ]
+            top_result = await InvoiceItem.aggregate(pipeline_top).to_list()
+            top_products = [
+                {"name": r["_id"], "revenue": float(str(r["revenue"]))}
+                for r in top_result
+            ]
 
         return {
             "avg_ticket": avg_ticket,

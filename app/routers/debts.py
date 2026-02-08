@@ -66,15 +66,21 @@ async def get_debts(
 
         # 1. Recuperer les creances clients (inclus: factures impayees + creances manuelles)
         if type is None or type == "client":
-            # a) Factures client impayees
-            # Build a filter for invoices with remaining amount > 0
-            all_invoices = await Invoice.find().to_list()
-            # Filter in Python: remaining > 0
+            # a) Factures client impayees — filter at DB level
+            _remaining_expr = {
+                "$ifNull": ["$remaining_amount",
+                    {"$subtract": [{"$ifNull": ["$total", 0]}, {"$ifNull": ["$paid_amount", 0]}]}
+                ]
+            }
+            open_invoices_raw = await Invoice.find({
+                "$expr": {"$gt": [_remaining_expr, 0]}
+            }).to_list()
+
             open_invoices = []
-            for inv in all_invoices:
-                amount = float(inv.total or 0)
-                paid = float(inv.paid_amount or 0)
-                remaining = float(inv.remaining_amount if inv.remaining_amount is not None else (amount - paid))
+            for inv in open_invoices_raw:
+                amount = float(str(inv.total or 0))
+                paid = float(str(inv.paid_amount or 0))
+                remaining = float(str(inv.remaining_amount)) if inv.remaining_amount is not None else (amount - paid)
                 if remaining > 0:
                     open_invoices.append((inv, remaining))
 
@@ -240,19 +246,26 @@ async def get_debts_stats(
         today = date.today()
 
         # 1. Statistiques des creances clients
-        invs = await Invoice.find().to_list()
+        # Only load invoices with remaining > 0 from DB
+        _remaining_expr = {
+            "$ifNull": ["$remaining_amount",
+                {"$subtract": [{"$ifNull": ["$total", 0]}, {"$ifNull": ["$paid_amount", 0]}]}
+            ]
+        }
+        open_invoices = await Invoice.find({
+            "$expr": {"$gt": [_remaining_expr, 0]}
+        }).to_list()
         def remaining_of(i):
-            return float(i.remaining_amount if i.remaining_amount is not None else max(0.0, float(i.total or 0) - float(i.paid_amount or 0)))
-        open_invoices = [i for i in invs if remaining_of(i) > 0]
-        client_total_amount = sum(float(i.total or 0) for i in open_invoices)
-        client_total_paid = sum(float(i.paid_amount or 0) for i in open_invoices)
+            return float(str(i.remaining_amount)) if i.remaining_amount is not None else max(0.0, float(str(i.total or 0)) - float(str(i.paid_amount or 0)))
+        client_total_amount = sum(float(str(i.total or 0)) for i in open_invoices)
+        client_total_paid = sum(float(str(i.paid_amount or 0)) for i in open_invoices)
         client_total_remaining = sum(remaining_of(i) for i in open_invoices)
 
         # 2. Statistiques des dettes fournisseurs
         supplier_invs = await SupplierInvoice.find({"remaining_amount": {"$gt": 0}}).to_list()
-        supplier_total_amount = sum(float(i.amount or 0) for i in supplier_invs)
-        supplier_total_paid = sum(float(i.paid_amount or 0) for i in supplier_invs)
-        supplier_total_remaining = sum(float(i.remaining_amount or 0) for i in supplier_invs)
+        supplier_total_amount = sum(float(str(i.amount or 0)) for i in supplier_invs)
+        supplier_total_paid = sum(float(str(i.paid_amount or 0)) for i in supplier_invs)
+        supplier_total_remaining = sum(float(str(i.remaining_amount or 0)) for i in supplier_invs)
 
         # 3. Calcul des totaux combines
         total_client_debts = len(open_invoices)

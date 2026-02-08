@@ -60,32 +60,34 @@ async def get_daily_sales(
         .to_list()
     )
 
+    # Batch-load invoices for filtering and status attachment
+    inv_ids_all = list({int(s.invoice_id) for s in sales if getattr(s, "invoice_id", None)})
+    invoices_map = {}
+    if inv_ids_all:
+        invoices_list = await Invoice.find({"invoice_id": {"$in": inv_ids_all}}).to_list()
+        invoices_map = {int(inv.invoice_id): inv for inv in invoices_list}
+
     if role != "admin":
-        # Filter out sales linked to unpaid invoices
+        allowed_statuses = {"payee", "PAID", "partiellement payee"}
         filtered_sales = []
         for s in sales:
             if s.invoice_id is None:
                 filtered_sales.append(s)
             else:
-                inv = await Invoice.find_one(Invoice.invoice_id == s.invoice_id)
-                if inv and inv.status in ["payee", "PAID", "partiellement payee"]:
+                inv = invoices_map.get(int(s.invoice_id))
+                if inv and inv.status in allowed_statuses:
                     filtered_sales.append(s)
         sales = filtered_sales
 
-    # Attacher le statut de paiement des factures liees
-    try:
-        inv_ids = [int(s.invoice_id) for s in sales if getattr(s, "invoice_id", None)]
-        if inv_ids:
-            invoices = await Invoice.find({"invoice_id": {"$in": inv_ids}}).to_list()
-            st = {int(inv.invoice_id): inv.status for inv in invoices}
-            for s in sales:
-                try:
-                    if s.invoice_id:
-                        setattr(s, "invoice_status", st.get(int(s.invoice_id)))
-                except Exception:
-                    pass
-    except Exception:
-        pass
+    # Attach invoice payment status
+    for s in sales:
+        try:
+            if s.invoice_id:
+                inv = invoices_map.get(int(s.invoice_id))
+                if inv:
+                    setattr(s, "invoice_status", inv.status)
+        except Exception:
+            pass
 
     return sales
 
@@ -317,15 +319,21 @@ async def get_sales_summary(
     # Get all matching sales
     all_sales = await DailySale.find(filters).to_list()
 
-    # Filter for non-admins
+    # Filter for non-admins — batch load invoices
     if role != "admin":
+        inv_ids_check = list({int(s.invoice_id) for s in all_sales if s.invoice_id is not None})
+        inv_map = {}
+        if inv_ids_check:
+            inv_list = await Invoice.find({"invoice_id": {"$in": inv_ids_check}}).to_list()
+            inv_map = {int(inv.invoice_id): inv for inv in inv_list}
+        allowed_statuses = {"payee", "PAID", "partiellement payee"}
         filtered_sales = []
         for s in all_sales:
             if s.invoice_id is None:
                 filtered_sales.append(s)
             else:
-                inv = await Invoice.find_one(Invoice.invoice_id == s.invoice_id)
-                if inv and inv.status in ["payee", "PAID", "partiellement payee"]:
+                inv = inv_map.get(int(s.invoice_id))
+                if inv and inv.status in allowed_statuses:
                     filtered_sales.append(s)
         all_sales = filtered_sales
 
