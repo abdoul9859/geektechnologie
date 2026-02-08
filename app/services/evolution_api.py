@@ -315,7 +315,8 @@ async def logout_instance() -> dict:
     instance = EVOLUTION_INSTANCE_NAME
     url = f"{_base_url()}/instance/logout/{instance}"
     async with httpx.AsyncClient(timeout=15.0) as client:
-        r = await client.delete(url, headers=_headers())
+        # Evolution API v2 utilise POST pour logout (pas DELETE)
+        r = await client.post(url, headers=_headers())
         r.raise_for_status()
         return r.json()
 
