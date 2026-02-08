@@ -102,11 +102,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/ || exit 1"]
+      test: ["CMD-SHELL", "node -e \"const http = require('http'); const r = http.get('http://localhost:8080/', res => { process.exit(res.statusCode === 200 ? 0 : 1) }); r.on('error', () => process.exit(1)); r.setTimeout(5000, () => process.exit(1));\""]
       interval: 15s
       timeout: 10s
-      retries: 8
-      start_period: 40s
+      retries: 10
+      start_period: 60s
 
   redis:
     image: redis:7-alpine
