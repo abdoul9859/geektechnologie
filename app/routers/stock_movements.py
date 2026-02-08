@@ -113,13 +113,6 @@ async def create_stock_movement_endpoint(
 
         await product.save()
 
-        # Synchroniser le stock avec Google Sheets (si active)
-        try:
-            from ..services.google_sheets_sync_helper import sync_product_stock_to_sheets
-            await sync_product_stock_to_sheets(movement_data.product_id)
-        except Exception as e:
-            logging.warning(f"Echec de synchronisation Google Sheets pour le produit {movement_data.product_id}: {e}")
-
         return db_movement
 
     except HTTPException:

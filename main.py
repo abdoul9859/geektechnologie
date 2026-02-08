@@ -62,7 +62,7 @@ from app.routers import (
     suppliers, debts, delivery_notes, bank_transactions, reports,
     user_settings, migrations, cache, dashboard, supplier_invoices,
     daily_recap, daily_purchases, daily_requests, daily_sales,
-    google_sheets, client_debts, backup, maintenances,
+    client_debts, backup, maintenances, whatsapp,
 )
 from app.init_db import init_database
 from app.auth import get_current_user
@@ -166,6 +166,13 @@ async def startup_event():
             if maintenance_notifier is not None:
                 maintenance_notifier.start_background()
                 print("✅ Notificateur de maintenances démarré")
+        # Initialiser l'instance WhatsApp Evolution API
+        try:
+            from app.services.evolution_api import ensure_instance_exists
+            await ensure_instance_exists()
+            print("✅ Instance WhatsApp Evolution API prete")
+        except Exception as e:
+            print(f"⚠️ Evolution API non disponible: {e}")
         print("✅ Application démarrée avec succès")
     except Exception as e:
         print(f"❌ Erreur lors du démarrage: {e}")
@@ -275,8 +282,8 @@ app.include_router(daily_recap.router)
 app.include_router(daily_purchases.router)
 app.include_router(daily_requests.router)
 app.include_router(daily_sales.router)
-app.include_router(google_sheets.router)
 app.include_router(maintenances.router)
+app.include_router(whatsapp.router)
 
 # Route pour le favicon
 @app.get("/favicon.ico")
@@ -514,61 +521,12 @@ async def daily_requests_page(request: Request):
 async def daily_sales_page(request: Request):
     return templates.TemplateResponse("daily_sales.html", {"request": request, "global_settings": await _load_company_settings()})
 
-@app.get("/google-sheets-sync", response_class=HTMLResponse)
-async def google_sheets_sync_page(request: Request):
-    return templates.TemplateResponse("google_sheets_sync.html", {"request": request, "global_settings": await _load_company_settings()})
-
 @app.get("/whatsapp", response_class=HTMLResponse)
 async def whatsapp_page(request: Request):
     return templates.TemplateResponse("whatsapp.html", {
         "request": request,
         "global_settings": await _load_company_settings(),
     })
-
-@app.get("/api/whatsapp/qr")
-async def whatsapp_qr_proxy():
-    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp_baileys:3002")
-    url = f"{base_url.rstrip('/')}/api/qr"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            return JSONResponse(content=r.json())
-    except Exception:
-        return JSONResponse(status_code=503, content={"status": "error"})
-
-@app.get("/api/whatsapp/status")
-async def whatsapp_status_proxy():
-    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp_baileys:3002")
-    url = f"{base_url.rstrip('/')}/api/status"
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            return JSONResponse(content=r.json())
-    except Exception:
-        return JSONResponse(status_code=503, content={"status": "not_ready", "qrCode": False})
-
-@app.get("/api/whatsapp/restart")
-async def whatsapp_restart_proxy():
-    base_url = os.getenv("WHATSAPP_SERVICE_URL", "http://whatsapp_baileys:3002")
-    url = f"{base_url.rstrip('/')}/api/restart"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.post(url)
-            r.raise_for_status()
-            return JSONResponse(content=r.json())
-    except Exception:
-        return JSONResponse(status_code=503, content={"success": False, "error": "Service indisponible"})
-
-# ===== Legacy compatibility endpoints =====
-@app.get("/api/status")
-async def whatsapp_status_legacy():
-    return await whatsapp_status_proxy()
-
-@app.get("/api/qr")
-async def whatsapp_qr_legacy():
-    return await whatsapp_qr_proxy()
 
 # ===================== PRINT ROUTES (Invoice, Delivery Note) =====================
 

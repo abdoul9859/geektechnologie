@@ -876,46 +876,35 @@ async def send_quotation_whatsapp(
     data: SendQuotationWhatsAppRequest,
     current_user=Depends(get_current_user),
 ):
-    """Envoyer un devis par WhatsApp via n8n"""
+    """Envoyer un devis par WhatsApp via Evolution API"""
+    from ..services.evolution_api import send_quotation_whatsapp as _send_quotation_wa
     try:
-        # Vérifier que le devis existe
         quotation = await Quotation.find_one(Quotation.quotation_id == data.quotation_id)
         if not quotation:
-            raise HTTPException(status_code=404, detail="Devis non trouvé")
+            raise HTTPException(status_code=404, detail="Devis non trouve")
 
-        # Construire l'URL du PDF du devis
         app_public_url = os.getenv("APP_PUBLIC_URL", str(request.base_url).rstrip('/'))
         pdf_url = f"{app_public_url}/quotations/print/{data.quotation_id}"
 
-        # Appeler le webhook n8n pour envoyer via WhatsApp
-        webhook_url = f"{N8N_BASE_URL}/webhook/send-quotation-whatsapp"
-
         client_obj = await Client.find_one(Client.client_id == quotation.client_id)
 
-        payload = {
-            "quotation_id": data.quotation_id,
-            "quotation_number": quotation.quotation_number,
-            "phone": data.phone,
-            "pdf_url": pdf_url,
-            "client_name": client_obj.name if client_obj else "Client",
-            "total": float(quotation.total or 0)
-        }
+        await _send_quotation_wa(
+            phone=data.phone,
+            quotation_number=quotation.quotation_number,
+            client_name=client_obj.name if client_obj else "Client",
+            total=float(quotation.total or 0),
+            pdf_url=pdf_url,
+        )
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(webhook_url, json=payload)
+        quotation.is_sent = True
+        await quotation.save()
+        return {"success": True, "message": "Devis envoye par WhatsApp"}
 
-        if response.status_code == 200:
-            # Marquer le devis comme envoyé
-            quotation.is_sent = True
-            await quotation.save()
-            return {"success": True, "message": "Devis envoyé par WhatsApp"}
-        else:
-            logging.error(f"Erreur n8n WhatsApp: {response.status_code} - {response.text}")
-            return {"success": False, "message": f"Erreur n8n: {response.text}"}
-
-    except httpx.RequestError as e:
-        logging.error(f"Erreur connexion n8n: {e}")
-        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPStatusError as e:
+        logging.error(f"Erreur Evolution API: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=502, detail="Erreur Evolution API")
     except HTTPException:
         raise
     except Exception as e:

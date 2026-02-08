@@ -106,42 +106,13 @@ class WarrantyNotifier:
             await self._mark_sent(invoice.invoice_id)
 
     def _send_whatsapp_n8n(self, to_phone, body, invoice_id=None):
-        n8n_base = os.getenv("N8N_BASE_URL", "http://n8n:5678")
-        webhook_url = f"{n8n_base}/webhook/send-warranty-reminder-whatsapp"
-        to_norm = self._normalize_phone(to_phone)
-        if not to_norm:
-            return False
-        payload = {'phone': to_norm, 'message': body, 'invoice_id': invoice_id, 'app': os.getenv('APP_NAME', 'GeekTechnologie'), 'timestamp': datetime.now().isoformat()}
-        try:
-            data_bytes = json.dumps(payload).encode('utf-8')
-            req = _urlrequest.Request(webhook_url, data=data_bytes, method='POST')
-            req.add_header('Content-Type', 'application/json')
-            with _urlrequest.urlopen(req, timeout=30) as resp:
-                return 200 <= resp.status < 300
-        except Exception as e:
-            print(f"[WarrantyNotifier] n8n error: {e}")
-            return False
+        """Envoie un message WhatsApp via Evolution API (direct)."""
+        from .evolution_api import send_text_sync
+        return send_text_sync(to_phone, body)
 
     def _normalize_phone(self, raw):
-        if not raw:
-            return None
-        s = str(raw).strip()
-        for ch in [' ', '-', '(', ')', '.']:
-            s = s.replace(ch, '')
-        if s.startswith('00'):
-            s = '+' + s[2:]
-        if s.startswith('+') and s[1:].isdigit():
-            return s
-        cc_digits = self._default_cc.lstrip('+')
-        if s.isdigit() and s.startswith(cc_digits):
-            return '+' + s
-        if s.startswith('0') and s[1:].isdigit():
-            return f"{self._default_cc}{s.lstrip('0')}"
-        if s.isdigit() and len(s) == 9 and s[0] == '7':
-            return f"{self._default_cc}{s}"
-        if s.isdigit():
-            return f"{self._default_cc}{s}"
-        return None
+        from .evolution_api import normalize_phone
+        return normalize_phone(raw)
 
 
 warranty_notifier = WarrantyNotifier()

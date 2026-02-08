@@ -267,7 +267,8 @@ async def send_maintenance_whatsapp(
     data: SendMaintenanceWhatsAppRequest,
     current_user = Depends(get_current_user)
 ):
-    """Envoyer un rapport/fiche de maintenance par WhatsApp via n8n."""
+    """Envoyer un rapport/fiche de maintenance par WhatsApp via Evolution API."""
+    from ..services.evolution_api import send_maintenance_whatsapp as _send_maintenance_wa
     try:
         maintenance = await Maintenance.find_one(Maintenance.maintenance_id == data.maintenance_id)
         if not maintenance:
@@ -277,28 +278,23 @@ async def send_maintenance_whatsapp(
         app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
         pdf_url = f"{app_public_url}/api/maintenances/{data.maintenance_id}/print?kind={kind}"
 
-        webhook_url = f"{N8N_BASE_URL}/webhook/send-maintenance-whatsapp"
-        payload = {
-            "maintenance_id": data.maintenance_id,
-            "maintenance_number": maintenance.maintenance_number,
-            "phone": data.phone,
-            "pdf_url": pdf_url,
-            "client_name": maintenance.client_name,
-            "device": f"{maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}".strip(),
-            "kind": kind,
-        }
+        device = f"{maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}".strip()
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(webhook_url, json=payload)
+        await _send_maintenance_wa(
+            phone=data.phone,
+            maintenance_number=maintenance.maintenance_number,
+            client_name=maintenance.client_name,
+            device=device,
+            pdf_url=pdf_url,
+            kind=kind,
+        )
+        return {"success": True, "message": "Document de maintenance envoye par WhatsApp"}
 
-        if response.status_code == 200:
-            return {"success": True, "message": "Document de maintenance envoye par WhatsApp"}
-        logging.error(f"Erreur n8n WhatsApp maintenance: {response.status_code} - {response.text}")
-        return {"success": False, "message": f"Erreur n8n: {response.text}"}
-
-    except httpx.RequestError as e:
-        logging.error(f"Erreur connexion n8n (maintenance WhatsApp): {e}")
-        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPStatusError as e:
+        logging.error(f"Erreur Evolution API: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=502, detail="Erreur Evolution API")
     except HTTPException:
         raise
     except Exception as e:
@@ -693,48 +689,39 @@ async def send_reminder_whatsapp(
     data: SendReminderWhatsAppRequest,
     current_user = Depends(get_current_user)
 ):
-    """Envoyer un rappel de recuperation via n8n webhook."""
+    """Envoyer un rappel de recuperation via Evolution API."""
+    from ..services.evolution_api import send_reminder_text as _send_reminder
     try:
         maintenance = await Maintenance.find_one(Maintenance.maintenance_id == maintenance_id)
         if not maintenance:
             raise HTTPException(status_code=404, detail="Maintenance non trouvee")
 
-        # Construire le message de rappel
         device = f"{maintenance.device_type} {maintenance.device_brand or ''} {maintenance.device_model or ''}".strip()
         pickup_date = maintenance.pickup_deadline.strftime('%d/%m/%Y') if maintenance.pickup_deadline else 'Non definie'
 
-        message = f"Bonjour {maintenance.client_name},\n\nVotre appareil ({device}) est pret a etre recupere chez Geek Technologie.\n\nNumero de fiche: {maintenance.maintenance_number}\nDate limite: {pickup_date}\n\nMerci de venir le recuperer dans les plus brefs delais.\n\nCordialement,\nGeek Technologie"
+        message = (
+            f"Bonjour {maintenance.client_name},\n\n"
+            f"Votre appareil ({device}) est pret a etre recupere chez Geek Technologie.\n\n"
+            f"Numero de fiche: {maintenance.maintenance_number}\n"
+            f"Date limite: {pickup_date}\n\n"
+            f"Merci de venir le recuperer dans les plus brefs delais.\n\n"
+            f"Cordialement,\nGeek Technologie"
+        )
 
-        # Appeler le webhook n8n
-        webhook_url = f"{N8N_BASE_URL}/webhook/send-maintenance-reminder-whatsapp"
+        await _send_reminder(phone=data.phone, message=message)
 
-        payload = {
-            "maintenance_id": maintenance_id,
-            "maintenance_number": maintenance.maintenance_number,
-            "phone": data.phone,
-            "message": message,
-            "client_name": maintenance.client_name,
-            "device": device
-        }
+        maintenance.reminder_sent = True
+        maintenance.reminder_sent_date = datetime.now()
+        maintenance.updated_at = datetime.utcnow()
+        await maintenance.save()
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(webhook_url, json=payload)
+        return {"success": True, "message": "Rappel de recuperation envoye par WhatsApp"}
 
-        if response.status_code == 200:
-            # Marquer le rappel comme envoye
-            maintenance.reminder_sent = True
-            maintenance.reminder_sent_date = datetime.now()
-            maintenance.updated_at = datetime.utcnow()
-            await maintenance.save()
-
-            return {"success": True, "message": "Rappel de recuperation envoye par WhatsApp"}
-
-        logging.error(f"Erreur n8n rappel WhatsApp: {response.status_code} - {response.text}")
-        return {"success": False, "message": f"Erreur n8n: {response.text}"}
-
-    except httpx.RequestError as e:
-        logging.error(f"Erreur connexion n8n (rappel WhatsApp): {e}")
-        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPStatusError as e:
+        logging.error(f"Erreur Evolution API: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=502, detail="Erreur Evolution API")
     except HTTPException:
         raise
     except Exception as e:

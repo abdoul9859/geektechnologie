@@ -18,14 +18,14 @@ services:
       INIT_DB_ON_STARTUP: "false"
       SEED_DEFAULT_DATA: "false"
       ENABLE_MIGRATIONS_WORKER: "false"
-      GOOGLE_SHEETS_CREDENTIALS_PATH: /app/credentials/symbolic-folio-470422-v3-71562b79a03f.json
-      GOOGLE_SHEETS_SPREADSHEET_ID: 1VHMujdZw-iPs28pz1rC9Ol72T9l9YTW6Wr9j5ujEsXQ
-      GOOGLE_SHEETS_WORKSHEET_NAME: Les produits
-      GOOGLE_SHEETS_AUTO_SYNC: "true"
       # n8n base URL pour les webhooks (sans path)
       N8N_BASE_URL: "http://n8n:5678"
       # URL publique de l'application pour les liens accessibles depuis n8n
       APP_PUBLIC_URL: "http://nitek_app:8000"
+      # Evolution API WhatsApp
+      EVOLUTION_API_URL: "http://evolution_api:8080"
+      EVOLUTION_API_KEY: "${EVOLUTION_API_KEY:-your-api-key}"
+      EVOLUTION_INSTANCE_NAME: "${EVOLUTION_INSTANCE_NAME:-geektech}"
     ports:
       - "127.0.0.1:8001:8000"
     volumes:
@@ -35,6 +35,8 @@ services:
     restart: unless-stopped
     depends_on:
       mongo:
+        condition: service_healthy
+      evolution_api:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api"]
@@ -61,18 +63,65 @@ services:
       retries: 5
       start_period: 15s
 
-  whatsapp-baileys:
-    build:
-      context: ./whatsapp-baileys
-      dockerfile: Dockerfile
-    container_name: whatsapp_baileys
-    ports:
-      - "0.0.0.0:3002:3002"
-    volumes:
-      - ./whatsapp-baileys/auth_info:/app/auth_info
-    restart: unless-stopped
+  evolution_api:
+    image: atendai/evolution-api:v2.2.3
+    container_name: nitek_evolution_api
     environment:
-      PORT: "3002"
+      SERVER_TYPE: http
+      SERVER_PORT: "8080"
+      AUTHENTICATION_API_KEY: "${EVOLUTION_API_KEY:-your-api-key}"
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: mongodb
+      DATABASE_CONNECTION_URI: mongodb://geektech:geektech_secret@mongo:27017/?authSource=admin
+      DATABASE_CONNECTION_DB_PREFIX_NAME: evolution
+      DATABASE_SAVE_DATA_INSTANCE: "true"
+      DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
+      DATABASE_SAVE_MESSAGE_UPDATE: "true"
+      DATABASE_SAVE_DATA_CONTACTS: "true"
+      DATABASE_SAVE_DATA_CHATS: "true"
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://redis:6379/0
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+      DEL_INSTANCE: "false"
+      CONFIG_SESSION_PHONE_CLIENT: "GeekTechnologie"
+      CONFIG_SESSION_PHONE_NAME: "Chrome"
+      QRCODE_LIMIT: "30"
+      QRCODE_COLOR: "#198754"
+      LOG_LEVEL: WARN
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: nitek_redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
 
 volumes:
   mongo_data:
+  evolution_instances:
+  redis_data:

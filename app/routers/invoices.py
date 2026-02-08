@@ -649,15 +649,6 @@ async def create_invoice(
                 # Ne pas bloquer la création de facture si l'enregistrement du mouvement échoue
                 pass
 
-            # Synchroniser le stock avec Google Sheets (si activé)
-            try:
-                from ..services.google_sheets_sync_helper import sync_product_stock_to_sheets
-                await sync_product_stock_to_sheets(item_data.product_id)
-            except Exception as e:
-                # Ne pas bloquer la création de facture si la sync Google Sheets échoue
-                logging.warning(f"Échec de synchronisation Google Sheets pour le produit {item_data.product_id}: {e}")
-                pass
-
         # Créer automatiquement les ventes quotidiennes pour chaque produit de la facture
         try:
             for item_data in invoice_data.items:
@@ -1056,14 +1047,6 @@ async def update_invoice(
             except Exception:
                 pass
 
-            # Synchroniser le stock avec Google Sheets (si activé)
-            try:
-                from ..services.google_sheets_sync_helper import sync_product_stock_to_sheets
-                await sync_product_stock_to_sheets(item_data.product_id)
-            except Exception as e:
-                logging.warning(f"Échec de synchronisation Google Sheets pour le produit {item_data.product_id}: {e}")
-                pass
-
         # Mettre à jour les ventes quotidiennes associées à cette facture
         try:
             # Supprimer les ventes quotidiennes existantes pour cette facture
@@ -1445,13 +1428,6 @@ async def delete_invoice(
                     )
                 except Exception:
                     pass
-
-                # Synchroniser le stock avec Google Sheets (si activé)
-                try:
-                    from ..services.google_sheets_sync_helper import sync_product_stock_to_sheets
-                    await sync_product_stock_to_sheets(item.product_id)
-                except Exception as e:
-                    logging.warning(f"Échec de synchronisation Google Sheets pour le produit {item.product_id}: {e}")
 
         # Réactiver les variantes vendues
         try:
@@ -1908,44 +1884,34 @@ async def send_invoice_whatsapp(
     data: SendWhatsAppRequest,
     current_user=Depends(get_current_user)
 ):
-    """Envoyer une facture par WhatsApp via n8n"""
+    """Envoyer une facture par WhatsApp via Evolution API"""
+    from ..services.evolution_api import send_invoice_whatsapp as _send_invoice_wa
     try:
-        # Vérifier que la facture existe
         invoice = await Invoice.find_one(Invoice.invoice_id == data.invoice_id)
         if not invoice:
-            raise HTTPException(status_code=404, detail="Facture non trouvée")
+            raise HTTPException(status_code=404, detail="Facture non trouvee")
 
-        # Charger le client
         client_data = await Client.find_one(Client.client_id == invoice.client_id)
 
-        # Construire l'URL du PDF de la facture (accessible depuis n8n via réseau Docker)
         app_public_url = os.getenv("APP_PUBLIC_URL", "http://nitek_app:8000")
         pdf_url = f"{app_public_url}/invoices/print/{data.invoice_id}"
 
-        # Appeler le webhook n8n pour envoyer via WhatsApp
-        webhook_url = f"{N8N_BASE_URL}/webhook/send-invoice-whatsapp"
+        await _send_invoice_wa(
+            phone=data.phone,
+            invoice_number=invoice.invoice_number,
+            client_name=client_data.name if client_data else "Client",
+            total=float(invoice.total or 0),
+            pdf_url=pdf_url,
+        )
+        return {"success": True, "message": "Facture envoyee par WhatsApp"}
 
-        payload = {
-            "invoice_id": data.invoice_id,
-            "invoice_number": invoice.invoice_number,
-            "phone": data.phone,
-            "pdf_url": pdf_url,
-            "client_name": client_data.name if client_data else "Client",
-            "total": float(invoice.total or 0)
-        }
-
-        async with httpx.AsyncClient(timeout=30.0) as http_client:
-            response = await http_client.post(webhook_url, json=payload)
-
-        if response.status_code == 200:
-            return {"success": True, "message": "Facture envoyée par WhatsApp"}
-        else:
-            logging.error(f"Erreur n8n WhatsApp: {response.status_code} - {response.text}")
-            return {"success": False, "message": f"Erreur n8n: {response.text}"}
-
-    except httpx.RequestError as e:
-        logging.error(f"Erreur connexion n8n: {e}")
-        raise HTTPException(status_code=503, detail="Service n8n indisponible")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPStatusError as e:
+        logging.error(f"Erreur Evolution API: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=502, detail="Erreur Evolution API")
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Erreur envoi WhatsApp: {e}")
         raise HTTPException(status_code=500, detail=str(e))

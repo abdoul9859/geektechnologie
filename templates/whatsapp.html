@@ -213,12 +213,26 @@
           const qrRes = await fetch('/api/whatsapp/qr', { cache: 'no-store' });
           const qrData = await qrRes.json().catch(() => ({}));
 
-          if (qrData.qr) {
-            showState('qr');
-            await renderQr(qrData.qr);
-          } else if (qrData.status === 'already_connected') {
+          if (qrData.status === 'already_connected') {
             setBadge('Connecte', 'bg-success');
             showState('connected');
+          } else if (qrData.qr && qrData.format === 'base64') {
+            // QR en base64 (image) depuis Evolution API
+            showState('qr');
+            if (qrData.qr !== lastQr) {
+              lastQr = qrData.qr;
+              const img = document.createElement('img');
+              img.alt = 'QR Code WhatsApp';
+              img.style.width = '280px';
+              img.style.height = '280px';
+              img.src = qrData.qr.startsWith('data:') ? qrData.qr : 'data:image/png;base64,' + qrData.qr;
+              qrCanvas.innerHTML = '';
+              qrCanvas.appendChild(img);
+            }
+          } else if (qrData.qr) {
+            // QR en string brut -- rendu via QRCode.js
+            showState('qr');
+            await renderQr(qrData.qr);
           } else {
             showState('qr');
             qrCanvas.innerHTML = '<div class="text-muted"><div class="spinner-qr mx-auto mb-3"></div>En attente du QR code...</div>';
