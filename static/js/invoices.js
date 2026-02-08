@@ -1051,7 +1051,7 @@ function openInvoiceModal() {
             return;
         }
         // Charger les produits dès l'ouverture si la liste est vide
-        try { if (!Array.isArray(products) || products.length === 0) { loadProducts().catch(()=>{}); } } catch(e) {}
+        try { if (!Array.isArray(products) || products.length === 0) { loadProducts().then(() => updateInvoiceItemsDisplay()).catch(()=>{}); } } catch(e) {}
 
         const titleEl = document.getElementById('invoiceModalTitle');
         const formEl = document.getElementById('invoiceForm');
@@ -1310,8 +1310,11 @@ function addInvoiceItem() {
     
     invoiceItems.push(newItem);
     // S'assurer que les produits sont chargés pour le select
-    try { if (!Array.isArray(products) || products.length === 0) { loadProducts().catch(()=>{}); } } catch(e) {}
-    updateInvoiceItemsDisplay();
+    if (!Array.isArray(products) || products.length === 0) {
+        try { loadProducts().then(() => updateInvoiceItemsDisplay()).catch(()=> updateInvoiceItemsDisplay()); } catch(e) { updateInvoiceItemsDisplay(); }
+    } else {
+        updateInvoiceItemsDisplay();
+    }
 }
 
 // Ajouter une ligne libre/service (sans produit, propre à la facture)
