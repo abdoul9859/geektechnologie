@@ -27,7 +27,9 @@ APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "http://app:8000")
 # Cache QR code recu via webhook ou API
 _qr_cache: dict = {"code": None, "base64": None, "updated_at": 0.0}
 _last_qr_reset: float = 0
-_QR_RESET_MIN_INTERVAL = 10  # secondes entre deux resets
+_instance_created_at: float = 0  # timestamp de derniere creation/reset
+_QR_PATIENCE_SECONDS = 45  # patience apres creation avant de restart
+_QR_RESET_MIN_INTERVAL = 30  # secondes minimum entre deux restarts
 
 
 def _headers() -> dict:
@@ -109,6 +111,7 @@ async def ensure_instance_exists() -> dict:
 
     Configure un webhook pour recevoir les QR codes et mises a jour de connexion.
     """
+    global _instance_created_at
     instance = EVOLUTION_INSTANCE_NAME
     url = f"{_base_url()}/instance/create"
     webhook_url = f"{APP_PUBLIC_URL}/api/whatsapp/webhook"
@@ -132,14 +135,13 @@ async def ensure_instance_exists() -> dict:
             r = await client.post(url, json=payload, headers=_headers())
             r.raise_for_status()
             data = r.json()
-            logger.info(f"[EvolutionAPI] Instance '{instance}' creee (webhook: {webhook_url})")
+            _instance_created_at = time.time()
+            # Log complet pour debug
+            data_keys = list(data.keys()) if isinstance(data, dict) else str(type(data))
+            logger.info(f"[EvolutionAPI] Instance '{instance}' creee, keys={data_keys}")
+            logger.info(f"[EvolutionAPI] Create response (500 chars): {str(data)[:500]}")
             # Extraire le QR de la reponse de creation si present
-            if _has_qr(data):
-                qrcode = data.get("qrcode") or {}
-                store_qr_from_webhook(
-                    code=data.get("code") or qrcode.get("code"),
-                    base64_img=data.get("base64") or qrcode.get("base64"),
-                )
+            _store_qr_from_data(data)
             return data
         except httpx.HTTPStatusError as e:
             if e.response.status_code in (409, 403):
@@ -191,8 +193,27 @@ def _has_qr(data: dict) -> bool:
         return False
     if data.get("code") or data.get("base64"):
         return True
+    if data.get("pairingCode"):
+        return True
     qrcode = data.get("qrcode")
     if isinstance(qrcode, dict) and (qrcode.get("code") or qrcode.get("base64")):
+        return True
+    return False
+
+
+def _store_qr_from_data(data: dict) -> bool:
+    """Extrait et stocke le QR code depuis une reponse API. Retourne True si QR trouve."""
+    if not isinstance(data, dict):
+        return False
+    # Chercher QR a differents niveaux de la reponse
+    code = data.get("code")
+    base64_img = data.get("base64")
+    qrcode = data.get("qrcode")
+    if isinstance(qrcode, dict):
+        code = code or qrcode.get("code")
+        base64_img = base64_img or qrcode.get("base64")
+    if code or base64_img:
+        store_qr_from_webhook(code=code, base64_img=base64_img)
         return True
     return False
 
@@ -222,10 +243,10 @@ async def get_qr_code() -> dict:
 
     Strategie:
     1. Verifier le cache QR (alimente par webhook)
-    2. Essayer /instance/connect/ (retourne QR si etat 'close')
-    3. Si pas de QR, redemarrer l'instance et attendre le webhook
+    2. Essayer /instance/connect/ avec retries (le QR met du temps a se generer)
+    3. Si pas de QR apres patience, redemarrer l'instance (dernier recours)
     """
-    global _last_qr_reset
+    global _last_qr_reset, _instance_created_at
 
     # 1. Verifier le cache webhook d'abord
     cached = get_cached_qr()
@@ -233,66 +254,77 @@ async def get_qr_code() -> dict:
         logger.debug("[EvolutionAPI] QR depuis cache webhook")
         return {"code": cached["code"], "base64": cached["base64"]}
 
-    # 2. Essayer /instance/connect/
-    try:
-        data = await _connect_instance()
-        keys = list(data.keys()) if isinstance(data, dict) else str(type(data))
-        logger.info(f"[EvolutionAPI] connect response keys: {keys}")
-
-        if _has_qr(data):
-            # Stocker dans le cache
-            qrcode = data.get("qrcode") or {}
-            store_qr_from_webhook(
-                code=data.get("code") or qrcode.get("code"),
-                base64_img=data.get("base64") or qrcode.get("base64"),
+    # 2. Essayer /instance/connect/ avec retries
+    for attempt in range(3):
+        try:
+            data = await _connect_instance()
+            logger.info(
+                f"[EvolutionAPI] connect attempt {attempt + 1}: "
+                f"keys={list(data.keys()) if isinstance(data, dict) else 'N/A'}, "
+                f"count={data.get('count', 'N/A')}, "
+                f"has_code={bool(data.get('code'))}, has_base64={bool(data.get('base64'))}"
             )
-            return data
-    except Exception as e:
-        logger.warning(f"[EvolutionAPI] connect failed: {e}")
 
-    # 3. Pas de QR -- redemarrer l'instance (le QR arrivera par webhook)
-    now = time.time()
-    if (now - _last_qr_reset) < _QR_RESET_MIN_INTERVAL:
-        logger.debug("[EvolutionAPI] Trop tot pour redemarrer, attente webhook...")
-        # Verifier une derniere fois le cache
+            if _has_qr(data):
+                _store_qr_from_data(data)
+                return data
+        except Exception as e:
+            logger.warning(f"[EvolutionAPI] connect attempt {attempt + 1} failed: {e}")
+
+        # Verifier le cache (le webhook a peut-etre livre le QR pendant l'attente)
         cached = get_cached_qr()
         if cached:
             return {"code": cached["code"], "base64": cached["base64"]}
+
+        # Attendre avant le prochain essai (sauf dernier)
+        if attempt < 2:
+            await asyncio.sleep(3)
+
+    # 3. Toujours pas de QR -- evaluer si on doit redemarrer
+    now = time.time()
+    time_since_creation = now - _instance_created_at if _instance_created_at else 999
+    time_since_reset = now - _last_qr_reset if _last_qr_reset else 999
+
+    # Ne pas restart si l'instance est recente -- le QR va arriver
+    if time_since_creation < _QR_PATIENCE_SECONDS:
+        logger.info(
+            f"[EvolutionAPI] Instance creee il y a {time_since_creation:.0f}s "
+            f"(patience {_QR_PATIENCE_SECONDS}s), pas de restart"
+        )
         return {}
 
+    # Ne pas restart trop souvent
+    if time_since_reset < _QR_RESET_MIN_INTERVAL:
+        logger.info(
+            f"[EvolutionAPI] Dernier restart il y a {time_since_reset:.0f}s, attente..."
+        )
+        return {}
+
+    # 4. Restart de l'instance (dernier recours)
     _last_qr_reset = now
     clear_qr_cache()
-    logger.info("[EvolutionAPI] Pas de QR, redemarrage de l'instance...")
+    logger.info("[EvolutionAPI] Pas de QR apres retries, redemarrage de l'instance...")
 
-    # Essayer restart (POST), puis logout en fallback
     try:
         await _restart_instance_api()
-        logger.info("[EvolutionAPI] Instance redemarree via API")
-    except Exception as e:
-        logger.warning(f"[EvolutionAPI] restart failed: {e}, tentative logout...")
+    except Exception:
         try:
             await logout_instance()
-            logger.info("[EvolutionAPI] Logout effectue")
-        except Exception as e2:
-            logger.warning(f"[EvolutionAPI] logout failed: {e2}")
+        except Exception:
+            pass
 
-    # Attendre et reconnecter (force la generation d'un nouveau QR)
-    await asyncio.sleep(3)
+    _instance_created_at = time.time()
+    await asyncio.sleep(5)
 
+    # Un dernier essai apres restart
     try:
         data = await _connect_instance()
         if _has_qr(data):
-            qrcode = data.get("qrcode") or {}
-            store_qr_from_webhook(
-                code=data.get("code") or qrcode.get("code"),
-                base64_img=data.get("base64") or qrcode.get("base64"),
-            )
+            _store_qr_from_data(data)
             return data
-    except Exception as e:
-        logger.error(f"[EvolutionAPI] connect after restart failed: {e}")
+    except Exception:
+        pass
 
-    # Le QR sera envoye par webhook -- attendre un peu
-    await asyncio.sleep(2)
     cached = get_cached_qr()
     if cached:
         return {"code": cached["code"], "base64": cached["base64"]}
@@ -323,8 +355,9 @@ async def logout_instance() -> dict:
 
 async def restart_instance() -> dict:
     """Redemarre l'instance pour generer un nouveau QR code."""
-    global _last_qr_reset
+    global _last_qr_reset, _instance_created_at
     _last_qr_reset = 0
+    _instance_created_at = time.time()
     clear_qr_cache()
     try:
         await _restart_instance_api()
@@ -341,9 +374,11 @@ async def force_reset_instance() -> dict:
     """Supprime completement l'instance et en recree une nouvelle.
 
     Utilise quand l'instance est bloquee (count=0, pas de QR).
+    Attend activement le QR apres recreation.
     """
-    global _last_qr_reset
+    global _last_qr_reset, _instance_created_at
     _last_qr_reset = 0
+    _instance_created_at = 0
     clear_qr_cache()
     instance = EVOLUTION_INSTANCE_NAME
 
@@ -375,7 +410,38 @@ async def force_reset_instance() -> dict:
 
     # 3. Recreer l'instance avec webhook
     data = await ensure_instance_exists()
-    logger.info(f"[EvolutionAPI] Force reset: instance recreee, keys={list(data.keys()) if isinstance(data, dict) else 'N/A'}")
+    logger.info(
+        f"[EvolutionAPI] Force reset: instance recreee, "
+        f"keys={list(data.keys()) if isinstance(data, dict) else 'N/A'}"
+    )
+
+    # 4. Attendre activement le QR (connect avec retries)
+    for attempt in range(5):
+        await asyncio.sleep(3)
+
+        # Verifier le cache webhook d'abord
+        cached = get_cached_qr()
+        if cached:
+            logger.info(f"[EvolutionAPI] Force reset: QR recu via webhook (attempt {attempt + 1})")
+            return {"qr_source": "webhook", **data}
+
+        # Essayer connect
+        try:
+            connect_data = await _connect_instance()
+            logger.info(
+                f"[EvolutionAPI] Force reset connect attempt {attempt + 1}: "
+                f"count={connect_data.get('count', 'N/A')}, "
+                f"has_code={bool(connect_data.get('code'))}, "
+                f"has_base64={bool(connect_data.get('base64'))}, "
+                f"full={str(connect_data)[:300]}"
+            )
+            if _has_qr(connect_data):
+                _store_qr_from_data(connect_data)
+                return {"qr_source": "connect", **connect_data}
+        except Exception as e:
+            logger.warning(f"[EvolutionAPI] Force reset connect {attempt + 1} failed: {e}")
+
+    logger.warning("[EvolutionAPI] Force reset: QR non obtenu apres 5 tentatives")
     return data
 
 

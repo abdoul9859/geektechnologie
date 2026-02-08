@@ -223,16 +223,26 @@ async def whatsapp_debug():
 
 @router.api_route("/force-reset", methods=["GET", "POST"])
 async def whatsapp_force_reset():
-    """Supprime et recree l'instance WhatsApp completement."""
+    """Supprime et recree l'instance WhatsApp completement.
+
+    Attend activement le QR code (jusqu'a 15 secondes).
+    """
     try:
         data = await force_reset_instance()
-        # Verifier si un QR a ete recupere dans la reponse de creation
         cached = get_cached_qr()
+        # Tronquer les donnees pour la reponse
+        safe_data = {}
+        for k, v in (data.items() if isinstance(data, dict) else []):
+            if isinstance(v, str) and len(v) > 100:
+                safe_data[k] = v[:50] + f"...(len={len(v)})"
+            else:
+                safe_data[k] = v
         return {
             "success": True,
             "message": "Instance recree",
             "qr_available": cached is not None,
-            "data_keys": list(data.keys()) if isinstance(data, dict) else str(type(data)),
+            "qr_source": data.get("qr_source", "none"),
+            "data": safe_data,
         }
     except Exception as e:
         logger.error(f"[WhatsApp] Erreur force-reset: {e}")
