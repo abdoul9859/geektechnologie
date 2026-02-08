@@ -9,9 +9,22 @@ are embedded where appropriate for performance; top-level entities
 
 from datetime import datetime, date
 from decimal import Decimal
-from typing import Optional, List
+from typing import Optional, List, Annotated
 from beanie import Document, Indexed
-from pydantic import Field
+from bson.decimal128 import Decimal128
+from pydantic import Field, BeforeValidator
+
+
+def _dec(v):
+    """Convert Decimal128 / any to Python Decimal."""
+    if isinstance(v, Decimal128):
+        return v.to_decimal()
+    if v is None:
+        return Decimal("0")
+    return Decimal(str(v))
+
+
+Dec = Annotated[Decimal, BeforeValidator(_dec)]
 
 
 # ──────────────────── User ────────────────────
@@ -56,7 +69,7 @@ class Client(Document):
 class ClientDebtPayment(Document):
     payment_id: Indexed(int, unique=True)
     debt_id: int
-    amount: Decimal
+    amount: Dec
     payment_date: datetime = Field(default_factory=datetime.utcnow)
     payment_method: Optional[str] = None
     reference: Optional[str] = None
@@ -73,9 +86,9 @@ class ClientDebt(Document):
     reference: str
     date: datetime = Field(default_factory=datetime.utcnow)
     due_date: Optional[datetime] = None
-    amount: Decimal
-    paid_amount: Decimal = Decimal("0")
-    remaining_amount: Decimal = Decimal("0")
+    amount: Dec
+    paid_amount: Dec = Decimal("0")
+    remaining_amount: Dec = Decimal("0")
     status: str = "pending"
     description: Optional[str] = None
     notes: Optional[str] = None
@@ -102,7 +115,7 @@ class DailyPurchase(Document):
     category: Indexed(str)
     supplier: Optional[str] = None
     description: Optional[str] = None
-    amount: Decimal
+    amount: Dec
     payment_method: str = "espece"
     reference: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -191,9 +204,9 @@ class Product(Document):
     name: str
     description: Optional[str] = None
     quantity: int = 0
-    price: Decimal
-    wholesale_price: Optional[Decimal] = None
-    purchase_price: Decimal = Decimal("0")
+    price: Dec
+    wholesale_price: Optional[Dec] = None
+    purchase_price: Dec = Decimal("0")
     category: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
@@ -220,7 +233,7 @@ class StockMovement(Document):
     reference_type: Optional[str] = None
     reference_id: Optional[int] = None
     notes: Optional[str] = None
-    unit_price: Decimal = Decimal("0")
+    unit_price: Dec = Decimal("0")
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Settings:
@@ -234,7 +247,7 @@ class BankTransaction(Document):
     type: str  # entry, exit
     motif: str
     description: Optional[str] = None
-    amount: Decimal
+    amount: Dec
     date: date
     method: str  # virement, cheque
     reference: Optional[str] = None
@@ -263,7 +276,7 @@ class PurchaseOrderItem(Document):
     order_id: int
     product_id: int
     quantity: int
-    unit_price: Decimal
+    unit_price: Dec
 
     class Settings:
         name = "purchase_order_items"
@@ -274,7 +287,7 @@ class PurchaseOrder(Document):
     supplier_id: int
     order_date: datetime = Field(default_factory=datetime.utcnow)
     status: str = "PENDING"
-    total_amount: Decimal = Decimal("0")
+    total_amount: Dec = Decimal("0")
 
     class Settings:
         name = "purchase_orders"
@@ -283,7 +296,7 @@ class PurchaseOrder(Document):
 class SupplierDebtPayment(Document):
     payment_id: Indexed(int, unique=True)
     debt_id: int
-    amount: Decimal
+    amount: Dec
     payment_date: datetime = Field(default_factory=datetime.utcnow)
     payment_method: Optional[str] = None
     reference: Optional[str] = None
@@ -299,9 +312,9 @@ class SupplierDebt(Document):
     reference: str
     date: datetime = Field(default_factory=datetime.utcnow)
     due_date: Optional[datetime] = None
-    amount: Decimal
-    paid_amount: Decimal = Decimal("0")
-    remaining_amount: Decimal = Decimal("0")
+    amount: Dec
+    paid_amount: Dec = Decimal("0")
+    remaining_amount: Dec = Decimal("0")
     status: str = "pending"
     description: Optional[str] = None
     notes: Optional[str] = None
@@ -314,7 +327,7 @@ class SupplierDebt(Document):
 class SupplierInvoicePayment(Document):
     payment_id: Indexed(int, unique=True)
     supplier_invoice_id: int
-    amount: Decimal
+    amount: Dec
     payment_date: datetime = Field(default_factory=datetime.utcnow)
     payment_method: Optional[str] = None
     reference: Optional[str] = None
@@ -332,9 +345,9 @@ class SupplierInvoice(Document):
     invoice_date: Optional[datetime] = None
     due_date: Optional[datetime] = None
     description: Optional[str] = None
-    amount: Optional[Decimal] = None
-    paid_amount: Decimal = Decimal("0")
-    remaining_amount: Decimal = Decimal("0")
+    amount: Optional[Dec] = None
+    paid_amount: Dec = Decimal("0")
+    remaining_amount: Dec = Decimal("0")
     status: str = "pending"
     payment_method: Optional[str] = None
     notes: Optional[str] = None
@@ -355,8 +368,8 @@ class QuotationItem(Document):
     product_id: Optional[int] = None
     product_name: str
     quantity: int
-    price: Decimal
-    total: Decimal
+    price: Dec
+    total: Dec
 
     class Settings:
         name = "quotation_items"
@@ -370,10 +383,10 @@ class Quotation(Document):
     expiry_date: Optional[datetime] = None
     status: str = "en attente"
     is_sent: bool = False
-    subtotal: Decimal
-    tax_rate: Decimal = Decimal("18.00")
-    tax_amount: Decimal
-    total: Decimal
+    subtotal: Dec
+    tax_rate: Dec = Decimal("18.00")
+    tax_amount: Dec
+    total: Dec
     notes: Optional[str] = None
     show_item_prices: bool = True
     show_section_totals: bool = True
@@ -392,8 +405,8 @@ class InvoiceItem(Document):
     product_id: Optional[int] = None
     product_name: str
     quantity: int
-    price: Decimal
-    total: Decimal
+    price: Dec
+    total: Dec
 
     class Settings:
         name = "invoice_items"
@@ -402,7 +415,7 @@ class InvoiceItem(Document):
 class InvoicePayment(Document):
     payment_id: Indexed(int, unique=True)
     invoice_id: int
-    amount: Decimal
+    amount: Dec
     payment_date: datetime = Field(default_factory=datetime.utcnow)
     payment_method: Optional[str] = None
     reference: Optional[str] = None
@@ -421,12 +434,12 @@ class Invoice(Document):
     due_date: Optional[datetime] = None
     status: str = "en attente"
     payment_method: Optional[str] = None
-    subtotal: Decimal
-    tax_rate: Decimal = Decimal("18.00")
-    tax_amount: Decimal
-    total: Decimal
-    paid_amount: Decimal = Decimal("0")
-    remaining_amount: Decimal
+    subtotal: Dec
+    tax_rate: Dec = Decimal("18.00")
+    tax_amount: Dec
+    total: Dec
+    paid_amount: Dec = Decimal("0")
+    remaining_amount: Dec
     notes: Optional[str] = None
     show_tax: bool = True
     show_item_prices: bool = True
@@ -451,7 +464,7 @@ class DeliveryNoteItem(Document):
     product_id: Optional[int] = None
     product_name: str
     quantity: int
-    price: Decimal
+    price: Dec
     delivered_quantity: int = 0
     serial_numbers: Optional[str] = None
 
@@ -470,11 +483,11 @@ class DeliveryNote(Document):
     delivery_address: Optional[str] = None
     delivery_contact: Optional[str] = None
     delivery_phone: Optional[str] = None
-    subtotal: Decimal
-    tax_rate: Decimal = Decimal("18.00")
-    tax_amount: Decimal
-    total: Decimal
-    transport_cost: Decimal = Decimal("0")
+    subtotal: Dec
+    tax_rate: Dec = Decimal("18.00")
+    tax_amount: Dec
+    total: Dec
+    transport_cost: Dec = Decimal("0")
     notes: Optional[str] = None
     delivered_by: Optional[str] = None
     signature_received: bool = False
@@ -556,8 +569,8 @@ class DailySale(Document):
     variant_barcode: Optional[str] = None
     variant_condition: Optional[str] = None
     quantity: int = 1
-    unit_price: Decimal
-    total_amount: Decimal
+    unit_price: Dec
+    total_amount: Dec
     sale_date: date
     payment_method: str = "espece"
     invoice_id: Optional[int] = None
@@ -627,9 +640,9 @@ class Maintenance(Document):
     pickup_date: Optional[date] = None
     status: str = "received"
     priority: str = "normal"
-    estimated_cost: Optional[Decimal] = None
-    final_cost: Optional[Decimal] = None
-    advance_paid: Decimal = Decimal("0")
+    estimated_cost: Optional[Dec] = None
+    final_cost: Optional[Dec] = None
+    advance_paid: Dec = Decimal("0")
     warranty_days: int = 30
     liability_waived: bool = False
     liability_waived_date: Optional[date] = None
