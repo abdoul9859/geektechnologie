@@ -189,6 +189,8 @@
 
         if (!res.ok) throw new Error('service down');
 
+        console.log('[WhatsApp] Status:', JSON.stringify(data));
+
         if (data.status === 'ready') {
           setBadge('Connecte', 'bg-success');
           showState('connected');
@@ -221,7 +223,8 @@
             await renderQr(qrData.qr);
           } else {
             showState('qr');
-            qrCanvas.innerHTML = '<div class="text-muted"><div class="spinner-qr mx-auto mb-3"></div>En attente du QR code...</div>';
+            console.log('[WhatsApp] QR response (no QR found):', JSON.stringify(qrData));
+            qrCanvas.innerHTML = '<div class="text-muted"><div class="spinner-qr mx-auto mb-3"></div>En attente du QR code...<br><small class="text-secondary">Debug: ' + JSON.stringify(qrData.debug_keys || qrData.status || 'unknown') + '</small></div>';
           }
         }
       } catch (e) {
