@@ -47,9 +47,7 @@ class MaintenanceNotifier:
         time.sleep(45)
         while not self._stop.is_set():
             try:
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self._tick())
-                loop.close()
+                asyncio.run(self._tick())
             except Exception as e:
                 print(f"[MaintenanceNotifier] Error in tick: {e}")
             self._stop.wait(self._interval_seconds)

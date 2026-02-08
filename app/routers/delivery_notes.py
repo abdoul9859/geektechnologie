@@ -104,7 +104,7 @@ async def get_delivery_notes_stats(
             {"$group": {"_id": None, "total_value": {"$sum": "$total"}}},
         ]
         agg_result = await DeliveryNote.aggregate(pipeline).to_list()
-        total_value = float(agg_result[0]["total_value"]) if agg_result else 0
+        total_value = float(str(agg_result[0]["total_value"])) if agg_result else 0
 
         return {
             "total_notes": total_notes,

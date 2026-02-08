@@ -39,7 +39,7 @@ class DailyPurchaseCategoryCreate(BaseModel):
     name: str
 
 class DailyPurchaseCategoryResponse(BaseModel):
-    id: int
+    category_pk: int
     name: str
     class Config:
         from_attributes = True
@@ -600,14 +600,14 @@ class DailyPurchaseUpdate(BaseModel):
     reference: Optional[str] = None
 
 class DailyPurchaseResponse(BaseModel):
-    id: int
+    purchase_id: int
     date: date
     category: str
-    supplier: Optional[str]
-    description: Optional[str]
+    supplier: Optional[str] = None
+    description: Optional[str] = None
     amount: Decimal
     payment_method: str
-    reference: Optional[str]
+    reference: Optional[str] = None
     created_at: datetime
 
     class Config:

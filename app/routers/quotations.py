@@ -79,13 +79,13 @@ async def _recompute_quotations_stats():
 
         pipeline = [{"$group": {"_id": None, "total_value": {"$sum": "$total"}}}]
         agg = await Quotation.aggregate(pipeline).to_list()
-        total_value = float(agg[0]["total_value"]) if agg else 0
+        total_value = float(str(agg[0]["total_value"])) if agg else 0
 
         result = {
             "total": int(total),
             "total_accepted": int(total_accepted),
             "total_pending": int(total_pending),
-            "total_value": float(total_value),
+            "total_value": total_value,
         }
 
         payload = json.dumps(result, default=str)
@@ -289,7 +289,7 @@ async def list_quotations_paginated(
     match_stage = {"$match": filters} if filters else {"$match": {}}
     pipeline = [match_stage, {"$group": {"_id": None, "total_value": {"$sum": "$total"}}}]
     agg = await Quotation.aggregate(pipeline).to_list()
-    total_value = float(agg[0]["total_value"]) if agg else 0
+    total_value = float(str(agg[0]["total_value"])) if agg else 0
 
     # Restreindre l'exposition de la valeur agrégée aux administrateurs uniquement
     try:

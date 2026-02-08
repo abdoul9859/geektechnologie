@@ -454,8 +454,8 @@ async def get_summary_stats(
         ]
         agg_result = await SupplierInvoice.aggregate(pipeline).to_list()
 
-        total_amount = float(agg_result[0]["total_amount"]) if agg_result else 0
-        paid_amount = float(agg_result[0]["paid_amount"]) if agg_result else 0
+        total_amount = float(str(agg_result[0]["total_amount"])) if agg_result else 0
+        paid_amount = float(str(agg_result[0]["paid_amount"])) if agg_result else 0
         remaining_amount = total_amount - paid_amount
 
         return {

@@ -84,7 +84,7 @@ async def get_summary(
             {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
         ]
         total_result = await DailyPurchase.aggregate(pipeline_total).to_list()
-        total = float(total_result[0]["total"]) if total_result else 0
+        total = float(str(total_result[0]["total"])) if total_result else 0
 
         # Par categorie
         pipeline_cat = [
@@ -93,7 +93,7 @@ async def get_summary(
         ]
         cat_result = await DailyPurchase.aggregate(pipeline_cat).to_list()
         by_category = [
-            {"category": r["_id"] or "", "amount": float(r["amount"] or 0)}
+            {"category": r["_id"] or "", "amount": float(str(r["amount"] or 0))}
             for r in cat_result
         ]
 

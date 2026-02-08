@@ -92,8 +92,8 @@ async def get_transactions_stats(
         entries_result = await BankTransaction.aggregate(pipeline_entries).to_list()
         exits_result = await BankTransaction.aggregate(pipeline_exits).to_list()
 
-        total_entries = entries_result[0]["total"] if entries_result else 0
-        total_exits = exits_result[0]["total"] if exits_result else 0
+        total_entries = float(str(entries_result[0]["total"])) if entries_result else 0
+        total_exits = float(str(exits_result[0]["total"])) if exits_result else 0
         current_balance = total_entries - total_exits
 
         tx_count = await BankTransaction.count()
