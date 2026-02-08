@@ -60,16 +60,18 @@ async def whatsapp_qr():
     ou {"status": "already_connected"} si deja connecte.
     """
     try:
-        # S'assurer que l'instance existe avant de demander le QR
-        await ensure_instance_exists()
+        # Verifier si deja connecte
+        try:
+            state_data = await get_connection_state()
+            state = _extract_state(state_data)
+            logger.info(f"[WhatsApp] QR - connection state: {state}")
+            if state == "open":
+                return {"status": "already_connected"}
+        except Exception:
+            # Instance n'existe peut-etre pas encore, get_qr_code() la creera
+            pass
 
-        state_data = await get_connection_state()
-        state = _extract_state(state_data)
-        logger.info(f"[WhatsApp] QR - connection state: {state} (raw: {state_data})")
-
-        if state == "open":
-            return {"status": "already_connected"}
-
+        # get_qr_code() gere la creation/recreation de l'instance si necessaire
         qr_data = await get_qr_code()
         logger.info(f"[WhatsApp] QR - raw response keys: {list(qr_data.keys()) if isinstance(qr_data, dict) else type(qr_data)}")
         logger.info(f"[WhatsApp] QR - raw response: {str(qr_data)[:500]}")

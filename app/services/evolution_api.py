@@ -7,6 +7,7 @@ Appels directs a Evolution API -- pas d'intermediaire n8n.
 
 import os
 import logging
+import time
 from typing import Optional
 
 import httpx
@@ -20,6 +21,10 @@ EVOLUTION_INSTANCE_NAME = os.getenv("EVOLUTION_INSTANCE_NAME", "geektech")
 DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "+221")
 
 _TIMEOUT = 30.0
+
+# Cache pour eviter de recreer l'instance trop souvent
+_last_qr_recreate: float = 0
+_QR_RECREATE_MIN_INTERVAL = 8  # secondes entre deux recreations
 
 
 def _headers() -> dict:
@@ -99,12 +104,88 @@ async def get_connection_state() -> dict:
         return r.json()
 
 
+def _has_qr(data: dict) -> bool:
+    """Verifie si la reponse contient un QR code."""
+    if not isinstance(data, dict):
+        return False
+    if data.get("code") or data.get("base64"):
+        return True
+    qrcode = data.get("qrcode")
+    if isinstance(qrcode, dict) and (qrcode.get("code") or qrcode.get("base64")):
+        return True
+    return False
+
+
 async def get_qr_code() -> dict:
-    """Recupere le QR code pour scanner."""
+    """Recupere le QR code pour scanner.
+
+    Evolution API v2 retourne le QR uniquement a la creation de l'instance.
+    Les appels suivants a /instance/connect/ retournent {"count": N}.
+    Si pas de QR, on supprime et recree l'instance pour forcer la generation.
+    """
+    global _last_qr_recreate
     instance = EVOLUTION_INSTANCE_NAME
+
+    # 1. Essayer /instance/connect/ d'abord
     url = f"{_base_url()}/instance/connect/{instance}"
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         r = await client.get(url, headers=_headers())
+        r.raise_for_status()
+        data = r.json()
+
+    logger.info(f"[EvolutionAPI] connect response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+
+    if _has_qr(data):
+        return data
+
+    # 2. Pas de QR -- supprimer et recreer l'instance
+    now = time.time()
+    if (now - _last_qr_recreate) < _QR_RECREATE_MIN_INTERVAL:
+        logger.debug("[EvolutionAPI] Trop tot pour recreer l'instance, retour cache vide")
+        return data
+
+    _last_qr_recreate = now
+    logger.info("[EvolutionAPI] Pas de QR dans la reponse, suppression + recreation de l'instance...")
+
+    try:
+        await delete_instance()
+    except Exception as e:
+        logger.warning(f"[EvolutionAPI] Erreur suppression instance: {e}")
+
+    # Recreer l'instance avec qrcode=true
+    create_url = f"{_base_url()}/instance/create"
+    payload = {
+        "instanceName": instance,
+        "integration": "WHATSAPP-BAILEYS",
+        "qrcode": True,
+    }
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        r = await client.post(create_url, json=payload, headers=_headers())
+        r.raise_for_status()
+        create_data = r.json()
+
+    logger.info(f"[EvolutionAPI] Instance recreee, reponse keys: {list(create_data.keys()) if isinstance(create_data, dict) else type(create_data)}")
+
+    # Le QR peut etre dans la reponse de creation directement ou dans un sous-objet
+    if _has_qr(create_data):
+        return create_data
+
+    # Parfois le QR est dans create_data["qrcode"] ou create_data nested
+    if isinstance(create_data, dict):
+        for key in ("qrcode", "qr"):
+            nested = create_data.get(key)
+            if isinstance(nested, dict) and _has_qr(nested):
+                return nested
+
+    return create_data
+
+
+async def delete_instance() -> dict:
+    """Supprime completement l'instance."""
+    instance = EVOLUTION_INSTANCE_NAME
+    url = f"{_base_url()}/instance/delete/{instance}"
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.delete(url, headers=_headers())
         r.raise_for_status()
         return r.json()
 
@@ -120,9 +201,11 @@ async def logout_instance() -> dict:
 
 
 async def restart_instance() -> dict:
-    """Deconnecte et reconnecte pour generer un nouveau QR code."""
+    """Supprime et recree l'instance pour generer un nouveau QR code."""
+    global _last_qr_recreate
+    _last_qr_recreate = 0  # Reset le timer pour forcer la recreation
     try:
-        await logout_instance()
+        await delete_instance()
     except Exception:
         pass
     return await ensure_instance_exists()
