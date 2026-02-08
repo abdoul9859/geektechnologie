@@ -7,7 +7,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: nitek_app
+    container_name: geektechnologie_app
     env_file:
       - .env
     environment:
@@ -21,7 +21,7 @@ services:
       # n8n base URL pour les webhooks (sans path)
       N8N_BASE_URL: "http://n8n:5678"
       # URL publique de l'application pour les liens accessibles depuis n8n
-      APP_PUBLIC_URL: "http://nitek_app:8000"
+      APP_PUBLIC_URL: "http://geektechnologie_app:8000"
       # Evolution API WhatsApp
       EVOLUTION_API_URL: "http://evolution_api:8080"
       EVOLUTION_API_KEY: "${EVOLUTION_API_KEY:-your-api-key}"
@@ -39,14 +39,15 @@ services:
       evolution_api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api')\""]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
+      start_period: 30s
 
   mongo:
     image: mongo:7
-    container_name: nitek_mongo
+    container_name: geektechnologie_mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: geekuser
       MONGO_INITDB_ROOT_PASSWORD: "07121998Dabakh@"
@@ -65,7 +66,7 @@ services:
 
   evolution_api:
     image: atendai/evolution-api:v2.2.3
-    container_name: nitek_evolution_api
+    container_name: geektechnologie_evolution_api
     environment:
       SERVER_TYPE: http
       SERVER_PORT: "8080"
@@ -101,15 +102,15 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/ || exit 1"]
       interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
+      timeout: 10s
+      retries: 8
+      start_period: 40s
 
   redis:
     image: redis:7-alpine
-    container_name: nitek_redis
+    container_name: geektechnologie_redis
     volumes:
       - redis_data:/data
     expose:
