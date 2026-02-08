@@ -195,12 +195,15 @@ async def whatsapp_debug():
         # 5. Set webhook (fix si null)
         webhook_url = f"{APP_PUBLIC_URL}/api/whatsapp/webhook"
         try:
+            # Evolution API v2 attend le payload encapsule dans une cle "webhook"
             wb_payload = {
-                "enabled": True,
-                "url": webhook_url,
-                "webhookByEvents": False,
-                "webhookBase64": True,
-                "events": ["QRCODE_UPDATED", "CONNECTION_UPDATE"],
+                "webhook": {
+                    "enabled": True,
+                    "url": webhook_url,
+                    "webhookByEvents": False,
+                    "webhookBase64": True,
+                    "events": ["QRCODE_UPDATED", "CONNECTION_UPDATE"],
+                }
             }
             r = await client.post(f"{base}/webhook/set/{inst}", json=wb_payload, headers=hdrs)
             result["5_webhook_set"] = {"status": r.status_code, "body": _truncate(r.json())}

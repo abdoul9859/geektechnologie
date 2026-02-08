@@ -157,15 +157,18 @@ async def _set_webhook(webhook_url: str) -> None:
     """Configure le webhook sur une instance existante."""
     instance = EVOLUTION_INSTANCE_NAME
     url = f"{_base_url()}/webhook/set/{instance}"
+    # Evolution API v2 attend le payload encapsule dans une cle "webhook"
     payload = {
-        "enabled": True,
-        "url": webhook_url,
-        "webhookByEvents": False,
-        "webhookBase64": True,
-        "events": [
-            "QRCODE_UPDATED",
-            "CONNECTION_UPDATE",
-        ],
+        "webhook": {
+            "enabled": True,
+            "url": webhook_url,
+            "webhookByEvents": False,
+            "webhookBase64": True,
+            "events": [
+                "QRCODE_UPDATED",
+                "CONNECTION_UPDATE",
+            ],
+        }
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
         r = await client.post(url, json=payload, headers=_headers())
