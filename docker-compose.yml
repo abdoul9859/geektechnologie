@@ -26,8 +26,8 @@ services:
       EVOLUTION_API_URL: "http://evolution_api:8080"
       EVOLUTION_API_KEY: "${EVOLUTION_API_KEY:-your-api-key}"
       EVOLUTION_INSTANCE_NAME: "${EVOLUTION_INSTANCE_NAME:-geektech}"
-    ports:
-      - "127.0.0.1:8001:8000"
+    expose:
+      - "8000"
     volumes:
       - ./static/uploads:/app/static/uploads
       - ./logs:/app/logs
@@ -53,8 +53,8 @@ services:
       MONGO_INITDB_DATABASE: geektech
     volumes:
       - mongo_data:/data/db
-    ports:
-      - "127.0.0.1:27017:27017"
+    expose:
+      - "27017"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
@@ -90,8 +90,8 @@ services:
       QRCODE_LIMIT: "30"
       QRCODE_COLOR: "#198754"
       LOG_LEVEL: WARN
-    ports:
-      - "127.0.0.1:8080:8080"
+    expose:
+      - "8080"
     volumes:
       - evolution_instances:/evolution/instances
     restart: unless-stopped
@@ -112,8 +112,8 @@ services:
     container_name: nitek_redis
     volumes:
       - redis_data:/data
-    ports:
-      - "127.0.0.1:6379:6379"
+    expose:
+      - "6379"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
