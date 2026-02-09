@@ -111,7 +111,7 @@ async def get_dashboard_stats(
             # Monthly purchases
             purch_pipeline = [
                 {"$match": {"$or": [
-                    {"date": {"$gte": month_start.date()}},
+                    {"date": {"$gte": month_start}},
                     {"created_at": {"$gte": month_start}}
                 ]}},
                 {"$group": {"_id": None, "total": {"$sum": "$amount"}}}
@@ -148,7 +148,7 @@ async def get_dashboard_stats(
 
             purch30_pipeline = [
                 {"$match": {"$or": [
-                    {"date": {"$gte": since_30.date()}},
+                    {"date": {"$gte": since_30}},
                     {"created_at": {"$gte": since_30}}
                 ]}},
                 {"$group": {"_id": None, "total": {"$sum": "$amount"}}}

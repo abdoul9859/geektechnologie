@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from typing import Optional, List
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal
 
 from ..database import DailyPurchase, DailyPurchaseCategory, get_next_id
@@ -72,9 +72,9 @@ async def get_summary(
     try:
         match_filter: dict = {}
         if date_from:
-            match_filter.setdefault("date", {})["$gte"] = date_from
+            match_filter.setdefault("date", {})["$gte"] = datetime.combine(date_from, time.min)
         if date_to:
-            match_filter.setdefault("date", {})["$lte"] = date_to
+            match_filter.setdefault("date", {})["$lte"] = datetime.combine(date_to, time.max)
         if category:
             match_filter["category"] = {"$regex": f"^{category}$", "$options": "i"}
 

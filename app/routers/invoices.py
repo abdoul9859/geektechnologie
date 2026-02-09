@@ -1625,8 +1625,8 @@ async def get_invoice_stats(
         # Achats quotidiens du mois (par date ou created_at)
         daily_purchases_month = await DailyPurchase.find(
             {"$or": [
-                {"date": {"$gte": first_of_month.date() if hasattr(first_of_month, 'date') else first_of_month,
-                          "$lt": first_of_next_month.date() if hasattr(first_of_next_month, 'date') else first_of_next_month}},
+                {"date": {"$gte": first_of_month,
+                          "$lt": first_of_next_month}},
                 {"created_at": {"$gte": first_of_month, "$lt": first_of_next_month}},
             ]}
         ).to_list()
