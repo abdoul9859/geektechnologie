@@ -63,9 +63,8 @@ services:
       AUTHENTICATION_API_KEY: "${EVOLUTION_API_KEY:-your-api-key}"
       AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
       DATABASE_ENABLED: "true"
-      DATABASE_PROVIDER: mongodb
-      DATABASE_CONNECTION_URI: mongodb://geekuser:07121998Dabakh%40@mongo:27017/?authSource=admin
-      DATABASE_CONNECTION_DB_PREFIX_NAME: evolution
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:evolution_pass@evolution_db:5432/evolution?schema=public
       DATABASE_SAVE_DATA_INSTANCE: "true"
       DATABASE_SAVE_DATA_NEW_MESSAGE: "true"
       DATABASE_SAVE_MESSAGE_UPDATE: "true"
@@ -87,10 +86,30 @@ services:
       - evolution_instances:/evolution/instances
     restart: unless-stopped
     depends_on:
-      mongo:
+      evolution_db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - internal
+
+  evolution_db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution_pass
+      POSTGRES_DB: evolution
+    volumes:
+      - evolution_pgdata:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - internal
 
@@ -116,6 +135,7 @@ networks:
 volumes:
   mongo_data:
   evolution_instances:
+  evolution_pgdata:
   redis_data:
   app_uploads:
   app_logs:
