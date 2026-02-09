@@ -3,7 +3,6 @@
 {% block title %}WhatsApp - Connexion{% endblock %}
 
 {% block extra_head %}
-<script src="https://unpkg.com/qrcode@1.5.3/build/qrcode.min.js"></script>
 <style>
   .wa-card {
     max-width: 500px;
@@ -161,7 +160,7 @@
       badge.textContent = text;
     }
 
-    async function renderQr(qrString) {
+    function renderQr(qrString) {
       if (!qrString || isRendering) return;
       if (qrString === lastQr) return;
       isRendering = true;
@@ -171,20 +170,7 @@
         img.alt = 'QR Code WhatsApp';
         img.style.width = '280px';
         img.style.height = '280px';
-
-        if (typeof QRCode !== 'undefined' && QRCode.toDataURL) {
-          try {
-            const dataUrl = await QRCode.toDataURL(qrString, {
-              width: 280, margin: 1, errorCorrectionLevel: 'M'
-            });
-            img.src = dataUrl;
-          } catch (e) {
-            img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(qrString);
-          }
-        } else {
-          img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(qrString);
-        }
-
+        img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(qrString);
         qrCanvas.innerHTML = '';
         qrCanvas.appendChild(img);
       } catch (e) {
